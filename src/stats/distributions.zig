@@ -9410,6 +9410,215 @@ fn binomialSample(rng: std.Random, n_trials: u64, p: anytype) u64 {
     return count;
 }
 
+/// NegativeMultinomial(r, p_1..p_k) distribution
+///
+/// Generalizes NegativeBinomial to k failure categories. Models counts of k distinct
+/// failure types observed before r "successes" occur, where each trial independently
+/// lands in category 0 (success, prob p_0) or category i∈{1..k} (failure type i, prob p_i).
+/// p_0 = 1 - sum(p_1..p_k) must be > 0.
+///
+/// - Parameters: r ≥ 1 (number of successes), p_1..p_k ∈ [0,1) with sum < 1.0
+/// - Mean_i: r * p_i / p_0
+/// - Variance_i: r * p_i * (p_0 + p_i) / p_0^2
+/// - Covariance(i,j): r * p_i * p_j / p_0^2 (positive, unlike Multinomial)
+///
+/// Time: O(k) for pmf/logpmf/validate; O(1) for mean/variance/covariance; O(k*r) for sample
+pub fn NegativeMultinomial(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        r: u64,
+        probs: []T, // failure category probs (p_1..p_k), sum < 1.0
+        p0: T, // cached success prob = 1 - sum(probs)
+        allocator: std.mem.Allocator,
+
+        /// Initialize NegativeMultinomial distribution from r successes and failure weights.
+        /// Weights are NOT normalized; treated as pre-normalized probabilities directly (p_1..p_k).
+        /// Validates that 0 <= each weight, sum(weights) < 1.0 (with epsilon tolerance).
+        /// Time: O(k) | Space: O(k)
+        pub fn init(allocator: std.mem.Allocator, r: u64, weights: []const T) !Self {
+            if (r == 0) return DistributionError.InvalidParameter;
+            if (weights.len == 0) return DistributionError.InvalidParameter;
+
+            var sum: T = 0.0;
+            for (weights) |w| {
+                if (w < 0.0) return DistributionError.InvalidParameter;
+                sum += w;
+            }
+
+            const eps: T = switch (T) {
+                f32 => 1e-5,
+                else => 1e-12,
+            };
+
+            // sum(weights) must be < 1.0 so that p0 = 1 - sum > 0
+            if (sum >= 1.0 - eps or sum < 0.0) return DistributionError.InvalidParameter;
+
+            const probs = try allocator.dupe(T, weights);
+            errdefer allocator.free(probs);
+
+            const p0 = 1.0 - sum;
+
+            return Self{
+                .r = r,
+                .probs = probs,
+                .p0 = p0,
+                .allocator = allocator,
+            };
+        }
+
+        /// Free allocated memory
+        /// Time: O(1) | Space: O(1)
+        pub fn deinit(self: Self) void {
+            self.allocator.free(self.probs);
+        }
+
+        /// Number of failure categories
+        /// Time: O(1) | Space: O(1)
+        pub fn numCategories(self: Self) usize {
+            return self.probs.len;
+        }
+
+        /// PMF: probability of outcome counts. Returns 0 if counts.len != k.
+        /// Time: O(k) | Space: O(1)
+        pub fn pmf(self: Self, counts: []const u64) T {
+            if (counts.len != self.probs.len) return 0.0;
+
+            const logpmf_val = self.logpmf(counts);
+            if (math.isNegativeInf(logpmf_val)) return 0.0;
+            return @exp(logpmf_val);
+        }
+
+        /// Log PMF: log probability of outcome counts.
+        /// Returns -inf if counts length mismatch.
+        /// logpmf(x_1..x_k) = lgamma(r + s) - lgamma(r) - sum(lgamma(x_i+1)) + r*log(p0) + sum(x_i*log(p_i) for x_i>0)
+        /// where s = sum(x_i)
+        /// Time: O(k) | Space: O(1)
+        pub fn logpmf(self: Self, counts: []const u64) T {
+            if (counts.len != self.probs.len) return -math.inf(T);
+
+            var sum: u64 = 0;
+            for (counts) |c| {
+                sum += c;
+            }
+
+            // lgamma(r + s) - lgamma(r)
+            const r_f = @as(T, @floatFromInt(self.r));
+            const s_f = @as(T, @floatFromInt(sum));
+            const log_coeff = logGamma(r_f + s_f) - logGamma(r_f);
+
+            // Subtract sum(lgamma(x_i + 1)) for each count
+            var log_factorial_sum: T = 0.0;
+            for (counts) |xi| {
+                const xi_f = @as(T, @floatFromInt(xi));
+                log_factorial_sum += logGamma(xi_f + 1.0);
+            }
+
+            // Add r*log(p0) + sum(x_i*log(p_i) for x_i>0)
+            var log_probs: T = r_f * @log(self.p0);
+            for (counts, self.probs) |xi, pi| {
+                if (xi > 0) {
+                    log_probs += @as(T, @floatFromInt(xi)) * @log(pi);
+                }
+            }
+
+            return log_coeff - log_factorial_sum + log_probs;
+        }
+
+        /// Marginal mean of category i: E[X_i] = r * p_i / p0
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self, i: usize) T {
+            const r_f = @as(T, @floatFromInt(self.r));
+            return r_f * self.probs[i] / self.p0;
+        }
+
+        /// Marginal variance of category i: Var[X_i] = r * p_i * (p0 + p_i) / p0^2
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self, i: usize) T {
+            const r_f = @as(T, @floatFromInt(self.r));
+            const pi = self.probs[i];
+            return r_f * pi * (self.p0 + pi) / (self.p0 * self.p0);
+        }
+
+        /// Covariance(i, j). Equals variance when i == j.
+        /// For i ≠ j: Cov[X_i, X_j] = r * p_i * p_j / p0^2 (POSITIVE, unlike Multinomial)
+        /// Time: O(1) | Space: O(1)
+        pub fn covariance(self: Self, i: usize, j: usize) T {
+            if (i == j) return self.variance(i);
+            const r_f = @as(T, @floatFromInt(self.r));
+            return r_f * self.probs[i] * self.probs[j] / (self.p0 * self.p0);
+        }
+
+        /// Sample using trial-by-trial simulation until r successes occur.
+        /// Allocates []u64 counts (caller owns). Time: O(k*r*avg_failures) | Space: O(k)
+        pub fn sample(self: Self, rng: std.Random, allocator: std.mem.Allocator) ![]u64 {
+            const counts = try allocator.alloc(u64, self.probs.len);
+            errdefer allocator.free(counts);
+
+            // Initialize counts to 0
+            for (counts) |*c| {
+                c.* = 0;
+            }
+
+            // Simulate: repeat drawing categorical outcomes until r successes
+            var successes_needed: u64 = self.r;
+            while (successes_needed > 0) : (successes_needed -= 1) {
+                // Draw single trials until success occurs
+                while (true) {
+                    const rand_val = rng.float(T);
+                    var cumulative: T = 0.0;
+
+                    // Check each failure category (0..k-1)
+                    var found_failure = false;
+                    for (self.probs, 0..) |p_i, i| {
+                        cumulative += p_i;
+                        if (rand_val < cumulative) {
+                            counts[i] += 1;
+                            found_failure = true;
+                            break;
+                        }
+                    }
+
+                    // If no failure category matched, we got a success
+                    if (!found_failure) break;
+                }
+            }
+
+            return counts;
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("NegativeMultinomial(r={}, k={})", .{ self.r, self.probs.len });
+        }
+
+        /// Check invariants: r ≥ 1, probs.len ≥ 1, all probs ≥ 0, sum(probs) < 1.0, p0 > 0
+        /// Time: O(k) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.r == 0) return DistributionError.InvalidParameter;
+            if (self.probs.len == 0) return DistributionError.InvalidParameter;
+
+            var sum: T = 0.0;
+            for (self.probs) |p| {
+                if (p < 0.0) return DistributionError.InvalidParameter;
+                sum += p;
+            }
+
+            const eps: T = switch (T) {
+                f32 => 1e-5,
+                else => 1e-12,
+            };
+
+            // sum(probs) must be < 1.0 with tolerance
+            if (sum >= 1.0 - eps) return DistributionError.InvalidParameter;
+            // p0 = 1 - sum must be > 0
+            if (self.p0 <= 0.0) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
 test "Multinomial: init with n=0 returns error" {
     const allocator = testing.allocator;
     const weights = [_]f64{ 0.5, 0.5 };
@@ -123988,4 +124197,358 @@ test "MultivariateHypergeometric: f32 type support init and pmf" {
     const pmf_val = dist.pmf(&counts);
     try testing.expect(pmf_val >= 0.0 and pmf_val <= 1.0);
     try expectApproxEqRel(@as(f32, 0.3), pmf_val, 1e-5);
+}
+
+// Tests for NegativeMultinomial Distribution
+
+test "NegativeMultinomial: init with r=0 returns error" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const result = NegativeMultinomial(f64).init(allocator, 0, &weights);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NegativeMultinomial: init with empty weights returns error" {
+    const allocator = testing.allocator;
+    const weights: [0]f64 = undefined;
+    const result = NegativeMultinomial(f64).init(allocator, 2, &weights);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NegativeMultinomial: init with negative weight returns error" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, -0.1 };
+    const result = NegativeMultinomial(f64).init(allocator, 2, &weights);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NegativeMultinomial: init with sum(weights) >= 1.0 returns error" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.6, 0.5 };
+    const result = NegativeMultinomial(f64).init(allocator, 2, &weights);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NegativeMultinomial: init with sum(weights) exactly 1.0 returns error" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.5, 0.5 };
+    const result = NegativeMultinomial(f64).init(allocator, 2, &weights);
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NegativeMultinomial: init with k=1 single category succeeds" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{0.4};
+    const dist = try NegativeMultinomial(f64).init(allocator, 3, &weights);
+    defer dist.deinit();
+    try expectEqual(@as(usize, 1), dist.numCategories());
+}
+
+test "NegativeMultinomial: init with valid parameters k=2 succeeds" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+    try expectEqual(@as(usize, 2), dist.numCategories());
+}
+
+test "NegativeMultinomial: numCategories returns correct k" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+    try expectEqual(@as(usize, 2), dist.numCategories());
+}
+
+test "NegativeMultinomial: pmf [0,0] matches hand-derived 0.25" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 0, 0 };
+    const pmf_val = dist.pmf(&counts);
+    try expectApproxEqAbs(0.25, pmf_val, 1e-10);
+}
+
+test "NegativeMultinomial: pmf [1,0] matches hand-derived 0.15" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 1, 0 };
+    const pmf_val = dist.pmf(&counts);
+    try expectApproxEqAbs(0.15, pmf_val, 1e-10);
+}
+
+test "NegativeMultinomial: pmf [0,1] matches hand-derived 0.10" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 0, 1 };
+    const pmf_val = dist.pmf(&counts);
+    try expectApproxEqAbs(0.10, pmf_val, 1e-10);
+}
+
+test "NegativeMultinomial: pmf [2,0] matches hand-derived 0.0675" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 2, 0 };
+    const pmf_val = dist.pmf(&counts);
+    try expectApproxEqAbs(0.0675, pmf_val, 1e-10);
+}
+
+test "NegativeMultinomial: pmf [1,1] matches hand-derived 0.09" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 1, 1 };
+    const pmf_val = dist.pmf(&counts);
+    try expectApproxEqAbs(0.09, pmf_val, 1e-10);
+}
+
+test "NegativeMultinomial: pmf [0,2] matches hand-derived 0.03" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 0, 2 };
+    const pmf_val = dist.pmf(&counts);
+    try expectApproxEqAbs(0.03, pmf_val, 1e-10);
+}
+
+test "NegativeMultinomial: pmf with wrong count array length returns 0.0" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const counts = [_]u64{1};
+    const pmf_val = dist.pmf(&counts);
+    try expectEqual(0.0, pmf_val);
+}
+
+test "NegativeMultinomial: mean category 0 matches hand-derived 1.2" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const mean_0 = dist.mean(0);
+    try expectApproxEqAbs(1.2, mean_0, 1e-10);
+}
+
+test "NegativeMultinomial: mean category 1 matches hand-derived 0.8" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const mean_1 = dist.mean(1);
+    try expectApproxEqAbs(0.8, mean_1, 1e-10);
+}
+
+test "NegativeMultinomial: variance category 0 matches hand-derived 1.92" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const var_0 = dist.variance(0);
+    try expectApproxEqAbs(1.92, var_0, 1e-10);
+}
+
+test "NegativeMultinomial: variance category 1 matches hand-derived 1.12" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const var_1 = dist.variance(1);
+    try expectApproxEqAbs(1.12, var_1, 1e-10);
+}
+
+test "NegativeMultinomial: covariance(0,1) matches hand-derived 0.48 (positive)" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const cov = dist.covariance(0, 1);
+    try expectApproxEqAbs(0.48, cov, 1e-10);
+    // Verify it is positive, not negative like Multinomial
+    try testing.expect(cov > 0.0);
+}
+
+test "NegativeMultinomial: covariance(i,i) equals variance(i)" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const var_0 = dist.variance(0);
+    const cov_0_0 = dist.covariance(0, 0);
+    try expectApproxEqAbs(var_0, cov_0_0, 1e-10);
+
+    const var_1 = dist.variance(1);
+    const cov_1_1 = dist.covariance(1, 1);
+    try expectApproxEqAbs(var_1, cov_1_1, 1e-10);
+}
+
+test "NegativeMultinomial: k=1 cross-check pmf vs NegativeBinomial r=3 p=0.4" {
+    const allocator = testing.allocator;
+    const p: f64 = 0.4;
+    const r: u64 = 3;
+
+    // NegativeMultinomial(r=3, [1-p=0.6]) for k=1 case
+    const weights = [_]f64{1.0 - p};
+    const nm_dist = try NegativeMultinomial(f64).init(allocator, r, &weights);
+    defer nm_dist.deinit();
+
+    // NegativeBinomial(r=3, p=0.4)
+    const nb_dist = try NegativeBinomial(f64).init(r, p);
+
+    // Compare pmf for k=0..5
+    for (0..6) |k| {
+        const k_u64: u64 = @intCast(k);
+        const counts = [_]u64{k_u64};
+        const nm_pmf = nm_dist.pmf(&counts);
+        const nb_pmf = nb_dist.pmf(k_u64);
+        try expectApproxEqAbs(nb_pmf, nm_pmf, 1e-10);
+    }
+}
+
+test "NegativeMultinomial: k=1 cross-check mean vs NegativeBinomial r=3 p=0.4" {
+    const allocator = testing.allocator;
+    const p: f64 = 0.4;
+    const r: u64 = 3;
+
+    const weights = [_]f64{1.0 - p};
+    const nm_dist = try NegativeMultinomial(f64).init(allocator, r, &weights);
+    defer nm_dist.deinit();
+
+    const nb_dist = try NegativeBinomial(f64).init(r, p);
+
+    const nm_mean = nm_dist.mean(0);
+    const nb_mean = nb_dist.mean();
+    try expectApproxEqAbs(nb_mean, nm_mean, 1e-10);
+}
+
+test "NegativeMultinomial: k=1 cross-check variance vs NegativeBinomial r=3 p=0.4" {
+    const allocator = testing.allocator;
+    const p: f64 = 0.4;
+    const r: u64 = 3;
+
+    const weights = [_]f64{1.0 - p};
+    const nm_dist = try NegativeMultinomial(f64).init(allocator, r, &weights);
+    defer nm_dist.deinit();
+
+    const nb_dist = try NegativeBinomial(f64).init(r, p);
+
+    const nm_var = nm_dist.variance(0);
+    const nb_var = nb_dist.variance();
+    try expectApproxEqAbs(nb_var, nm_var, 1e-10);
+}
+
+test "NegativeMultinomial: sum-of-marginals variance identity holds" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    // Verify: var(0) + var(1) + 2*cov(0,1) == r*(1-p0)/p0^2
+    // With r=2, p0=0.5: 2*0.5/0.25 = 4.0
+    const var_0 = dist.variance(0);
+    const var_1 = dist.variance(1);
+    const cov_01 = dist.covariance(0, 1);
+
+    const left_side = var_0 + var_1 + 2.0 * cov_01;
+    const expected = 4.0;
+
+    try expectApproxEqAbs(expected, left_side, 1e-10);
+}
+
+test "NegativeMultinomial: memory safety deinit with testing.allocator" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.25, 0.25, 0.25 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 5, &weights);
+    dist.deinit();
+    // Testing allocator detects leaks automatically
+}
+
+test "NegativeMultinomial: validate passes on valid instance" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    try dist.validate();
+}
+
+test "NegativeMultinomial: validate fails when r corrupted to 0" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    var dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    dist.r = 0;
+    const result = dist.validate();
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NegativeMultinomial: validate fails when probs sum corrupted to >= 1.0" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    var dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    // Corrupt: set probs to [0.6, 0.5] which sum to 1.1, p0 becomes -0.1
+    dist.probs[0] = 0.6;
+    dist.probs[1] = 0.5;
+    dist.p0 = -0.1;
+
+    const result = dist.validate();
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NegativeMultinomial: validate fails when p0 corrupted to <= 0" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    var dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    dist.p0 = 0.0;
+    const result = dist.validate();
+    try expectError(error.InvalidParameter, result);
+}
+
+test "NegativeMultinomial: logpmf returns -inf for length mismatch" {
+    const allocator = testing.allocator;
+    const weights = [_]f64{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f64).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const counts = [_]u64{1};
+    const logpmf_val = dist.logpmf(&counts);
+    try testing.expect(math.isNegativeInf(logpmf_val));
+}
+
+test "NegativeMultinomial: f32 type support init and pmf" {
+    const allocator = testing.allocator;
+    const weights = [_]f32{ 0.3, 0.2 };
+    const dist = try NegativeMultinomial(f32).init(allocator, 2, &weights);
+    defer dist.deinit();
+
+    const counts = [_]u64{ 0, 0 };
+    const pmf_val = dist.pmf(&counts);
+    try expectApproxEqAbs(@as(f32, 0.25), pmf_val, 1e-5);
 }
