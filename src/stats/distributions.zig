@@ -124975,11 +124975,35 @@ test "BivariatePoisson: sample returns Sample struct with x1, x2 as u64" {
     const rng = prng.random();
 
     const dist = try BivariatePoisson(f64).init(0.5, 1.0, 1.5);
-    const sample = dist.sample(rng);
 
-    // Sample must return a struct with x1 and x2 fields; both u64
-    try expect(true); // Just verify it compiles and runs
-    _ = sample; // Discard result to avoid unused variable warning
+    // Draw multiple samples and verify: (1) they are u64, (2) within reasonable bounds,
+    // (3) samples vary (proves not a stub returning constant).
+    var found_variation = false;
+    var last_x1: u64 = 0;
+    var last_x2: u64 = 0;
+    var is_first = true;
+
+    for (0..30) |_| {
+        const sample = dist.sample(rng);
+
+        // Sanity check: with theta params (0.5, 1.0, 1.5), means are 1.5 and 2.0
+        // Use very generous bounds to catch overflow/garbage/stub bugs
+        try testing.expect(sample.x1 < 100);
+        try testing.expect(sample.x2 < 100);
+
+        // Track variation: do we get different (x1, x2) pairs across draws?
+        if (!is_first) {
+            if (sample.x1 != last_x1 or sample.x2 != last_x2) {
+                found_variation = true;
+            }
+        }
+        last_x1 = sample.x1;
+        last_x2 = sample.x2;
+        is_first = false;
+    }
+
+    // Verify samples vary across draws, proving it's not a stub always returning a constant
+    try testing.expect(found_variation);
 }
 
 test "BivariatePoisson: sample empirical mean1 roughly matches theoretical (2000 samples)" {
