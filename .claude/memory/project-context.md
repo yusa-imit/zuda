@@ -1,3 +1,25 @@
+**Session 884 Update (2026-09-05) — FEATURE MODE [COMPLETED]:**
+
+✅ **Sibuya (209th, recovered uncommitted, commit e22e640)**
+- **Mode**: FEATURE MODE (counter: 884). CI green on main at session start, 0 open issues.
+- Found `src/root.zig`/`distributions.zig` uncommitted at session start with a complete
+  `Sibuya(alpha)` — discrete distribution on {1,2,3,...} with PGF G(s)=1-(1-s)^alpha
+  (discrete analogue of a one-sided stable law, Sibuya 1979/Devroye 1993). Always-infinite
+  mean/variance (tail ~k^-(1+alpha)). 44 tests.
+- Verified before trusting: hand-derived pmf(1)=alpha and pmf(2)=alpha(1-alpha)/2 from the
+  PGF and confirmed against the test file's ground-truth literals (0.3, 0.105 for alpha=0.3)
+  — matched exactly. `zig build test` exit code 0 (208 pre-existing "slices differ" console
+  lines are from unrelated tests intentionally exercising mismatch-detection, not failures).
+  `grep -c` confirmed 209 distributions total.
+- Session 882 (Wakeby, 208th) was completed but never logged to this file — external
+  auto-memory (session_882_wakeby.md) has the detail; noting the gap here for continuity.
+- **Next priority (feature)**: per external memory, location-shift and vector-param veins
+  are exhausted; bivariate shared-latent-variable vein closed. New vein opened by Sibuya:
+  other Devroye (1993) "triptych of discrete distributions related to the stable law"
+  members (e.g. discrete Mittag-Leffler) — grep root.zig first before implementing.
+
+---
+
 **Session 880 Update (2026-09-04) — STABILIZATION MODE [COMPLETED]:**
 
 ✅ **InverseRayleigh (207th, recovered uncommitted, commit c3b33ae) + memory cleanup**
