@@ -784,3 +784,6 @@
 {"timestamp":"2026-09-03T19:38:53Z","action":"subagent","agent_type":"zig-developer","task":"Implement NoncentralChi (206th distribution) to pass failing tests","project":"zuda"}
 {"timestamp":"2026-09-03T19:45:21Z","action":"subagent","agent_type":"test-writer","task":"Fix 2 wrong NoncentralChi tests (tolerance + false entropy monotonicity claim)","project":"zuda"}
 {"timestamp":"2026-09-03T23:38:50Z","action":"subagent","agent_type":"code-reviewer","task":"Verify recovered NoncentralChi distribution implementation correctness and safety","project":"zuda"}
+{"timestamp":"2026-09-04T03:36:04Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for InverseRayleigh distribution (207th)","project":"zuda"}
+{"timestamp":"2026-09-04T03:39:34Z","action":"subagent","agent_type":"zig-developer","task":"Implement InverseRayleigh distribution to pass failing tests","project":"zuda"}
+{"timestamp":"2026-09-04T03:55:05Z","action":"subagent","agent_type":"code-reviewer","task":"Review InverseRayleigh implementation for correctness","project":"zuda"}
