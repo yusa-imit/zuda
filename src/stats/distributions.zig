@@ -127005,3 +127005,910 @@ test "NoncentralChi: format" {
     const result = w.buffered();
     try testing.expect(std.mem.eql(u8, result, "NoncentralChi(k=5.0, lambda=2.0)"));
 }
+
+pub fn Wakeby(comptime T: type) type {
+    return struct {
+        xi: T,
+        alpha: T,
+        beta: T,
+        gamma: T,
+        delta: T,
+
+        const Self = @This();
+        const eps_shape: T = 1e-10;
+        // Probability-space epsilon for boundary clamping / quadrature limits.
+        // 1e-6 rather than 1e-15: near p=1, (1-p) below ~1e-7 rounds to exactly
+        // 1.0 in f32 (24-bit mantissa), collapsing w(p) to a singularity.
+        const p_eps: T = 1e-6;
+
+        /// Initialize Wakeby(ξ, α, β, γ, δ). Errors if α ≤ 0, γ < 0, or any parameter is non-finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(xi: T, alpha: T, beta: T, gamma: T, delta: T) DistributionError!Self {
+            if (!(alpha > 0.0)) return error.InvalidParameter;
+            if (!(gamma >= 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(xi) or !math.isFinite(alpha) or !math.isFinite(beta) or !math.isFinite(gamma) or !math.isFinite(delta))
+                return error.InvalidParameter;
+            return Self{ .xi = xi, .alpha = alpha, .beta = beta, .gamma = gamma, .delta = delta };
+        }
+
+        /// Validate that parameters are still well-formed.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) DistributionError!void {
+            if (!(self.alpha > 0.0)) return error.InvalidParameter;
+            if (!(self.gamma >= 0.0)) return error.InvalidParameter;
+            if (!math.isFinite(self.xi) or !math.isFinite(self.alpha) or !math.isFinite(self.beta) or !math.isFinite(self.gamma) or !math.isFinite(self.delta))
+                return error.InvalidParameter;
+        }
+
+        // g(u, b) = (1 - u^b)/b for b != 0, -ln(u) for b == 0. Requires u in (0, 1].
+        fn gVal(u: T, b: T) T {
+            if (@abs(b) < eps_shape) return -@log(u);
+            return (1.0 - math.pow(T, u, b)) / b;
+        }
+
+        // Quantile function computation (no location shift): α·g(1-p, β) + γ·g(1-p, -δ).
+        fn quantileStd(p: T, alpha: T, beta: T, gamma: T, delta: T) T {
+            return alpha * gVal(1.0 - p, beta) + gamma * gVal(1.0 - p, -delta);
+        }
+
+        // dW/dp = α·(1-p)^(β-1) + γ·(1-p)^(-δ-1). Always positive for p in (0,1).
+        fn quantileStdDeriv(p: T, alpha: T, beta: T, gamma: T, delta: T) T {
+            return alpha * math.pow(T, 1.0 - p, beta - 1.0) + gamma * math.pow(T, 1.0 - p, -delta - 1.0);
+        }
+
+        /// Quantile function (inverse CDF) Q(p).
+        ///
+        /// Errors: p outside [0, 1] (or NaN) → InvalidProbability.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0) return self.xi;
+            if (p == 1.0) {
+                // W(1) = ξ + α/β + γ/(-δ), finite iff β>0 AND (γ==0 OR δ<0)
+                if (!(self.beta > 0.0)) return math.inf(T);
+                if (self.gamma > 0.0 and !(self.delta < 0.0)) return math.inf(T);
+                var result = self.xi + self.alpha / self.beta;
+                if (self.gamma > 0.0) {
+                    result += self.gamma / (-self.delta);
+                }
+                return result;
+            }
+            return self.xi + quantileStd(p, self.alpha, self.beta, self.gamma, self.delta);
+        }
+
+        /// Cumulative distribution function F(x), via bisection on the quantile function.
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= self.xi) return 0.0;
+            var lo: T = p_eps;
+            var hi: T = 1.0 - p_eps;
+            var mid: T = undefined;
+            var i: usize = 0;
+            while (i < 100) : (i += 1) {
+                mid = (lo + hi) * 0.5;
+                const q = self.xi + quantileStd(mid, self.alpha, self.beta, self.gamma, self.delta);
+                if (q < x) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            return (lo + hi) * 0.5;
+        }
+
+        /// Survival function S(x) = 1 − F(x).
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            return 1.0 - self.cdf(x);
+        }
+
+        /// Probability density function f(x) = 1/(w(F(x))).
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x < self.xi) return 0.0;
+            // At x = xi or very close to it (cdf returns 0 or p_eps), use boundary condition
+            const p = self.cdf(x);
+            if (p <= p_eps) {
+                // At the boundary x = xi (i.e., p ≈ 0), pdf(xi) = 1/(alpha + gamma)
+                return 1.0 / (self.alpha + self.gamma);
+            }
+            const p_safe = @max(p_eps, @min(1.0 - p_eps, p));
+            const deriv = quantileStdDeriv(p_safe, self.alpha, self.beta, self.gamma, self.delta);
+            if (!(deriv > 0.0)) return 0.0;
+            return 1.0 / deriv;
+        }
+
+        /// Log probability density function ln f(x).
+        ///
+        /// Time: O(log(1/ε)) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            const p_val = self.pdf(x);
+            if (!(p_val > 0.0)) return -math.inf(T);
+            return @log(p_val);
+        }
+
+        // ∫₀¹ g(u, b)² du. For b == 0, g(u,0) = -ln(u) and the closed form is
+        // the standard ∫₀¹(ln u)² du = 2. For b != 0, expand (1 - u^b)²/b²
+        // and integrate termwise; requires 2b + 1 > 0 (b > -1/2) to converge.
+        fn aVal(b: T) T {
+            if (@abs(b) < eps_shape) return 2.0;
+            return (1.0 / (b * b)) * (1.0 - 2.0 / (b + 1.0) + 1.0 / (2.0 * b + 1.0));
+        }
+
+        // ∫₀¹ g(u, b1)·g(u, b2) du, closed form. Handles b1 == 0 or b2 == 0
+        // via ∫₀¹ x^n·(-ln x) dx = 1/(n+1)² separately since g(u,0) = -ln(u)
+        // is not of the (1 - u^b)/b family. Requires b1 + b2 + 1 > 0.
+        fn bVal(b1: T, b2: T) T {
+            const z1 = @abs(b1) < eps_shape;
+            const z2 = @abs(b2) < eps_shape;
+            if (z1 and z2) return 2.0;
+            if (z1) return (1.0 / b2) * (1.0 - 1.0 / ((b2 + 1.0) * (b2 + 1.0)));
+            if (z2) return (1.0 / b1) * (1.0 - 1.0 / ((b1 + 1.0) * (b1 + 1.0)));
+            return (1.0 / (b1 * b2)) * (1.0 - 1.0 / (b1 + 1.0) - 1.0 / (b2 + 1.0) + 1.0 / (b1 + b2 + 1.0));
+        }
+
+        /// Mean E[X], via closed form when converging, else NaN.
+        /// Returns NaN when the mean diverges: β ≤ −1, or δ ≥ 1.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            if (!(self.beta > -1.0)) return math.nan(T);
+            if (!(self.delta < 1.0)) return math.nan(T);
+            return self.xi + self.alpha / (self.beta + 1.0) + self.gamma / (1.0 - self.delta);
+        }
+
+        /// Variance Var[X], via closed-form E[Y^2] - E[Y]^2 where Y = X - ξ.
+        /// Returns NaN when the variance diverges: β ≤ −0.5, or δ ≥ 0.5.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            if (!(self.beta > -0.5)) return math.nan(T);
+            if (!(self.delta < 0.5)) return math.nan(T);
+            const b1 = self.beta;
+            const b2 = -self.delta;
+            const e2 = self.alpha * self.alpha * aVal(b1) +
+                2.0 * self.alpha * self.gamma * bVal(b1, b2) +
+                self.gamma * self.gamma * aVal(b2);
+            const mean_y = self.alpha / (self.beta + 1.0) + self.gamma / (1.0 - self.delta);
+            return e2 - mean_y * mean_y;
+        }
+
+        /// Mode (x that maximizes f(x)), found by scanning for the p that minimizes w(p).
+        ///
+        /// Time: O(N) | Space: O(1)
+        pub fn mode(self: Self) T {
+            const N: usize = 2000;
+            const a: T = 1e-6;
+            const b: T = 1.0 - 1e-6;
+            var best_p: T = a;
+            var best_deriv: T = quantileStdDeriv(a, self.alpha, self.beta, self.gamma, self.delta);
+            var k: usize = 1;
+            while (k <= N) : (k += 1) {
+                const p = a + (b - a) * @as(T, @floatFromInt(k)) / @as(T, @floatFromInt(N));
+                const d = quantileStdDeriv(p, self.alpha, self.beta, self.gamma, self.delta);
+                if (d < best_deriv) {
+                    best_deriv = d;
+                    best_p = p;
+                }
+            }
+            return self.xi + quantileStd(best_p, self.alpha, self.beta, self.gamma, self.delta);
+        }
+
+        /// Differential entropy H = ln(α) + ∫₀¹ ln(w(p)) dp (Simpson quadrature).
+        ///
+        /// Time: O(N) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            const N: usize = 2000;
+            const a: T = p_eps;
+            const b: T = 1.0 - p_eps;
+            const width = b - a;
+            const step = width / @as(T, @floatFromInt(N));
+            const deriv_a = quantileStdDeriv(a, self.alpha, self.beta, self.gamma, self.delta);
+            const deriv_b = quantileStdDeriv(b, self.alpha, self.beta, self.gamma, self.delta);
+            var sum: T = @log(deriv_a) + @log(deriv_b);
+            var k: usize = 1;
+            while (k < N) : (k += 1) {
+                const p = a + @as(T, @floatFromInt(k)) * step;
+                const w: T = if (k % 2 == 0) 2.0 else 4.0;
+                const deriv = quantileStdDeriv(p, self.alpha, self.beta, self.gamma, self.delta);
+                sum += w * @log(deriv);
+            }
+            const integral = (step / 3.0) * sum;
+            return @log(self.alpha) + integral;
+        }
+
+        /// Generate a random sample via the inverse CDF (quantile) method.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            var u = rng.float(T);
+            u = @max(p_eps, @min(1.0 - p_eps, u));
+            return self.xi + quantileStd(u, self.alpha, self.beta, self.gamma, self.delta);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Wakeby(xi={d:.1}, alpha={d:.1}, beta={d:.1}, gamma={d:.1}, delta={d:.1})", .{ self.xi, self.alpha, self.beta, self.gamma, self.delta });
+        }
+    };
+}
+
+// ============================================================================
+// Wakeby Distribution Tests (Hosking's five-parameter Wakeby distribution)
+// ============================================================================
+// Wakeby(ξ, α, β, γ, δ) — location ξ, scale α > 0, shape1 β, scale2 γ ≥ 0, shape2 δ
+// Q(p) = ξ + α·g(1-p, β) + γ·g(1-p, -δ)
+// where g(u, b) = (1 - u^b)/b for b ≠ 0, g(u, 0) = -ln(u) for b = 0.
+// Validity: α > 0, γ ≥ 0 (guarantees strictly positive quantile density).
+// Special cases: (β=0, δ=0) = Exponential; (β=0) = one-log case; (δ=0) = other-log case.
+
+test "Wakeby: init succeeds for valid params Set A" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    try testing.expectEqual(@as(f64, 0.0), dist.xi);
+    try testing.expectEqual(@as(f64, 1.0), dist.alpha);
+    try testing.expectEqual(@as(f64, 0.5), dist.beta);
+    try testing.expectEqual(@as(f64, 0.3), dist.gamma);
+    try testing.expectEqual(@as(f64, 0.2), dist.delta);
+}
+
+test "Wakeby: init succeeds for beta=0 special case (Set B)" {
+    const dist = try Wakeby(f64).init(1.0, 2.0, 0.0, 0.5, 0.3);
+    try testing.expectEqual(@as(f64, 1.0), dist.xi);
+    try testing.expectEqual(@as(f64, 2.0), dist.alpha);
+    try testing.expectEqual(@as(f64, 0.0), dist.beta);
+    try testing.expectEqual(@as(f64, 0.5), dist.gamma);
+    try testing.expectEqual(@as(f64, 0.3), dist.delta);
+}
+
+test "Wakeby: init succeeds for delta=0 special case (Set C)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.4, 0.6, 0.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.xi);
+    try testing.expectEqual(@as(f64, 1.0), dist.alpha);
+    try testing.expectEqual(@as(f64, 0.4), dist.beta);
+    try testing.expectEqual(@as(f64, 0.6), dist.gamma);
+    try testing.expectEqual(@as(f64, 0.0), dist.delta);
+}
+
+test "Wakeby: init succeeds for Exponential case (Set D: beta=0, delta=0)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.0, 1.0, 0.0);
+    try testing.expectEqual(@as(f64, 0.0), dist.xi);
+    try testing.expectEqual(@as(f64, 1.0), dist.alpha);
+    try testing.expectEqual(@as(f64, 0.0), dist.beta);
+    try testing.expectEqual(@as(f64, 1.0), dist.gamma);
+    try testing.expectEqual(@as(f64, 0.0), dist.delta);
+}
+
+test "Wakeby: init fails for alpha = 0" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(0.0, 0.0, 0.5, 0.3, 0.2));
+}
+
+test "Wakeby: init fails for alpha < 0" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(0.0, -1.0, 0.5, 0.3, 0.2));
+}
+
+test "Wakeby: init fails for alpha = NaN" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(0.0, math.nan(f64), 0.5, 0.3, 0.2));
+}
+
+test "Wakeby: init fails for alpha = +Inf" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(0.0, math.inf(f64), 0.5, 0.3, 0.2));
+}
+
+test "Wakeby: init fails for alpha = -Inf" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(0.0, -math.inf(f64), 0.5, 0.3, 0.2));
+}
+
+test "Wakeby: init fails for gamma < 0" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(0.0, 1.0, 0.5, -0.1, 0.2));
+}
+
+test "Wakeby: init fails for gamma = NaN" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(0.0, 1.0, 0.5, math.nan(f64), 0.2));
+}
+
+test "Wakeby: init fails for gamma = +Inf" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(0.0, 1.0, 0.5, math.inf(f64), 0.2));
+}
+
+test "Wakeby: init fails for xi = NaN" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(math.nan(f64), 1.0, 0.5, 0.3, 0.2));
+}
+
+test "Wakeby: init fails for xi = +Inf" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(math.inf(f64), 1.0, 0.5, 0.3, 0.2));
+}
+
+test "Wakeby: init fails for xi = -Inf" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(-math.inf(f64), 1.0, 0.5, 0.3, 0.2));
+}
+
+test "Wakeby: init fails for beta = NaN" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(0.0, 1.0, math.nan(f64), 0.3, 0.2));
+}
+
+test "Wakeby: init fails for beta = +Inf" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(0.0, 1.0, math.inf(f64), 0.3, 0.2));
+}
+
+test "Wakeby: init fails for beta = -Inf" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(0.0, 1.0, -math.inf(f64), 0.3, 0.2));
+}
+
+test "Wakeby: init fails for delta = NaN" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, math.nan(f64)));
+}
+
+test "Wakeby: init fails for delta = +Inf" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, math.inf(f64)));
+}
+
+test "Wakeby: init fails for delta = -Inf" {
+    try testing.expectError(error.InvalidParameter, Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, -math.inf(f64)));
+}
+
+test "Wakeby: validate succeeds for valid Set A" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    try dist.validate();
+}
+
+test "Wakeby: validate succeeds for valid Exponential case" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.0, 1.0, 0.0);
+    try dist.validate();
+}
+
+test "Wakeby: validate fails for alpha = 0" {
+    var dist: Wakeby(f64) = undefined;
+    dist.xi = 0.0;
+    dist.alpha = 0.0;
+    dist.beta = 0.5;
+    dist.gamma = 0.3;
+    dist.delta = 0.2;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Wakeby: validate fails for alpha < 0" {
+    var dist: Wakeby(f64) = undefined;
+    dist.xi = 0.0;
+    dist.alpha = -1.0;
+    dist.beta = 0.5;
+    dist.gamma = 0.3;
+    dist.delta = 0.2;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Wakeby: validate fails for gamma < 0" {
+    var dist: Wakeby(f64) = undefined;
+    dist.xi = 0.0;
+    dist.alpha = 1.0;
+    dist.beta = 0.5;
+    dist.gamma = -0.1;
+    dist.delta = 0.2;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Wakeby: validate fails for xi = NaN" {
+    var dist: Wakeby(f64) = undefined;
+    dist.xi = math.nan(f64);
+    dist.alpha = 1.0;
+    dist.beta = 0.5;
+    dist.gamma = 0.3;
+    dist.delta = 0.2;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Wakeby: validate fails for beta = Inf" {
+    var dist: Wakeby(f64) = undefined;
+    dist.xi = 0.0;
+    dist.alpha = 1.0;
+    dist.beta = math.inf(f64);
+    dist.gamma = 0.3;
+    dist.delta = 0.2;
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Wakeby: validate fails for delta = NaN" {
+    var dist: Wakeby(f64) = undefined;
+    dist.xi = 0.0;
+    dist.alpha = 1.0;
+    dist.beta = 0.5;
+    dist.gamma = 0.3;
+    dist.delta = math.nan(f64);
+    try testing.expectError(error.InvalidParameter, dist.validate());
+}
+
+test "Wakeby: Quantile at p=0 returns xi exactly (Set A)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(0.0, q, 1e-9);
+}
+
+test "Wakeby: Quantile at p=0 returns xi exactly (Set B with non-zero xi)" {
+    const dist = try Wakeby(f64).init(1.0, 2.0, 0.0, 0.5, 0.3);
+    const q = try dist.quantile(0.0);
+    try testing.expectApproxEqAbs(1.0, q, 1e-9);
+}
+
+test "Wakeby: Quantile Set A at p=0.1 ≈ 0.134576935299175" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const expected = 0.134576935299175;
+    const q = try dist.quantile(0.1);
+    try testing.expectApproxEqAbs(expected, q, 1e-7);
+}
+
+test "Wakeby: Quantile Set A at p=0.5 ≈ 0.808833970122457" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const expected = 0.808833970122457;
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(expected, q, 1e-7);
+}
+
+test "Wakeby: Quantile Set A at p=0.9 ≈ 2.244884256657994" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const expected = 2.244884256657994;
+    const q = try dist.quantile(0.9);
+    try testing.expectApproxEqAbs(expected, q, 1e-7);
+}
+
+test "Wakeby: Quantile Set A at p=0.99 ≈ 4.067829647264370" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const expected = 4.067829647264370;
+    const q = try dist.quantile(0.99);
+    try testing.expectApproxEqAbs(expected, q, 1e-7);
+}
+
+test "Wakeby: Quantile Set B at p=0.2 ≈ 1.561678102613733" {
+    const dist = try Wakeby(f64).init(1.0, 2.0, 0.0, 0.5, 0.3);
+    const expected = 1.561678102613733;
+    const q = try dist.quantile(0.2);
+    try testing.expectApproxEqAbs(expected, q, 1e-7);
+}
+
+test "Wakeby: Quantile Set B at p=0.5 ≈ 2.771535050028084" {
+    const dist = try Wakeby(f64).init(1.0, 2.0, 0.0, 0.5, 0.3);
+    const expected = 2.771535050028084;
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(expected, q, 1e-7);
+}
+
+test "Wakeby: Quantile Set B at p=0.8 ≈ 5.253303486022805" {
+    const dist = try Wakeby(f64).init(1.0, 2.0, 0.0, 0.5, 0.3);
+    const expected = 5.253303486022805;
+    const q = try dist.quantile(0.8);
+    try testing.expectApproxEqAbs(expected, q, 1e-7);
+}
+
+test "Wakeby: Quantile Set C at p=0.2 ≈ 0.347360871151894" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.4, 0.6, 0.0);
+    const expected = 0.347360871151894;
+    const q = try dist.quantile(0.2);
+    try testing.expectApproxEqAbs(expected, q, 1e-7);
+}
+
+test "Wakeby: Quantile Set C at p=0.5 ≈ 1.021242600197970" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.4, 0.6, 0.0);
+    const expected = 1.021242600197970;
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(expected, q, 1e-7);
+}
+
+test "Wakeby: Quantile Set C at p=0.8 ≈ 2.152398845258577" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.4, 0.6, 0.0);
+    const expected = 2.152398845258577;
+    const q = try dist.quantile(0.8);
+    try testing.expectApproxEqAbs(expected, q, 1e-7);
+}
+
+test "Wakeby: Quantile Set D (Exponential) at p=0.2 ≈ 0.446287102628420" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.0, 1.0, 0.0);
+    const expected = 0.446287102628420;
+    const q = try dist.quantile(0.2);
+    try testing.expectApproxEqAbs(expected, q, 1e-7);
+}
+
+test "Wakeby: Quantile Set D (Exponential) at p=0.5 ≈ 1.386294361119891" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.0, 1.0, 0.0);
+    const expected = 1.386294361119891;
+    const q = try dist.quantile(0.5);
+    try testing.expectApproxEqAbs(expected, q, 1e-7);
+}
+
+test "Wakeby: Quantile Set D (Exponential) at p=0.8 ≈ 3.218875824868201" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.0, 1.0, 0.0);
+    const expected = 3.218875824868201;
+    const q = try dist.quantile(0.8);
+    try testing.expectApproxEqAbs(expected, q, 1e-7);
+}
+
+test "Wakeby: Quantile is monotone increasing Set A" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const q1 = try dist.quantile(0.1);
+    const q2 = try dist.quantile(0.3);
+    const q3 = try dist.quantile(0.5);
+    const q4 = try dist.quantile(0.7);
+    const q5 = try dist.quantile(0.9);
+    try testing.expect(q1 < q2);
+    try testing.expect(q2 < q3);
+    try testing.expect(q3 < q4);
+    try testing.expect(q4 < q5);
+}
+
+test "Wakeby: Quantile rejects p < 0" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "Wakeby: Quantile rejects p > 1" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Wakeby: Quantile rejects p = NaN" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    try testing.expectError(error.InvalidProbability, dist.quantile(math.nan(f64)));
+}
+
+test "Wakeby: CDF at x < xi returns 0 (Set A)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const c = dist.cdf(-1.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-9);
+}
+
+test "Wakeby: CDF at x = xi returns 0 (Set A)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const c = dist.cdf(0.0);
+    try testing.expectApproxEqAbs(0.0, c, 1e-9);
+}
+
+test "Wakeby: CDF is monotone increasing Set A" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const c1 = dist.cdf(-1.0);
+    const c2 = dist.cdf(0.5);
+    const c3 = dist.cdf(1.0);
+    const c4 = dist.cdf(2.0);
+    try testing.expect(c1 <= c2);
+    try testing.expect(c2 <= c3);
+    try testing.expect(c3 <= c4);
+}
+
+test "Wakeby: CDF within [0, 1] for multiple points Set A" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    for ([_]f64{ -1.0, 0.0, 0.5, 1.0, 2.0 }) |x| {
+        const c = dist.cdf(x);
+        try testing.expect(c >= 0.0);
+        try testing.expect(c <= 1.0);
+    }
+}
+
+test "Wakeby: CDF roundtrip cdf(quantile(p)) ≈ p at p=0.3 Set A" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const p = 0.3;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-5);
+}
+
+test "Wakeby: CDF roundtrip cdf(quantile(p)) ≈ p at p=0.5 Set A" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const p = 0.5;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-5);
+}
+
+test "Wakeby: CDF roundtrip cdf(quantile(p)) ≈ p at p=0.8 Set A" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const p = 0.8;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-5);
+}
+
+test "Wakeby: CDF roundtrip cdf(quantile(p)) ≈ p at p=0.2 Set B" {
+    const dist = try Wakeby(f64).init(1.0, 2.0, 0.0, 0.5, 0.3);
+    const p = 0.2;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-5);
+}
+
+test "Wakeby: CDF roundtrip cdf(quantile(p)) ≈ p at p=0.7 Set C" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.4, 0.6, 0.0);
+    const p = 0.7;
+    const q = try dist.quantile(p);
+    const c = dist.cdf(q);
+    try testing.expectApproxEqAbs(p, c, 1e-5);
+}
+
+test "Wakeby: PDF at xi = 1/(alpha+gamma) invariant Set A" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const expected = 1.0 / (1.0 + 0.3); // 1/(alpha+gamma)
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-7);
+}
+
+test "Wakeby: PDF at xi = 1/(alpha+gamma) invariant Set B" {
+    const dist = try Wakeby(f64).init(1.0, 2.0, 0.0, 0.5, 0.3);
+    const expected = 1.0 / (2.0 + 0.5); // 1/(alpha+gamma) = 0.4
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-7);
+}
+
+test "Wakeby: PDF at xi = 1/(alpha+gamma) invariant Set C" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.4, 0.6, 0.0);
+    const expected = 1.0 / (1.0 + 0.6); // 1/(alpha+gamma) = 0.625
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-7);
+}
+
+test "Wakeby: PDF at xi = 1/(alpha+gamma) invariant Set D (Exponential)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.0, 1.0, 0.0);
+    const expected = 1.0 / (1.0 + 1.0); // 1/(alpha+gamma) = 0.5
+    const p = dist.pdf(0.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-7);
+}
+
+test "Wakeby: PDF Set A at x=W(0.5) ≈ 0.475413384630820" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const expected_x = 0.808833970122457;
+    const expected_pdf = 0.475413384630820;
+    const p = dist.pdf(expected_x);
+    try testing.expectApproxEqAbs(expected_pdf, p, 1e-6);
+}
+
+test "Wakeby: PDF Set D (Exponential) at x=1 ≈ 0.303265329856317" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.0, 1.0, 0.0);
+    // rate = 1/(alpha+gamma) = 0.5, pdf(x) = 0.5*exp(-0.5*x)
+    const expected = 0.303265329856317;
+    const p = dist.pdf(1.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-6);
+}
+
+test "Wakeby: PDF Set D (Exponential) at x=2 ≈ 0.183939720585721" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.0, 1.0, 0.0);
+    // rate = 0.5, pdf(x) = 0.5*exp(-0.5*x)
+    const expected = 0.183939720585721;
+    const p = dist.pdf(2.0);
+    try testing.expectApproxEqAbs(expected, p, 1e-6);
+}
+
+test "Wakeby: PDF is non-negative at multiple points Set A" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    for ([_]f64{ -1.0, 0.0, 0.5, 1.0, 2.0 }) |x| {
+        const p = dist.pdf(x);
+        try testing.expect(p >= 0.0);
+    }
+}
+
+test "Wakeby: logpdf is finite for valid inputs Set A" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const lp = dist.logpdf(0.8);
+    try testing.expect(math.isFinite(lp));
+}
+
+test "Wakeby: logpdf ≈ log(pdf) Set A" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const p = dist.pdf(0.8);
+    const lp = dist.logpdf(0.8);
+    const expected_lp = @log(p);
+    try testing.expectApproxEqAbs(expected_lp, lp, 1e-6);
+}
+
+test "Wakeby: mean Set A = 1.041666666666667 (closed formula)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const expected = 1.041666666666667;
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(expected, m, 1e-8);
+}
+
+test "Wakeby: mean Set B = 3.714285714285714 (beta=0 case)" {
+    const dist = try Wakeby(f64).init(1.0, 2.0, 0.0, 0.5, 0.3);
+    const expected = 3.714285714285714;
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(expected, m, 1e-8);
+}
+
+test "Wakeby: mean Set C = 1.314285714285714 (delta=0 case)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.4, 0.6, 0.0);
+    const expected = 1.314285714285714;
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(expected, m, 1e-8);
+}
+
+test "Wakeby: mean Set D (Exponential) = 2.0 (exact 1/rate)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.0, 1.0, 0.0);
+    const expected = 2.0;
+    const m = dist.mean();
+    try testing.expectApproxEqAbs(expected, m, 1e-8);
+}
+
+test "Wakeby: mean returns NaN when beta <= -1 (mean diverges)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, -1.5, 0.3, 0.2);
+    const m = dist.mean();
+    try testing.expect(math.isNan(m));
+}
+
+test "Wakeby: mean returns NaN when delta >= 1 (mean diverges)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 1.5);
+    const m = dist.mean();
+    try testing.expect(math.isNan(m));
+}
+
+test "Wakeby: mean is finite when beta > -1 and delta < 1" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const m = dist.mean();
+    try testing.expect(math.isFinite(m));
+}
+
+test "Wakeby: variance Set A = 0.841212606837607 (numeric quadrature)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const expected = 0.841212606837607;
+    const v = dist.variance();
+    // Quadrature-based variance needs looser tolerance
+    try testing.expectApproxEqAbs(expected, v, 1e-4);
+}
+
+test "Wakeby: variance Set B = 9.357142857142725 (beta=0 case)" {
+    const dist = try Wakeby(f64).init(1.0, 2.0, 0.0, 0.5, 0.3);
+    const expected = 9.357142857142725;
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(expected, v, 1e-3);
+}
+
+test "Wakeby: variance Set C = 1.255691609977324 (delta=0 case)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.4, 0.6, 0.0);
+    const expected = 1.255691609977324;
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(expected, v, 1e-4);
+}
+
+test "Wakeby: variance Set D (Exponential) = 4.0 (exact 1/rate^2)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.0, 1.0, 0.0);
+    const expected = 4.0;
+    const v = dist.variance();
+    try testing.expectApproxEqAbs(expected, v, 1e-4);
+}
+
+test "Wakeby: variance returns NaN when beta <= -0.5 (variance diverges)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, -0.6, 0.3, 0.2);
+    const v = dist.variance();
+    try testing.expect(math.isNan(v));
+}
+
+test "Wakeby: variance returns NaN when delta >= 0.5 (variance diverges)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.7);
+    const v = dist.variance();
+    try testing.expect(math.isNan(v));
+}
+
+test "Wakeby: variance is finite when beta > -0.5 and delta < 0.5" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const v = dist.variance();
+    try testing.expect(math.isFinite(v));
+}
+
+test "Wakeby: mode is finite and reasonable Set A" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const m = dist.mode();
+    try testing.expect(math.isFinite(m));
+    // Mode should be within a reasonable range for this distribution
+    try testing.expect(m >= -5.0 and m <= 10.0);
+}
+
+test "Wakeby: mode is finite Set D (Exponential)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.0, 1.0, 0.0);
+    const m = dist.mode();
+    try testing.expect(math.isFinite(m));
+}
+
+test "Wakeby: entropy is finite for valid case Set A" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+}
+
+test "Wakeby: entropy is positive for valid case Set A" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const e = dist.entropy();
+    try testing.expect(e > 0.0);
+}
+
+test "Wakeby: entropy is finite Set D (Exponential)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.0, 1.0, 0.0);
+    const e = dist.entropy();
+    try testing.expect(math.isFinite(e));
+}
+
+test "Wakeby: sf(x) = 1 - cdf(x)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    const x = 1.0;
+    const c = dist.cdf(x);
+    const s = dist.sf(x);
+    try testing.expectApproxEqAbs(1.0 - c, s, 1e-6);
+}
+
+test "Wakeby: format works" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    var buffer: [128]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    try testing.expect(output.len > 0);
+}
+
+test "Wakeby: format contains 'Wakeby'" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    var buffer: [128]u8 = undefined;
+    var stream = std.Io.Writer.fixed(&buffer);
+    try dist.format(&stream);
+    const output = stream.buffered();
+    const contains_name = std.mem.containsAtLeast(u8, output, 1, "Wakeby");
+    try testing.expect(contains_name);
+}
+
+test "Wakeby: f32 type support works" {
+    const dist = try Wakeby(f32).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    try dist.validate();
+    try testing.expect(math.isFinite(dist.pdf(0.5)));
+    try testing.expect(math.isFinite(dist.cdf(0.5)));
+    const q = try dist.quantile(0.5);
+    try testing.expect(math.isFinite(q));
+    try testing.expect(math.isFinite(dist.entropy()));
+    try testing.expect(math.isFinite(dist.mean()));
+    try testing.expect(math.isFinite(dist.variance()));
+}
+
+test "Wakeby: sample returns finite values Set A" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const rng = prng.random();
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Wakeby: sample returns finite values Set D (Exponential)" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rng = prng.random();
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.0, 1.0, 0.0);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const s = dist.sample(rng);
+        try testing.expect(math.isFinite(s));
+    }
+}
+
+test "Wakeby: stress test quantile/cdf roundtrips many probabilities Set A" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.5, 0.3, 0.2);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const p = @as(f64, @floatFromInt(i)) / 100.0;
+        if (p > 0.0 and p < 1.0) {
+            const q = try dist.quantile(p);
+            const c = dist.cdf(q);
+            try testing.expectApproxEqAbs(p, c, 1e-4);
+        }
+    }
+}
+
+test "Wakeby: stress test quantile/cdf roundtrips many probabilities Set D (Exponential)" {
+    const dist = try Wakeby(f64).init(0.0, 1.0, 0.0, 1.0, 0.0);
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        const p = @as(f64, @floatFromInt(i)) / 100.0;
+        if (p > 0.0 and p < 1.0) {
+            const q = try dist.quantile(p);
+            const c = dist.cdf(q);
+            try testing.expectApproxEqAbs(p, c, 1e-4);
+        }
+    }
+}
