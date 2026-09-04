@@ -16581,6 +16581,678 @@ test "Rayleigh: format output contains type name" {
     try testing.expect(std.mem.containsAtLeast(u8, output, 1, "Rayleigh"));
 }
 
+// ============================================================================
+// InverseRayleigh Distribution
+// ============================================================================
+
+/// Inverse Rayleigh distribution InverseRayleigh(θ)
+///
+/// A continuous probability distribution with support on (0, ∞), used in
+/// reliability engineering and physics. Related to Rayleigh as the inverse
+/// (reciprocal) relationship, analogous to how Frechet relates to Weibull.
+///
+/// Probability density function (PDF):
+///   f(x; θ) = (2θ / x³) · exp(-θ / x²) for x > 0, 0 otherwise
+///
+/// Cumulative distribution function (CDF):
+///   F(x; θ) = exp(-θ / x²) for x > 0
+///
+/// Parameters:
+///   - theta (θ): Scale parameter (θ > 0)
+///
+/// Key property: Mean is finite, but variance is infinite.
+///
+/// Time: O(1) for all operations
+pub fn InverseRayleigh(comptime T: type) type {
+    return struct {
+        theta: T,
+
+        const Self = @This();
+        const euler_gamma: T = 0.5772156649015329;
+
+        /// Create an Inverse Rayleigh distribution with given scale parameter
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(theta: T) DistributionError!Self {
+            if (theta <= 0.0) return error.InvalidParameter;
+            if (!math.isFinite(theta)) return error.InvalidParameter;
+            return Self{ .theta = theta };
+        }
+
+        /// Probability density function (PDF) at x
+        ///
+        /// f(x; θ) = (2θ / x³) · exp(-θ / x²) for x > 0, 0 otherwise
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            const x_cubed = x * x * x;
+            const exponent = -self.theta / (x * x);
+            return (2.0 * self.theta / x_cubed) * @exp(exponent);
+        }
+
+        /// Log probability density function (log PDF) at x
+        ///
+        /// log f(x; θ) = ln(2θ) - 3·ln(x) - θ/x²
+        ///
+        /// More numerically stable than log(pdf(x))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpdf(self: Self, x: T) T {
+            if (x <= 0.0) return -math.inf(T);
+            return @log(2.0 * self.theta) - 3.0 * @log(x) - self.theta / (x * x);
+        }
+
+        /// Cumulative distribution function (CDF) at x
+        ///
+        /// F(x; θ) = exp(-θ / x²) for x > 0
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, x: T) T {
+            if (x <= 0.0) return 0.0;
+            return @exp(-self.theta / (x * x));
+        }
+
+        /// Survival function (complement of CDF)
+        ///
+        /// S(x) = P(X > x) = 1 - exp(-θ / x²)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, x: T) T {
+            if (x <= 0.0) return 1.0;
+            return 1.0 - @exp(-self.theta / (x * x));
+        }
+
+        /// Quantile function (inverse CDF) - returns x such that P(X ≤ x) = p
+        ///
+        /// Q(p; θ) = √(-θ / ln(p))
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!T {
+            if (p < 0.0 or p > 1.0) return error.InvalidProbability;
+            if (p == 0.0) return 0.0;
+            if (p == 1.0) return math.inf(T);
+
+            const ln_p = @log(p);
+            return @sqrt(-self.theta / ln_p);
+        }
+
+        /// Mean of the distribution
+        ///
+        /// E[X] = √(π·θ)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(self: Self) T {
+            return @sqrt(math.pi * self.theta);
+        }
+
+        /// Variance of the distribution
+        ///
+        /// Var(X) = ∞ (the second moment diverges)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(self: Self) T {
+            _ = self;
+            return math.inf(T);
+        }
+
+        /// Mode of the distribution
+        ///
+        /// Mode = √(2θ/3)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(self: Self) T {
+            return @sqrt(2.0 * self.theta / 3.0);
+        }
+
+        /// Median of the distribution
+        ///
+        /// Median = √(θ / ln 2)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn median(self: Self) T {
+            return @sqrt(self.theta / @log(2.0));
+        }
+
+        /// Entropy of the distribution
+        ///
+        /// H[X] = 1 - ln(2) + 1.5·γ + 0.5·ln(θ)
+        /// where γ ≈ 0.5772156649 is Euler-Mascheroni constant
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn entropy(self: Self) T {
+            return 1.0 - @log(2.0) + 1.5 * euler_gamma + 0.5 * @log(self.theta);
+        }
+
+        /// Generate a random sample from this distribution
+        ///
+        /// Uses inverse transform method: √(-θ / ln(U)), U ~ Uniform(0,1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) T {
+            var u = rng.float(T);
+            // Avoid ln(0) by replacing u=0 with floatMin(T)
+            if (u == 0.0) u = std.math.floatMin(T);
+            const ln_u = @log(u);
+            return @sqrt(-self.theta / ln_u);
+        }
+
+        /// Format for debug printing.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("InverseRayleigh(theta={d:.1})", .{self.theta});
+        }
+
+        /// Assert that parameters are valid: theta > 0 and finite.
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (self.theta <= 0.0 or !math.isFinite(self.theta)) return DistributionError.InvalidParameter;
+        }
+    };
+}
+
+// ============================================================================
+// InverseRayleigh Tests
+// ============================================================================
+
+test "InverseRayleigh: init with valid theta" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    try expectEqual(@as(f64, 1.0), dist.theta);
+}
+
+test "InverseRayleigh: init with theta > 0 accepts various scales" {
+    const dist1 = try InverseRayleigh(f64).init(0.5);
+    try expectEqual(@as(f64, 0.5), dist1.theta);
+
+    const dist2 = try InverseRayleigh(f64).init(2.0);
+    try expectEqual(@as(f64, 2.0), dist2.theta);
+
+    const dist3 = try InverseRayleigh(f64).init(10.0);
+    try expectEqual(@as(f64, 10.0), dist3.theta);
+}
+
+test "InverseRayleigh: init fails when theta is zero" {
+    try expectError(error.InvalidParameter, InverseRayleigh(f64).init(0.0));
+}
+
+test "InverseRayleigh: init fails when theta is negative" {
+    try expectError(error.InvalidParameter, InverseRayleigh(f64).init(-1.0));
+    try expectError(error.InvalidParameter, InverseRayleigh(f64).init(-0.5));
+}
+
+test "InverseRayleigh: init fails when theta is NaN" {
+    try expectError(error.InvalidParameter, InverseRayleigh(f64).init(math.nan(f64)));
+}
+
+test "InverseRayleigh: init fails when theta is positive infinity" {
+    try expectError(error.InvalidParameter, InverseRayleigh(f64).init(math.inf(f64)));
+}
+
+test "InverseRayleigh: init fails when theta is negative infinity" {
+    try expectError(error.InvalidParameter, InverseRayleigh(f64).init(-math.inf(f64)));
+}
+
+test "InverseRayleigh: pdf at x=0 returns 0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    try expectEqual(@as(f64, 0.0), dist.pdf(0.0));
+}
+
+test "InverseRayleigh: pdf for negative x returns 0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    try expectEqual(@as(f64, 0.0), dist.pdf(-1.0));
+    try expectEqual(@as(f64, 0.0), dist.pdf(-0.5));
+}
+
+test "InverseRayleigh: pdf at x=0.5 for theta=1.0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const expected = 0.293050222219746884699488340372;
+    try expectApproxEqRel(@as(f64, expected), dist.pdf(0.5), 1e-12);
+}
+
+test "InverseRayleigh: pdf at x=1.0 for theta=1.0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const expected = 0.735758882342884643191047540323;
+    try expectApproxEqRel(@as(f64, expected), dist.pdf(1.0), 1e-12);
+}
+
+test "InverseRayleigh: pdf at x=2.0 for theta=1.0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const expected = 0.194700195767851217061292566745;
+    try expectApproxEqRel(@as(f64, expected), dist.pdf(2.0), 1e-12);
+}
+
+test "InverseRayleigh: pdf at x=5.0 for theta=1.0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const expected = 0.0153726310264371713510273710612;
+    try expectApproxEqRel(@as(f64, expected), dist.pdf(5.0), 1e-12);
+}
+
+test "InverseRayleigh: pdf at x=1.0 for theta=2.5" {
+    const dist = try InverseRayleigh(f64).init(2.5);
+    const expected = 0.410424993119493975847643372336;
+    try expectApproxEqRel(@as(f64, expected), dist.pdf(1.0), 1e-12);
+}
+
+test "InverseRayleigh: pdf at x=2.0 for theta=2.5" {
+    const dist = try InverseRayleigh(f64).init(2.5);
+    const expected = 0.334538392824368901222889067514;
+    try expectApproxEqRel(@as(f64, expected), dist.pdf(2.0), 1e-12);
+}
+
+test "InverseRayleigh: pdf at x=2.0 for theta=4.0" {
+    const dist = try InverseRayleigh(f64).init(4.0);
+    const expected = 0.367879441171442321595523770161;
+    try expectApproxEqRel(@as(f64, expected), dist.pdf(2.0), 1e-12);
+}
+
+test "InverseRayleigh: pdf is non-negative for all positive x" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const test_points = [_]f64{ 0.1, 0.5, 1.0, 1.5, 2.0, 5.0, 10.0 };
+    for (test_points) |x| {
+        try testing.expect(dist.pdf(x) >= 0.0);
+    }
+}
+
+test "InverseRayleigh: logpdf at x=0 returns -infinity" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(0.0)));
+}
+
+test "InverseRayleigh: logpdf for negative x returns -infinity" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    try testing.expect(math.isNegativeInf(dist.logpdf(-1.0)));
+}
+
+test "InverseRayleigh: logpdf is log of pdf" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const x = 1.5;
+    const pdf_val = dist.pdf(x);
+    const logpdf_val = dist.logpdf(x);
+    const expected_logpdf = @log(pdf_val);
+    try expectApproxEqRel(@as(f64, expected_logpdf), logpdf_val, 1e-12);
+}
+
+test "InverseRayleigh: cdf at x=0 returns 0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    try expectEqual(@as(f64, 0.0), dist.cdf(0.0));
+}
+
+test "InverseRayleigh: cdf for negative x returns 0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    try expectEqual(@as(f64, 0.0), dist.cdf(-1.0));
+}
+
+test "InverseRayleigh: cdf at x=0.5 for theta=1.0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const expected = 0.0183156388887341802937180212732;
+    try expectApproxEqRel(@as(f64, expected), dist.cdf(0.5), 1e-12);
+}
+
+test "InverseRayleigh: cdf at x=1.0 for theta=1.0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const expected = 0.367879441171442321595523770161;
+    try expectApproxEqRel(@as(f64, expected), dist.cdf(1.0), 1e-12);
+}
+
+test "InverseRayleigh: cdf at x=2.0 for theta=1.0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const expected = 0.778800783071404868245170266978;
+    try expectApproxEqRel(@as(f64, expected), dist.cdf(2.0), 1e-12);
+}
+
+test "InverseRayleigh: cdf at x=5.0 for theta=1.0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const expected = 0.960789439152323209439210691323;
+    try expectApproxEqRel(@as(f64, expected), dist.cdf(5.0), 1e-12);
+}
+
+test "InverseRayleigh: cdf at x=1.0 for theta=2.5" {
+    const dist = try InverseRayleigh(f64).init(2.5);
+    const expected = 0.0820849986238987951695286744672;
+    try expectApproxEqRel(@as(f64, expected), dist.cdf(1.0), 1e-12);
+}
+
+test "InverseRayleigh: cdf at x=2.0 for theta=2.5" {
+    const dist = try InverseRayleigh(f64).init(2.5);
+    const expected = 0.535261428518990241956622508022;
+    try expectApproxEqRel(@as(f64, expected), dist.cdf(2.0), 1e-12);
+}
+
+test "InverseRayleigh: cdf at x=2.0 for theta=4.0" {
+    const dist = try InverseRayleigh(f64).init(4.0);
+    const expected = 0.367879441171442321595523770161;
+    try expectApproxEqRel(@as(f64, expected), dist.cdf(2.0), 1e-12);
+}
+
+test "InverseRayleigh: cdf is monotone increasing" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const test_points = [_]f64{ 0.1, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0 };
+    for (0..test_points.len - 1) |i| {
+        try testing.expect(dist.cdf(test_points[i]) <= dist.cdf(test_points[i + 1]));
+    }
+}
+
+test "InverseRayleigh: cdf approaches 1 as x increases" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const cdf_10 = dist.cdf(10.0);
+    const cdf_100 = dist.cdf(100.0);
+    try testing.expect(cdf_10 > 0.99);
+    try testing.expect(cdf_100 > 0.9999);
+}
+
+test "InverseRayleigh: sf at x=0 returns 1" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    try expectEqual(@as(f64, 1.0), dist.sf(0.0));
+}
+
+test "InverseRayleigh: sf at x=1.0 for theta=1.0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const expected = 0.632120558828557678404476229839;
+    try expectApproxEqRel(@as(f64, expected), dist.sf(1.0), 1e-12);
+}
+
+test "InverseRayleigh: cdf + sf equals 1" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const test_points = [_]f64{ 0.1, 0.5, 1.0, 2.0, 3.0, 5.0 };
+    for (test_points) |x| {
+        const sum = dist.cdf(x) + dist.sf(x);
+        try expectApproxEqRel(@as(f64, 1.0), sum, 1e-13);
+    }
+}
+
+test "InverseRayleigh: sf for negative x returns 1" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    try expectEqual(@as(f64, 1.0), dist.sf(-1.0));
+}
+
+test "InverseRayleigh: quantile at p=0 returns 0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    try expectEqual(@as(f64, 0.0), try dist.quantile(0.0));
+}
+
+test "InverseRayleigh: quantile at p=1 returns infinity" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const q = try dist.quantile(1.0);
+    try testing.expect(math.isPositiveInf(q));
+}
+
+test "InverseRayleigh: quantile fails for p<0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    try expectError(error.InvalidProbability, dist.quantile(-0.1));
+}
+
+test "InverseRayleigh: quantile fails for p>1" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    try expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "InverseRayleigh: quantile at p=0.1 for theta=1.0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const expected = 0.659010228982260811501618012145;
+    try expectApproxEqRel(@as(f64, expected), try dist.quantile(0.1), 1e-10);
+}
+
+test "InverseRayleigh: quantile at p=0.5 for theta=1.0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const expected = 1.2011224087864497948578032861;
+    try expectApproxEqRel(@as(f64, expected), try dist.quantile(0.5), 1e-10);
+}
+
+test "InverseRayleigh: quantile at p=0.9 for theta=1.0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const expected = 3.08078262476110167801158322201;
+    try expectApproxEqRel(@as(f64, expected), try dist.quantile(0.9), 1e-10);
+}
+
+test "InverseRayleigh: quantile at p=0.1 for theta=2.5" {
+    const dist = try InverseRayleigh(f64).init(2.5);
+    const expected = 1.04198666246652580132075432171;
+    try expectApproxEqRel(@as(f64, expected), try dist.quantile(0.1), 1e-10);
+}
+
+test "InverseRayleigh: quantile at p=0.5 for theta=2.5" {
+    const dist = try InverseRayleigh(f64).init(2.5);
+    const expected = 1.89914128021651104291538928341;
+    try expectApproxEqRel(@as(f64, expected), try dist.quantile(0.5), 1e-10);
+}
+
+test "InverseRayleigh: quantile at p=0.9 for theta=2.5" {
+    const dist = try InverseRayleigh(f64).init(2.5);
+    const expected = 4.87114503505846739687780752762;
+    try expectApproxEqRel(@as(f64, expected), try dist.quantile(0.9), 1e-10);
+}
+
+test "InverseRayleigh: quantile inverse of cdf (round-trip)" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const test_probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (test_probs) |p| {
+        const q = try dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqRel(@as(f64, p), cdf_q, 1e-12);
+    }
+}
+
+test "InverseRayleigh: quantile inverse of cdf for theta=2.5" {
+    const dist = try InverseRayleigh(f64).init(2.5);
+    const test_probs = [_]f64{ 0.1, 0.25, 0.5, 0.75, 0.9 };
+    for (test_probs) |p| {
+        const q = try dist.quantile(p);
+        const cdf_q = dist.cdf(q);
+        try expectApproxEqRel(@as(f64, p), cdf_q, 1e-12);
+    }
+}
+
+test "InverseRayleigh: mean for theta=1.0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const expected = 1.77245385090551602729816748334; // sqrt(pi)
+    try expectApproxEqRel(@as(f64, expected), dist.mean(), 1e-12);
+}
+
+test "InverseRayleigh: mean for theta=2.5" {
+    const dist = try InverseRayleigh(f64).init(2.5);
+    const expected = 2.80249560819896434965564121693;
+    try expectApproxEqRel(@as(f64, expected), dist.mean(), 1e-12);
+}
+
+test "InverseRayleigh: mean for theta=4.0" {
+    const dist = try InverseRayleigh(f64).init(4.0);
+    const expected = 3.54490770181103205459633496668;
+    try expectApproxEqRel(@as(f64, expected), dist.mean(), 1e-12);
+}
+
+test "InverseRayleigh: mean scales with sqrt(theta)" {
+    const dist1 = try InverseRayleigh(f64).init(1.0);
+    const dist2 = try InverseRayleigh(f64).init(4.0);
+    const ratio = dist2.mean() / dist1.mean();
+    try expectApproxEqRel(@as(f64, 2.0), ratio, 1e-12);
+}
+
+test "InverseRayleigh: variance returns positive infinity" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const var_val = dist.variance();
+    try testing.expect(math.isPositiveInf(var_val));
+}
+
+test "InverseRayleigh: variance returns infinity for any positive theta" {
+    const thetas = [_]f64{ 0.5, 1.0, 2.5, 4.0, 10.0 };
+    for (thetas) |theta| {
+        const dist = try InverseRayleigh(f64).init(theta);
+        const var_val = dist.variance();
+        try testing.expect(math.isPositiveInf(var_val));
+    }
+}
+
+test "InverseRayleigh: mode for theta=1.0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const expected = 0.816496580927726032732428024902; // sqrt(2/3)
+    try expectApproxEqRel(@as(f64, expected), dist.mode(), 1e-12);
+}
+
+test "InverseRayleigh: mode for theta=2.5" {
+    const dist = try InverseRayleigh(f64).init(2.5);
+    const expected = 1.29099444873580562839308846659;
+    try expectApproxEqRel(@as(f64, expected), dist.mode(), 1e-12);
+}
+
+test "InverseRayleigh: mode for theta=4.0" {
+    const dist = try InverseRayleigh(f64).init(4.0);
+    const expected = 1.6329931618554520654648560498;
+    try expectApproxEqRel(@as(f64, expected), dist.mode(), 1e-12);
+}
+
+test "InverseRayleigh: mode scales with sqrt(theta)" {
+    const dist1 = try InverseRayleigh(f64).init(1.0);
+    const dist2 = try InverseRayleigh(f64).init(4.0);
+    const ratio = dist2.mode() / dist1.mode();
+    try expectApproxEqRel(@as(f64, 2.0), ratio, 1e-12);
+}
+
+test "InverseRayleigh: median for theta=1.0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const expected = 1.2011224087864497948578032861;
+    try expectApproxEqRel(@as(f64, expected), dist.median(), 1e-12);
+}
+
+test "InverseRayleigh: median for theta=2.5" {
+    const dist = try InverseRayleigh(f64).init(2.5);
+    const expected = 1.89914128021651104291538928341;
+    try expectApproxEqRel(@as(f64, expected), dist.median(), 1e-12);
+}
+
+test "InverseRayleigh: median for theta=4.0" {
+    const dist = try InverseRayleigh(f64).init(4.0);
+    const expected = 2.40224481757289958971560657219;
+    try expectApproxEqRel(@as(f64, expected), dist.median(), 1e-12);
+}
+
+test "InverseRayleigh: median equals quantile(0.5)" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const median = dist.median();
+    const q_half = try dist.quantile(0.5);
+    try expectApproxEqRel(@as(f64, median), q_half, 1e-12);
+}
+
+test "InverseRayleigh: median scales with sqrt(theta)" {
+    const dist1 = try InverseRayleigh(f64).init(1.0);
+    const dist2 = try InverseRayleigh(f64).init(4.0);
+    const ratio = dist2.median() / dist1.median();
+    try expectApproxEqRel(@as(f64, 2.0), ratio, 1e-12);
+}
+
+test "InverseRayleigh: entropy for theta=1.0" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const expected = 1.17267631679235398149253601367;
+    try expectApproxEqRel(@as(f64, expected), dist.entropy(), 1e-10);
+}
+
+test "InverseRayleigh: entropy for theta=2.5" {
+    const dist = try InverseRayleigh(f64).init(2.5);
+    const expected = 1.63082168272943151408429961955;
+    try expectApproxEqRel(@as(f64, expected), dist.entropy(), 1e-10);
+}
+
+test "InverseRayleigh: entropy for theta=4.0" {
+    const dist = try InverseRayleigh(f64).init(4.0);
+    const expected = 1.86582349735229929090976813512;
+    try expectApproxEqRel(@as(f64, expected), dist.entropy(), 1e-10);
+}
+
+test "InverseRayleigh: entropy increases with theta" {
+    const dist1 = try InverseRayleigh(f64).init(1.0);
+    const dist2 = try InverseRayleigh(f64).init(4.0);
+    try testing.expect(dist2.entropy() > dist1.entropy());
+}
+
+test "InverseRayleigh: sample returns positive values" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..1000) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample > 0.0);
+    }
+}
+
+test "InverseRayleigh: sample empirical mean converges to theoretical mean" {
+    const dist = try InverseRayleigh(f64).init(1.0);
+    const theoretical_mean = dist.mean();
+
+    var rng = std.Random.DefaultPrng.init(42);
+    var sum: f64 = 0.0;
+    const n = 5000;
+    for (0..n) |_| {
+        sum += dist.sample(rng.random());
+    }
+    const empirical_mean = sum / @as(f64, @floatFromInt(n));
+
+    const tolerance = 0.15;
+    try expectApproxEqRel(@as(f64, theoretical_mean), empirical_mean, tolerance);
+}
+
+test "InverseRayleigh: sample with different theta" {
+    const dist = try InverseRayleigh(f64).init(2.5);
+    var rng = std.Random.DefaultPrng.init(42);
+    for (0..100) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample > 0.0);
+    }
+}
+
+test "InverseRayleigh: sample all values positive for theta=4.0" {
+    const dist = try InverseRayleigh(f64).init(4.0);
+    var rng = std.Random.DefaultPrng.init(12345);
+    for (0..500) |_| {
+        const sample = dist.sample(rng.random());
+        try testing.expect(sample > 0.0);
+    }
+}
+
+test "InverseRayleigh: validate passes for valid parameters" {
+    var dist = try InverseRayleigh(f64).init(1.5);
+    try dist.validate();
+}
+
+test "InverseRayleigh: validate fails when theta is zero" {
+    var dist = try InverseRayleigh(f64).init(1.0);
+    dist.theta = 0.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "InverseRayleigh: validate fails when theta is negative" {
+    var dist = try InverseRayleigh(f64).init(1.0);
+    dist.theta = -1.0;
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "InverseRayleigh: validate fails when theta is NaN" {
+    var dist = try InverseRayleigh(f64).init(1.0);
+    dist.theta = math.nan(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "InverseRayleigh: validate fails when theta is infinity" {
+    var dist = try InverseRayleigh(f64).init(1.0);
+    dist.theta = math.inf(f64);
+    try expectError(error.InvalidParameter, dist.validate());
+}
+
+test "InverseRayleigh: f32 type support works" {
+    const dist = try InverseRayleigh(f32).init(1.0);
+    try expectEqual(@as(f32, 1.0), dist.theta);
+
+    const pdf_val: f32 = dist.pdf(0.5);
+    try testing.expect(pdf_val > 0.0);
+
+    const mean_val: f32 = dist.mean();
+    try testing.expect(mean_val > 1.0);
+}
+
+test "InverseRayleigh: f32 quantile works" {
+    const dist = try InverseRayleigh(f32).init(1.0);
+    const q = try dist.quantile(0.5);
+    try testing.expect(q > 0.0);
+}
+
 /// Kumaraswamy distribution — bounded continuous distribution on (0, 1).
 /// Closed-form CDF and quantile; flexible alternative to Beta distribution.
 ///
