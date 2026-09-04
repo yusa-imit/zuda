@@ -127912,3 +127912,481 @@ test "Wakeby: stress test quantile/cdf roundtrips many probabilities Set D (Expo
         }
     }
 }
+
+/// Sibuya(alpha) — discrete distribution on support {1, 2, 3, ...}
+///
+/// Single parameter α ∈ (0, 1). Known in the literature (Sibuya 1979; Devroye 1993)
+/// as the distribution whose probability generating function is G(s) = 1 − (1−s)^α.
+/// Discrete analogue of a one-sided stable law; used in fractional/discrete-stable
+/// renewal processes. Tail decays as k^{−(1+α)}, producing always-infinite mean
+/// and variance for every valid α ∈ (0,1).
+///
+/// Applications: Stable-law arrivals in renewal theory, anomalous diffusion models,
+///   network packet size distributions in heavy-tailed regimes.
+///
+/// Reference: Sibuya (1979); Devroye (1993) "A triptych of discrete distributions
+///   related to the stable law"
+pub fn Sibuya(comptime T: type) type {
+    return struct {
+        alpha: T,
+
+        const Self = @This();
+
+        /// Create a Sibuya distribution with parameter alpha ∈ (0, 1).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn init(alpha: T) DistributionError!Self {
+            if (!(alpha > 0.0 and alpha < 1.0) or !math.isFinite(alpha)) {
+                return error.InvalidParameter;
+            }
+            return Self{ .alpha = alpha };
+        }
+
+        /// Probability mass function: P(X = k) = alpha * Γ(k−α) / (Γ(1−α) * Γ(k+1))
+        ///
+        /// Returns 0 for k = 0 (outside support).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn pmf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            return @exp(self.logpmf(k));
+        }
+
+        /// Log probability mass function: log P(X = k)
+        ///
+        /// logpmf(k) = ln(α) + logΓ(k−α) − logΓ(1−α) − logΓ(k+1) for k ≥ 1
+        /// logpmf(0) = −∞
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logpmf(self: Self, k: u64) T {
+            if (k == 0) return -math.inf(T);
+            const k_f: T = @floatFromInt(k);
+            return @log(self.alpha) + logGamma(k_f - self.alpha) -
+                   logGamma(1.0 - self.alpha) - logGamma(k_f + 1.0);
+        }
+
+        /// Cumulative distribution function: P(X ≤ k) = 1 − sf(k)
+        ///
+        /// Returns 0 for k = 0 (support starts at k=1).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn cdf(self: Self, k: u64) T {
+            if (k == 0) return 0.0;
+            return 1.0 - self.sf(k);
+        }
+
+        /// Survival function: P(X > k) = Γ(k+1−α) / (Γ(1−α) * Γ(k+1))
+        ///
+        /// sf(0) = 1 exactly (Γ(1−α) / Γ(1−α) / 1 = 1).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn sf(self: Self, k: u64) T {
+            if (k == 0) return 1.0;
+            const k_f: T = @floatFromInt(k);
+            return @exp(self.logsf(k_f));
+        }
+
+        /// Log survival function: log P(X > k)
+        ///
+        /// logsf(k) = logΓ(k+1−α) − logΓ(1−α) − logΓ(k+1)
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn logsf(self: Self, k: T) T {
+            const k_plus_1: T = k + 1.0;
+            return logGamma(k_plus_1 - self.alpha) -
+                   logGamma(1.0 - self.alpha) - logGamma(k_plus_1);
+        }
+
+        /// Quantile function: smallest k such that P(X ≤ k) ≥ p.
+        ///
+        /// Linear scan from k = 1; terminates when cumulative mass ≥ p or
+        /// when the next term contributes less than 10^{−15} (numerical 1.0).
+        /// Returns error.InvalidProbability for p ∉ [0,1) or p = 1.0
+        /// (support is unbounded so no finite quantile at p=1).
+        ///
+        /// Time: O(k*) where k* is the returned value | Space: O(1)
+        pub fn quantile(self: Self, p: T) DistributionError!u64 {
+            if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
+            if (p == 0.0 or p < self.pmf(1)) return 1;
+            if (p == 1.0) return error.InvalidProbability;
+            var cumsum: T = 0.0;
+            var k: u64 = 1;
+            while (k <= 1_000_000_000) {
+                const contrib = self.pmf(k);
+                cumsum += contrib;
+                if (cumsum >= p) return k;
+                if (contrib < 1e-15) return k; // numerical CDF ≈ 1.0
+                k += 1;
+            }
+            return k;
+        }
+
+        /// Mode: always 1 (PMF is strictly decreasing for all α ∈ (0,1)).
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mode(_: Self) u64 {
+            return 1;
+        }
+
+        /// Mean: always +∞ for every α ∈ (0,1).
+        ///
+        /// Tail decays as k^{−(1+α)} with α < 1, so E[X] diverges.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn mean(_: Self) T {
+            return math.inf(T);
+        }
+
+        /// Variance: always +∞ for every α ∈ (0,1).
+        ///
+        /// Mean already infinite implies variance infinite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn variance(_: Self) T {
+            return math.inf(T);
+        }
+
+        /// Sample from Sibuya(α) using linear-scan acceptance by cumulative PMF.
+        ///
+        /// Draws uniform u ∈ [0,1) and scans k=1,2,... until CDF(k) ≥ u.
+        /// Capped at k ≤ 1_000_000_000; works directly without error return.
+        ///
+        /// Time: O(k*) where k* is the returned sample | Space: O(1)
+        pub fn sample(self: Self, rng: std.Random) u64 {
+            const u = rng.float(T);
+            var cumsum: T = 0.0;
+            var k: u64 = 1;
+            while (k <= 1_000_000_000) {
+                const contrib = self.pmf(k);
+                cumsum += contrib;
+                if (cumsum >= u) return k;
+                if (contrib < 1e-15) return k; // numerical CDF ≈ 1.0
+                k += 1;
+            }
+            return k;
+        }
+
+        /// Format: print distribution in compact form.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn format(self: Self, writer: *std.Io.Writer) !void {
+            try writer.print("Sibuya(α={d:.4})", .{self.alpha});
+        }
+
+        /// Validate internal state: α ∈ (0, 1) and finite.
+        ///
+        /// Time: O(1) | Space: O(1)
+        pub fn validate(self: Self) !void {
+            if (!(self.alpha > 0.0 and self.alpha < 1.0) or !math.isFinite(self.alpha)) {
+                return error.InvalidParameter;
+            }
+        }
+    };
+}
+
+// Sibuya Distribution Tests
+test "Sibuya: init valid alpha=0.3" {
+    const dist = try Sibuya(f64).init(0.3);
+    try testing.expectApproxEqAbs(@as(f64, 0.3), dist.alpha, 1e-15);
+}
+
+test "Sibuya: init valid alpha=0.5" {
+    const dist = try Sibuya(f64).init(0.5);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), dist.alpha, 1e-15);
+}
+
+test "Sibuya: init valid alpha=0.7" {
+    const dist = try Sibuya(f64).init(0.7);
+    try testing.expectApproxEqAbs(@as(f64, 0.7), dist.alpha, 1e-15);
+}
+
+test "Sibuya: init invalid alpha=0.0 returns error" {
+    try testing.expectError(error.InvalidParameter, Sibuya(f64).init(0.0));
+}
+
+test "Sibuya: init invalid alpha=-0.5 returns error" {
+    try testing.expectError(error.InvalidParameter, Sibuya(f64).init(-0.5));
+}
+
+test "Sibuya: init invalid alpha=1.0 returns error" {
+    try testing.expectError(error.InvalidParameter, Sibuya(f64).init(1.0));
+}
+
+test "Sibuya: init invalid alpha=1.5 returns error" {
+    try testing.expectError(error.InvalidParameter, Sibuya(f64).init(1.5));
+}
+
+test "Sibuya: init invalid alpha=inf returns error" {
+    try testing.expectError(error.InvalidParameter, Sibuya(f64).init(math.inf(f64)));
+}
+
+test "Sibuya: init invalid alpha=NaN returns error" {
+    try testing.expectError(error.InvalidParameter, Sibuya(f64).init(math.nan(f64)));
+}
+
+test "Sibuya: pmf(0) returns 0" {
+    const dist = try Sibuya(f64).init(0.3);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.pmf(0), 1e-15);
+}
+
+test "Sibuya: logpmf(0) returns -infinity" {
+    const dist = try Sibuya(f64).init(0.3);
+    try testing.expect(math.isNegativeInf(dist.logpmf(0)));
+}
+
+test "Sibuya: cdf(0) returns 0" {
+    const dist = try Sibuya(f64).init(0.3);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), dist.cdf(0), 1e-15);
+}
+
+test "Sibuya: sf(0) returns 1" {
+    const dist = try Sibuya(f64).init(0.3);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), dist.sf(0), 1e-15);
+}
+
+test "Sibuya: alpha=0.3 pmf values match ground truth" {
+    const dist = try Sibuya(f64).init(0.3);
+    try testing.expectApproxEqAbs(@as(f64, 0.3), dist.pmf(1), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.105), dist.pmf(2), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.0595), dist.pmf(3), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.0401625), dist.pmf(4), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.02972025), dist.pmf(5), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.011817569512546875), dist.pmf(10), 1e-12);
+}
+
+test "Sibuya: alpha=0.3 cdf values match ground truth" {
+    const dist = try Sibuya(f64).init(0.3);
+    try testing.expectApproxEqAbs(@as(f64, 0.3), dist.cdf(1), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.405), dist.cdf(2), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.4645), dist.cdf(3), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.5046625), dist.cdf(4), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.53438275), dist.cdf(5), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.617898585760984375), dist.cdf(10), 1e-12);
+}
+
+test "Sibuya: alpha=0.3 sf values match ground truth" {
+    const dist = try Sibuya(f64).init(0.3);
+    try testing.expectApproxEqAbs(@as(f64, 0.7), dist.sf(1), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.595), dist.sf(2), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.5355), dist.sf(3), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.4953375), dist.sf(4), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.46561725), dist.sf(5), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.382101414239015625), dist.sf(10), 1e-12);
+}
+
+test "Sibuya: alpha=0.5 pmf values match ground truth" {
+    const dist = try Sibuya(f64).init(0.5);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), dist.pmf(1), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.125), dist.pmf(2), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.0625), dist.pmf(3), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.0390625), dist.pmf(4), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.02734375), dist.pmf(5), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.009273529052734375), dist.pmf(10), 1e-12);
+}
+
+test "Sibuya: alpha=0.5 cdf values match ground truth" {
+    const dist = try Sibuya(f64).init(0.5);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), dist.cdf(1), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.625), dist.cdf(2), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.6875), dist.cdf(3), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.7265625), dist.cdf(4), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.75390625), dist.cdf(5), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.823802947998046875), dist.cdf(10), 1e-12);
+}
+
+test "Sibuya: alpha=0.5 sf values match ground truth" {
+    const dist = try Sibuya(f64).init(0.5);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), dist.sf(1), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.375), dist.sf(2), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.3125), dist.sf(3), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.2734375), dist.sf(4), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.24609375), dist.sf(5), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.176197052001953125), dist.sf(10), 1e-12);
+}
+
+test "Sibuya: alpha=0.7 pmf values match ground truth" {
+    const dist = try Sibuya(f64).init(0.7);
+    try testing.expectApproxEqAbs(@as(f64, 0.7), dist.pmf(1), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.105), dist.pmf(2), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.0455), dist.pmf(3), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.0261625), dist.pmf(4), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.01726725), dist.pmf(5), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.004967378087546875), dist.pmf(10), 1e-12);
+}
+
+test "Sibuya: alpha=0.7 cdf values match ground truth" {
+    const dist = try Sibuya(f64).init(0.7);
+    try testing.expectApproxEqAbs(@as(f64, 0.7), dist.cdf(1), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.805), dist.cdf(2), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.8505), dist.cdf(3), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.8766625), dist.cdf(4), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.89392975), dist.cdf(5), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.934004833979734375), dist.cdf(10), 1e-12);
+}
+
+test "Sibuya: alpha=0.7 sf values match ground truth" {
+    const dist = try Sibuya(f64).init(0.7);
+    try testing.expectApproxEqAbs(@as(f64, 0.3), dist.sf(1), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.195), dist.sf(2), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.1495), dist.sf(3), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.1233375), dist.sf(4), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0.10607025), dist.sf(5), 1e-12);
+    // Note: small precision loss in last digit acceptable due to finite precision
+    try testing.expectApproxEqAbs(@as(f64, 0.065995166020265625), dist.sf(10), 1e-11);
+}
+
+test "Sibuya: logpmf values match ground truth alpha=0.5" {
+    const dist = try Sibuya(f64).init(0.5);
+    const log_pmf_1 = dist.logpmf(1);
+    const expected_log_pmf_1 = @log(@as(f64, 0.5));
+    try testing.expectApproxEqAbs(expected_log_pmf_1, log_pmf_1, 1e-12);
+}
+
+test "Sibuya: mode is always 1 for alpha=0.3" {
+    const dist = try Sibuya(f64).init(0.3);
+    try testing.expectEqual(@as(u64, 1), dist.mode());
+}
+
+test "Sibuya: mode is always 1 for alpha=0.5" {
+    const dist = try Sibuya(f64).init(0.5);
+    try testing.expectEqual(@as(u64, 1), dist.mode());
+}
+
+test "Sibuya: mode is always 1 for alpha=0.7" {
+    const dist = try Sibuya(f64).init(0.7);
+    try testing.expectEqual(@as(u64, 1), dist.mode());
+}
+
+test "Sibuya: mean is infinity for alpha=0.3" {
+    const dist = try Sibuya(f64).init(0.3);
+    const m = dist.mean();
+    try testing.expect(math.isPositiveInf(m));
+}
+
+test "Sibuya: mean is infinity for alpha=0.5" {
+    const dist = try Sibuya(f64).init(0.5);
+    const m = dist.mean();
+    try testing.expect(math.isPositiveInf(m));
+}
+
+test "Sibuya: mean is infinity for alpha=0.7" {
+    const dist = try Sibuya(f64).init(0.7);
+    const m = dist.mean();
+    try testing.expect(math.isPositiveInf(m));
+}
+
+test "Sibuya: variance is infinity for alpha=0.3" {
+    const dist = try Sibuya(f64).init(0.3);
+    const v = dist.variance();
+    try testing.expect(math.isPositiveInf(v));
+}
+
+test "Sibuya: variance is infinity for alpha=0.5" {
+    const dist = try Sibuya(f64).init(0.5);
+    const v = dist.variance();
+    try testing.expect(math.isPositiveInf(v));
+}
+
+test "Sibuya: variance is infinity for alpha=0.7" {
+    const dist = try Sibuya(f64).init(0.7);
+    const v = dist.variance();
+    try testing.expect(math.isPositiveInf(v));
+}
+
+test "Sibuya: quantile p=0 returns 1" {
+    const dist = try Sibuya(f64).init(0.5);
+    const q = try dist.quantile(0.0);
+    try testing.expectEqual(@as(u64, 1), q);
+}
+
+test "Sibuya: quantile p=1.0 returns error" {
+    const dist = try Sibuya(f64).init(0.5);
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.0));
+}
+
+test "Sibuya: quantile p outside [0,1] returns error" {
+    const dist = try Sibuya(f64).init(0.5);
+    try testing.expectError(error.InvalidProbability, dist.quantile(-0.1));
+    try testing.expectError(error.InvalidProbability, dist.quantile(1.1));
+}
+
+test "Sibuya: quantile roundtrip cdf(quantile(p)) >= p for alpha=0.5" {
+    const dist = try Sibuya(f64).init(0.5);
+    const probabilities = [_]f64{ 0.1, 0.3, 0.5, 0.7, 0.9 };
+    for (probabilities) |p| {
+        const q = try dist.quantile(p);
+        const c = dist.cdf(q);
+        try testing.expect(c >= p);
+    }
+}
+
+test "Sibuya: quantile roundtrip cdf(quantile(p)) >= p for alpha=0.3" {
+    const dist = try Sibuya(f64).init(0.3);
+    const probabilities = [_]f64{ 0.1, 0.3, 0.5, 0.7 };
+    for (probabilities) |p| {
+        const q = try dist.quantile(p);
+        const c = dist.cdf(q);
+        try testing.expect(c >= p);
+    }
+}
+
+test "Sibuya: sample always returns values >= 1" {
+    const dist = try Sibuya(f64).init(0.5);
+    var rng = std.Random.DefaultPrng.init(42);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const sample_val = dist.sample(rng.random());
+        try testing.expect(sample_val >= 1);
+    }
+}
+
+test "Sibuya: sample returns bounded finite values" {
+    const dist = try Sibuya(f64).init(0.5);
+    var rng = std.Random.DefaultPrng.init(42);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const sample_val = dist.sample(rng.random());
+        try testing.expect(sample_val <= 1_000_000_000);
+    }
+}
+
+test "Sibuya: sample has expected distribution for alpha=0.5" {
+    const dist = try Sibuya(f64).init(0.5);
+    var rng = std.Random.DefaultPrng.init(42);
+    var count_k1: usize = 0;
+    var count_k2: usize = 0;
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const sample_val = dist.sample(rng.random());
+        if (sample_val == 1) count_k1 += 1;
+        if (sample_val == 2) count_k2 += 1;
+    }
+    // alpha=0.5: pmf(1)=0.5, pmf(2)=0.125, so pmf(1) >> pmf(2)
+    // expect more k=1 samples than k=2 samples
+    try testing.expect(count_k1 > count_k2);
+}
+
+test "Sibuya: validate passes for valid alpha" {
+    const dist = try Sibuya(f64).init(0.5);
+    try dist.validate();
+}
+
+test "Sibuya: f32 type support works alpha=0.5" {
+    const dist = try Sibuya(f32).init(0.5);
+    const pmf_val = dist.pmf(1);
+    try testing.expectApproxEqAbs(@as(f32, 0.5), pmf_val, 1e-6);
+}
+
+test "Sibuya: f32 type support works alpha=0.3" {
+    const dist = try Sibuya(f32).init(0.3);
+    const pmf_val = dist.pmf(1);
+    try testing.expectApproxEqAbs(@as(f32, 0.3), pmf_val, 1e-6);
+}
+
+test "Sibuya: sf and cdf sum to 1" {
+    const dist = try Sibuya(f64).init(0.5);
+    const k: u64 = 5;
+    const sf_val = dist.sf(k);
+    const cdf_val = dist.cdf(k);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), sf_val + cdf_val, 1e-12);
+}
