@@ -1,20 +1,23 @@
 .vscode
 
 # zig
-.zig-cache
-zig-out
+.zig-cache/
+zig-out/
+zig-pkg/
+*.o
 *.a
 *.so
 *.dylib
+*.log
+*.db
 test_*
+/test
+verify_*
 
-# Claude Code
-.claude/settings.local.json
-.claude/teams/
-.claude/tasks/
-.claude/projects/
-.claude/scratchpad.md
-.claude/session-counter
+# realm scratch (kingdom restructure, 2026-09-05)
+find_max
+knapsack
+simple_test
 
 # zr
 .zr_history

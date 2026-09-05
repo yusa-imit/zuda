@@ -217,7 +217,6 @@ zuda is designed to replace hand-rolled data structures in real projects:
 | **[silica](https://github.com/yusa-imit/silica)** (RDBMS) | Custom B+Tree (4300 LOC), LRU cache (1237 LOC) | `BTree`, `LRUCache` | Phase 2/4 ✅ |
 | **[zoltraak](https://github.com/yusa-imit/zoltraak)** (Redis-compatible server) | Custom sorted set, HyperLogLog | `SkipList`, `HyperLogLog`, `Geohash` | Phase 1/4 ✅ |
 
-See [CLAUDE.md](CLAUDE.md#consumer-use-case-registry) for complete consumer registry.
 
 ---
 
@@ -314,7 +313,6 @@ Contributions welcome! Please:
 
 1. Check existing issues or create a new one
 2. Fork and create a feature branch
-3. Follow Zig coding conventions (see [CLAUDE.md](CLAUDE.md#coding-standards))
 4. Add tests for new functionality
 5. Ensure `zig build test` passes
 6. Submit a pull request
@@ -333,7 +331,6 @@ Contributions welcome! Please:
 6. **No Panics**: Library code returns errors, caller decides
 7. **Memory Safety**: Leak-free (verified with `std.testing.allocator`)
 
-See [CLAUDE.md](CLAUDE.md#coding-standards) for complete coding standards.
 
 ---
 
