@@ -791,3 +791,4 @@
 {"timestamp":"2026-09-04T11:43:46Z","action":"subagent","agent_type":"zig-developer","task":"Implement Wakeby distribution (208th) to pass test-writer's tests","project":"zuda"}
 {"timestamp":"2026-09-04T19:40:20Z","action":"subagent","agent_type":"test-writer","task":"Write failing tests for Sibuya(alpha) distribution per scratchpad spec","project":"zuda"}
 {"timestamp":"2026-09-04T19:42:59Z","action":"subagent","agent_type":"zig-developer","task":"Implement Sibuya(alpha) distribution to pass the 44 failing tests","project":"zuda"}
+{"timestamp":"2026-09-05T00:00:00Z","action":"subagent","agent_type":"test-writer","task":"Add failing regression test for RandomForest hardcoded .gini criterion bug (fractional-target regression collapses to single leaf)","project":"zuda"}
