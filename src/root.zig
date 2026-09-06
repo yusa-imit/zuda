@@ -801,15 +801,7 @@ test {
     _ = @import("stats/hypothesis.zig");
     _ = @import("stats/correlation.zig");
     _ = @import("stats/random.zig");
-    _ = @import("stats/distributions/uniform.zig");
-    _ = @import("stats/distributions/normal.zig");
-    _ = @import("stats/distributions/exponential.zig");
-    _ = @import("stats/distributions/poisson.zig");
-    _ = @import("stats/distributions/binomial.zig");
-    _ = @import("stats/distributions/bernoulli.zig");
-    _ = @import("stats/distributions/geometric.zig");
     _ = @import("stats/distributions/gamma.zig");
-    _ = @import("stats/distributions/beta.zig");
     _ = @import("stats/distributions/chi_squared.zig");
     _ = @import("stats/distributions/student_t.zig");
     _ = @import("stats/distributions/f_distribution.zig");

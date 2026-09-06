@@ -1,6 +1,6 @@
 [project]
 name = "zuda"
-version = "0.0.0"
+version = "2.3.0"
 description = "Zig Universal Datastructures and Algorithms — comprehensive DSA library"
 
 [toolchains.zig]

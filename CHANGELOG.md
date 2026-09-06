@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `RandomForest.fit()` now trains each tree with the `.mse` split criterion for
+  `forest_type == .regression` instead of always using `.gini`, which previously truncated
+  fractional targets to class 0 and collapsed regression forests to the global mean.
+
+### Removed
+- 9 orphaned per-file distribution implementations under `src/stats/distributions/`
+  (`uniform`, `normal`, `exponential`, `poisson`, `binomial`, `bernoulli`, `geometric`, `beta`,
+  `multivariate_normal`) that duplicated (or, for `multivariate_normal`, were never wired into)
+  the canonical catalog in `src/stats/distributions.zig`. `gamma.zig`, `chi_squared.zig`,
+  `student_t.zig`, and `f_distribution.zig` are kept — `chi_squared.zig` depends on `gamma.zig`,
+  and all four back real call sites in `stats/hypothesis.zig`/`stats/correlation.zig`.
+
+### Changed
+- Dropped the dead `.claude/memory/**` entry from `ci.yml`'s `paths-ignore` (the `.claude/`
+  tree was removed from the repo by the kingdom restructure).
+- Synced drifted version strings: `zr.toml` (`0.0.0` → `2.3.0`) and `main.zig`'s banner
+  (`2.0.4` → `2.3.0`) now match `build.zig.zon`.
+
 ## [2.0.0] - 2026-03-26
 
 ### 🚀 Major Release — Scientific Computing Platform

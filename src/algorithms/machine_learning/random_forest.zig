@@ -136,6 +136,11 @@ pub fn RandomForest(comptime T: type) type {
             @memset(oob_predictions, 0);
             @memset(oob_counts, 0);
 
+            const criterion: DecisionTree(T).SplitCriterion = switch (config.forest_type) {
+                .classification => .gini,
+                .regression => .mse,
+            };
+
             // Train each tree
             for (self.trees, 0..) |*tree, tree_idx| {
                 // Create bootstrap sample
@@ -158,7 +163,7 @@ pub fn RandomForest(comptime T: type) type {
                 try tree.fit(
                     bootstrap_X,
                     bootstrap_y,
-                    .gini,
+                    criterion,
                 );
 
                 // OOB prediction for samples not in bag
@@ -454,6 +459,49 @@ test "RandomForest: regression R² score" {
 
     const r2 = try forest.score(&X, &y);
     try testing.expect(r2 > 0.7);
+}
+
+test "RandomForest: regression uses MSE not Gini criterion for fractional targets" {
+    const allocator = testing.allocator;
+
+    // Data with clear clusters: two groups at different mean levels, all y-values in [0,1)
+    // Group 1 (x <= 3): y near 0.15 mean
+    // Group 2 (x >= 4): y near 0.75 mean
+    // If the tree uses Gini (wrong for regression), all y-values truncate to class 0,
+    // so every split gains 0 impurity, and the tree collapses to a leaf outputting
+    // the mean of all y-values (~0.45). With correct MSE, tree should split near x=3.5
+    // and output cluster means (~0.15 for left, ~0.75 for right).
+    const x1 = [_]f32{1};
+    const x2 = [_]f32{2};
+    const x3 = [_]f32{3};
+    const x4 = [_]f32{4};
+    const x5 = [_]f32{5};
+    const x6 = [_]f32{6};
+    const X = [_][]const f32{ &x1, &x2, &x3, &x4, &x5, &x6 };
+    const y = [_]f32{ 0.1, 0.15, 0.2, 0.7, 0.75, 0.8 };
+
+    var forest = try RandomForest(f32).init(allocator, .{
+        .forest_type = .regression,
+        .n_trees = 5,
+        .max_depth = 3,
+        .random_seed = 42,
+    });
+    defer forest.deinit();
+
+    try forest.fit(&X, &y, .{
+        .forest_type = .regression,
+        .n_trees = 5,
+        .max_depth = 3,
+        .random_seed = 42,
+    });
+
+    // Prediction for x=1 (group 1, small x) should be near 0.15, not near global mean 0.45
+    const pred1 = try forest.predict(&x1);
+    try testing.expect(@abs(pred1 - 0.15) < 0.15);
+
+    // Prediction for x=6 (group 2, large x) should be near 0.75, not near global mean 0.45
+    const pred6 = try forest.predict(&x6);
+    try testing.expect(@abs(pred6 - 0.75) < 0.15);
 }
 
 test "RandomForest: batch prediction" {
