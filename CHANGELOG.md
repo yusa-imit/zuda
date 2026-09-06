@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `zig build tidy`: the kingdom reference Tiger Style lint (line length, function length with a
+  shrink-only baseline, a ban list, doc headers, file length), vendored into `tools/tidy.zig`.
+  Standalone for now — not yet a dependency of `zig build test`, since the pre-existing codebase
+  has 4,608 failing findings outside function-length (which is fully baselined). See plan 001
+  item 2 for the burn-down plan.
+
 ### Fixed
 - `RandomForest.fit()` now trains each tree with the `.mse` split criterion for
   `forest_type == .regression` instead of always using `.gini`, which previously truncated
