@@ -660,6 +660,25 @@ pub fn build(b: *std.Build) void {
     });
     const run_cross_module_tests = b.addRunArtifact(cross_module_tests);
 
+    // Kingdom reference `tidy` lint (citadel/templates/tidy/tidy.zig, vendored verbatim into
+    // tools/tidy.zig): line length, doc headers, function length (shrink-only baseline in
+    // tidy_baseline.txt), a ban-list, and file length. Not yet a dependency of `test_step`: the
+    // pre-existing codebase has thousands of line-length/ban-list/doc-header findings that plan
+    // 001's later items (mechanical renames, std.time/std.fs -> Io) are what actually clears —
+    // see docs/plans/001-zig-0.16-and-tiger-baseline.md item 2. Function-length is baselined and
+    // clean today; `zig build tidy` is runnable standalone in the meantime.
+    const tidy = b.addExecutable(.{
+        .name = "tidy",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/tidy.zig"),
+            .target = b.graph.host,
+        }),
+    });
+    const run_tidy = b.addRunArtifact(tidy);
+    run_tidy.addArgs(&.{ "--root", b.pathFromRoot(".") });
+    const tidy_step = b.step("tidy", "Run the tidy lint (line length, fn length, ban list)");
+    tidy_step.dependOn(&run_tidy.step);
+
     // A top level step for running all tests. dependOn can be called multiple
     // times and since the two run steps do not depend on one another, this will
     // make the two of them run in parallel.
