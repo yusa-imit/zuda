@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tree was removed from the repo by the kingdom restructure).
 - Synced drifted version strings: `zr.toml` (`0.0.0` → `2.3.0`) and `main.zig`'s banner
   (`2.0.4` → `2.3.0`) now match `build.zig.zon`.
+- `build.zig`: `lib.linkLibC()` → `lib.root_module.link_libc = true` so `build.zig` itself
+  evaluates on Zig 0.16.0 (`Step.Compile.linkLibC` was removed). Compiles unchanged on the
+  repo's pinned 0.15.2. Plan 001 item 3 — the 0.16 source-level errors this uncovers
+  (`std.time`, `ArrayList` literal shape, `testing.fuzz`) are later plan items.
 
 ## [2.0.0] - 2026-03-26
 
