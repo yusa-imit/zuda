@@ -602,7 +602,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
             }),
         });
-        lib.linkLibC();
+        lib.root_module.link_libc = true;
         b.installArtifact(lib);
 
         // Install C header
