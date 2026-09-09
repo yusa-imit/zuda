@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evaluates on Zig 0.16.0 (`Step.Compile.linkLibC` was removed). Compiles unchanged on the
   repo's pinned 0.15.2. Plan 001 item 3 — the 0.16 source-level errors this uncovers
   (`std.time`, `ArrayList` literal shape, `testing.fuzz`) are later plan items.
+- `heap.GeneralPurposeAllocator` → `heap.DebugAllocator` (7 files) and
+  `ArrayListUnmanaged(T) = .{}` → `.empty` (2 sites, `rabin_karp.zig`): dual-compatible
+  mechanical renames, no behavior change. Plan 001 item 4 — `mem.indexOf*` → `find*` and
+  `std.AutoArrayHashMap` → `AutoArrayHashMapUnmanaged` are deferred to the toolchain-flip item
+  since neither target exists (or means the same thing) under the repo's pinned Zig 0.15.2.
 
 ## [2.0.0] - 2026-03-26
 

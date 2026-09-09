@@ -33,7 +33,7 @@
 //! const count = try partitions.countPartitions(u32, allocator, 5, 2);
 //!
 //! // Generate all partitions of 4: [4], [3,1], [2,2], [2,1,1], [1,1,1,1]
-//! var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+//! var gpa = std.heap.DebugAllocator(.{}){};
 //! const allocator = gpa.allocator();
 //! const parts = try partitions.generatePartitions(u32, allocator, 4);
 //! defer {
