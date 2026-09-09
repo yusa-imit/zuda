@@ -81,7 +81,7 @@ pub const RabinKarp = struct {
             // Check hash match
             if (text_hash == pattern_hash) {
                 // Verify actual match (handle hash collisions)
-                if (std.mem.eql(u8, text[i..i + pattern.len], pattern)) {
+                if (std.mem.eql(u8, text[i .. i + pattern.len], pattern)) {
                     return i;
                 }
             }
@@ -109,7 +109,7 @@ pub const RabinKarp = struct {
             return &[_]usize{};
         }
 
-        var matches: std.ArrayListUnmanaged(usize) = .{};
+        var matches: std.ArrayListUnmanaged(usize) = .empty;
         errdefer matches.deinit(self.allocator);
 
         const pattern_hash = computeHash(pattern);
@@ -135,7 +135,7 @@ pub const RabinKarp = struct {
             // Check hash match
             if (text_hash == pattern_hash) {
                 // Verify actual match
-                if (std.mem.eql(u8, text[i..i + pattern.len], pattern)) {
+                if (std.mem.eql(u8, text[i .. i + pattern.len], pattern)) {
                     try matches.append(self.allocator, i);
                 }
             }
@@ -382,7 +382,7 @@ test "RabinKarp - stress test with large text" {
     const chunk = "hay hay hay ";
     const count = 100;
 
-    var text_list: std.ArrayListUnmanaged(u8) = .{};
+    var text_list: std.ArrayListUnmanaged(u8) = .empty;
     defer text_list.deinit(testing.allocator);
 
     for (0..count) |_| {
@@ -397,7 +397,7 @@ test "RabinKarp - stress test with large text" {
     const result = rk.find(text, pattern);
 
     try testing.expect(result != null);
-    try testing.expect(std.mem.eql(u8, text[result.?..result.? + pattern.len], pattern));
+    try testing.expect(std.mem.eql(u8, text[result.? .. result.? + pattern.len], pattern));
 }
 
 test "RabinKarp - hash collision handling" {

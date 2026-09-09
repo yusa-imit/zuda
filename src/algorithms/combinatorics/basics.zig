@@ -41,7 +41,7 @@
 //! const binom = try combinatorics.binomial(u64, 10, 3);
 //!
 //! // Generate all permutations of [1, 2, 3]
-//! var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+//! var gpa = std.heap.DebugAllocator(.{}){};
 //! const allocator = gpa.allocator();
 //! const items = [_]u8{1, 2, 3};
 //! const perms = try combinatorics.generatePermutations(u8, allocator, &items);
@@ -534,9 +534,8 @@ test "generateCombinations: C(5, 2) = 10" {
 
     const expected = [_][2]u8{
         [_]u8{ 1, 2 }, [_]u8{ 1, 3 }, [_]u8{ 1, 4 }, [_]u8{ 1, 5 },
-        [_]u8{ 2, 3 }, [_]u8{ 2, 4 }, [_]u8{ 2, 5 },
-        [_]u8{ 3, 4 }, [_]u8{ 3, 5 },
-        [_]u8{ 4, 5 },
+        [_]u8{ 2, 3 }, [_]u8{ 2, 4 }, [_]u8{ 2, 5 }, [_]u8{ 3, 4 },
+        [_]u8{ 3, 5 }, [_]u8{ 4, 5 },
     };
 
     // Verify all expected combinations are present

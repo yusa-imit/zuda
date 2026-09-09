@@ -19,7 +19,6 @@ const Allocator = std.mem.Allocator;
 ///
 /// Time: O(n²×m) where n = string length, m = dictionary size
 /// Space: O(n) for DP table, O(n×k) for segmentation reconstruction where k = number of segmentations
-
 /// Check if a string can be segmented into dictionary words
 ///
 /// Uses dynamic programming: dp[i] = true if s[0..i] can be segmented
@@ -30,7 +29,7 @@ const Allocator = std.mem.Allocator;
 ///
 /// Example:
 /// ```zig
-/// var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+/// var gpa = std.heap.DebugAllocator(.{}){};
 /// defer _ = gpa.deinit();
 /// const allocator = gpa.allocator();
 ///
@@ -148,7 +147,7 @@ pub fn allBreaks(allocator: Allocator, s: []const u8, dict: std.StringHashMap(vo
 
     if (n == 0) {
         const empty_seg = try std.ArrayList([]const u8).initCapacity(allocator, 0);
-        try result.append(allocator,empty_seg);
+        try result.append(allocator, empty_seg);
         return result;
     }
 
@@ -205,7 +204,7 @@ fn backtrack(
             try seg.append(allocator, current.items[i]);
         }
 
-        try result.append(allocator,seg);
+        try result.append(allocator, seg);
         return;
     }
 

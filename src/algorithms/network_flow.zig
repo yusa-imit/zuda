@@ -59,7 +59,7 @@
 /// const network_flow = zuda.algorithms.network_flow;
 ///
 /// pub fn main() !void {
-///     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+///     var gpa = std.heap.DebugAllocator(.{}){};
 ///     defer _ = gpa.deinit();
 ///     const allocator = gpa.allocator();
 ///
@@ -100,7 +100,6 @@
 /// );
 /// std.debug.print("Maximum matching: {}\n", .{matching}); // 3 (perfect matching)
 /// ```
-
 pub const ford_fulkerson = @import("network_flow/ford_fulkerson.zig");
 pub const edmonds_karp = @import("network_flow/edmonds_karp.zig");
 pub const dinic = @import("network_flow/dinic.zig");

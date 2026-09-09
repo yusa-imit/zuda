@@ -33,7 +33,7 @@ pub fn strandSort(
 ) Allocator.Error!void {
     if (arr.len <= 1) return;
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
