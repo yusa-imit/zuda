@@ -13,8 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Standalone for now — not yet a dependency of `zig build test`, since the pre-existing codebase
   has 4,608 failing findings outside function-length (which is fully baselined). See plan 001
   item 2 for the burn-down plan.
+- `docs/adr/0001-io-injection-and-seed-determinism.md`: the public `io: Io` API shape for the
+  v3.0.0 break — clock-derived PRNG seeds become a required `seed: u64` option, `io` is never
+  stored in a container, and lands on ~18 public functions instead of ~40.
 
 ### Fixed
+- `BloomFilter`'s benchmark-arithmetic test no longer depends on `std.time.Timer` (a wall-clock
+  throughput assertion, flaky under CI/wasm and removed from library code by Zig 0.16); it now
+  asserts pure ops/sec arithmetic and lookup correctness deterministically.
 - `RandomForest.fit()` now trains each tree with the `.mse` split criterion for
   `forest_type == .regression` instead of always using `.gini`, which previously truncated
   fractional targets to class 0 and collapsed regression forests to the global mean.
