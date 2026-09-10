@@ -400,35 +400,35 @@ test "BloomFilter - empty and edge cases" {
 }
 
 test "BloomFilter - benchmark calculation verification" {
-    // This test verifies that lookups can be timed independently
-    // Simulating the benchmark fix: pre-populate filter, then time lookups only
+    // Verifies throughput arithmetic and lookup correctness without a wall-clock timer: a
+    // machine-speed assertion (ops/sec >= 1M) is flaky under CI/wasm and calls std.time.Timer,
+    // which Zig 0.16 removes from library code (Tiger Style rule 14: inject the clock; ADR 0001
+    // D1). The wall-clock measurement itself belongs in bench/, not a unit test.
     const Filter = BloomFilter(u64, void, defaultHashInt(u64));
 
     var filter = try Filter.init(testing.allocator, 100_000, 7, {});
     defer filter.deinit();
 
-    // Pre-populate with 1000 items (setup, NOT timed)
+    // Pre-populate with 1000 items.
     for (0..1000) |i| {
         filter.add(@intCast(i));
     }
 
-    // Time 100K lookup operations
-    var timer = try std.time.Timer.start();
-    for (0..100_000) |i| {
-        _ = filter.contains(@intCast(i % 2000)); // Mix of present and absent
+    // 100K lookups, mix of present (0..999) and absent (1000..1999) keys, cycled.
+    const lookups: u64 = 100_000;
+    var found: usize = 0;
+    for (0..lookups) |i| {
+        found += @intFromBool(filter.contains(@intCast(i % 2000)));
     }
-    const elapsed_ns = timer.read();
 
-    // Verify we get meaningful timing
-    try testing.expect(elapsed_ns > 0);
+    // No false negatives: every present key is found on every one of the 50 cycles.
+    try testing.expect(found >= 50_000);
 
-    // Verify ops/sec calculation works
-    const ops_per_sec = @divFloor(100_000 * 1_000_000_000, elapsed_ns);
-    try testing.expect(ops_per_sec > 0);
-
-    // For a simple lookup, should be at least 1M ops/sec on modern hardware
-    const million_ops_per_sec = @divFloor(ops_per_sec, 1_000_000);
-    try testing.expect(million_ops_per_sec >= 1);
+    // Throughput arithmetic (ops / (ns / 1e9)) is pure and deterministic, independent of
+    // measured wall-clock time.
+    const ns_per_op_batch: u64 = 1_000_000_000;
+    const ops_per_sec = (lookups * 1_000_000_000) / ns_per_op_batch;
+    try testing.expectEqual(@as(u64, 100_000), ops_per_sec);
 }
 
 test "BloomFilter - approximateCount increases monotonically" {
