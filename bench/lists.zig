@@ -127,7 +127,8 @@ fn benchUnrolledLinkedListIterate(allocator: std.mem.Allocator) !void {
 
 /// Benchmark: ConcurrentSkipList insert
 fn benchConcurrentSkipListInsert(allocator: std.mem.Allocator) !void {
-    var list = try ConcurrentSkipList(i64, i64, IntContext, IntContext.compare).init(allocator, .{});
+    var list = try ConcurrentSkipList(i64, i64, IntContext, IntContext.compare)
+        .init(allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     var prng = std.Random.DefaultPrng.init(42);

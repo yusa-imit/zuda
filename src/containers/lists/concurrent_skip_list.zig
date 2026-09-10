@@ -46,7 +46,8 @@ const AtomicOrder = std.builtin.AtomicOrder;
 ///         return std.math.order(a, b);
 ///     }
 /// };
-/// var list = ConcurrentSkipList(i32, []const u8, IntContext, IntContext.compare).init(allocator, .{});
+/// var list = ConcurrentSkipList(i32, []const u8, IntContext, IntContext.compare)
+///     .init(allocator, .{}, .{ .seed = 42 });
 /// defer list.deinit();
 ///
 /// try list.insert(42, "answer");
@@ -119,6 +120,14 @@ pub fn ConcurrentSkipList(
             value: V,
         };
 
+        /// Construction options.
+        ///
+        /// `seed` drives the level-generation PRNG (see ADR 0001 D1): a clock-derived seed is an
+        /// undeclared input, so the caller must supply one explicitly for a reproducible list.
+        pub const Options = struct {
+            seed: u64,
+        };
+
         allocator: Allocator,
         header: *Node,
         ctx: Context,
@@ -129,13 +138,15 @@ pub fn ConcurrentSkipList(
 
         /// Initialize an empty concurrent skip list.
         ///
+        /// `options.seed` seeds the level-generation PRNG; the same seed and the same operation
+        /// sequence produce the same node heights (ADR 0001 D1). There is no default seed.
+        ///
         /// Time: O(1) | Space: O(1)
-        pub fn init(allocator: Allocator, ctx: Context) !Self {
+        pub fn init(allocator: Allocator, ctx: Context, options: Options) !Self {
             const header = try allocator.create(Node);
             header.* = Node.init(undefined, undefined, max_level - 1);
 
-            const seed = @as(u64, @intCast(std.time.milliTimestamp()));
-            const prng = std.Random.DefaultPrng.init(seed);
+            const prng = std.Random.DefaultPrng.init(options.seed);
 
             return Self{
                 .allocator = allocator,
@@ -449,6 +460,7 @@ test "ConcurrentSkipList: init and deinit" {
     var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
         testing.allocator,
         .{},
+        .{ .seed = 1 },
     );
     defer list.deinit();
 
@@ -465,6 +477,7 @@ test "ConcurrentSkipList: insert and get single element" {
     var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
         testing.allocator,
         .{},
+        .{ .seed = 1 },
     );
     defer list.deinit();
 
@@ -485,6 +498,7 @@ test "ConcurrentSkipList: insert updates existing key" {
     var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
         testing.allocator,
         .{},
+        .{ .seed = 1 },
     );
     defer list.deinit();
 
@@ -505,6 +519,7 @@ test "ConcurrentSkipList: multiple inserts and lookups" {
     var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
         testing.allocator,
         .{},
+        .{ .seed = 1 },
     );
     defer list.deinit();
 
@@ -533,6 +548,7 @@ test "ConcurrentSkipList: remove element" {
     var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
         testing.allocator,
         .{},
+        .{ .seed = 1 },
     );
     defer list.deinit();
 
@@ -554,6 +570,7 @@ test "ConcurrentSkipList: remove from multiple elements" {
     var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
         testing.allocator,
         .{},
+        .{ .seed = 1 },
     );
     defer list.deinit();
 
@@ -578,6 +595,7 @@ test "ConcurrentSkipList: remove non-existent key" {
     var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
         testing.allocator,
         .{},
+        .{ .seed = 1 },
     );
     defer list.deinit();
 
@@ -596,6 +614,7 @@ test "ConcurrentSkipList: contains" {
     var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
         testing.allocator,
         .{},
+        .{ .seed = 1 },
     );
     defer list.deinit();
 
@@ -618,6 +637,7 @@ test "ConcurrentSkipList: stress test" {
     var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
         testing.allocator,
         .{},
+        .{ .seed = 1 },
     );
     defer list.deinit();
 
@@ -662,6 +682,7 @@ test "ConcurrentSkipList: memory leak check" {
     var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
         testing.allocator,
         .{},
+        .{ .seed = 1 },
     );
     defer list.deinit();
 
@@ -709,6 +730,7 @@ test "ConcurrentSkipList: with string keys" {
     var list = try ConcurrentSkipList([]const u8, i32, StringContext, StringContext.compare).init(
         testing.allocator,
         .{},
+        .{ .seed = 1 },
     );
     defer list.deinit();
 
@@ -732,6 +754,7 @@ test "ConcurrentSkipList: remove first element preserves rest" {
     var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
         testing.allocator,
         .{},
+        .{ .seed = 1 },
     );
     defer list.deinit();
 
@@ -760,6 +783,7 @@ test "ConcurrentSkipList: remove last element preserves rest" {
     var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
         testing.allocator,
         .{},
+        .{ .seed = 1 },
     );
     defer list.deinit();
 
@@ -788,6 +812,7 @@ test "ConcurrentSkipList: get on empty list returns null" {
     var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
         testing.allocator,
         .{},
+        .{ .seed = 1 },
     );
     defer list.deinit();
 
@@ -810,6 +835,7 @@ test "ConcurrentSkipList: insert many then remove all leaves empty" {
     var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
         testing.allocator,
         .{},
+        .{ .seed = 1 },
     );
     defer list.deinit();
 
@@ -849,6 +875,7 @@ test "ConcurrentSkipList: init-deinit loop memory safety" {
         var list = try ConcurrentSkipList(i32, i32, IntContext, IntContext.compare).init(
             testing.allocator,
             .{},
+            .{ .seed = 1 },
         );
 
         // Insert three items
@@ -872,4 +899,87 @@ test "ConcurrentSkipList: init-deinit loop memory safety" {
         list.validate();
         list.deinit();
     }
+}
+
+test "ConcurrentSkipList: same seed produces identical random-level sequence" {
+    const IntContext = struct {
+        pub fn compare(_: @This(), a: i32, b: i32) Order {
+            return std.math.order(a, b);
+        }
+    };
+    const Instance = ConcurrentSkipList(i32, i32, IntContext, IntContext.compare);
+
+    var list_a = try Instance.init(testing.allocator, .{}, .{ .seed = 7 });
+    defer list_a.deinit();
+    var list_b = try Instance.init(testing.allocator, .{}, .{ .seed = 7 });
+    defer list_b.deinit();
+
+    var i: usize = 0;
+    while (i < 32) : (i += 1) {
+        try testing.expectEqual(list_a.randomLevel(), list_b.randomLevel());
+    }
+}
+
+test "ConcurrentSkipList: different seeds diverge in random-level sequence" {
+    const IntContext = struct {
+        pub fn compare(_: @This(), a: i32, b: i32) Order {
+            return std.math.order(a, b);
+        }
+    };
+    const Instance = ConcurrentSkipList(i32, i32, IntContext, IntContext.compare);
+
+    var list_a = try Instance.init(testing.allocator, .{}, .{ .seed = 1 });
+    defer list_a.deinit();
+    var list_b = try Instance.init(testing.allocator, .{}, .{ .seed = 2 });
+    defer list_b.deinit();
+
+    // Probabilistic, not a mathematical guarantee: two distinct seeds could in principle draw
+    // 32 identical levels in a row. With std.Random.DefaultPrng this is astronomically
+    // unlikely; if this ever flakes, raise the draw count rather than assuming a bad seed pair.
+    var i: usize = 0;
+    var diverged = false;
+    while (i < 32) : (i += 1) {
+        if (list_a.randomLevel() != list_b.randomLevel()) diverged = true;
+    }
+    try testing.expect(diverged);
+}
+
+test "ConcurrentSkipList: same seed produces identical tree shape across insert sequence" {
+    const IntContext = struct {
+        pub fn compare(_: @This(), a: i32, b: i32) Order {
+            return std.math.order(a, b);
+        }
+    };
+    const Instance = ConcurrentSkipList(i32, i32, IntContext, IntContext.compare);
+
+    var list_a = try Instance.init(testing.allocator, .{}, .{ .seed = 99 });
+    defer list_a.deinit();
+    var list_b = try Instance.init(testing.allocator, .{}, .{ .seed = 99 });
+    defer list_b.deinit();
+
+    var i: i32 = 0;
+    while (i < 40) : (i += 1) {
+        _ = try list_a.insert(i, i * 10);
+        _ = try list_b.insert(i, i * 10);
+    }
+
+    i = 0;
+    while (i < 40) : (i += 1) {
+        try testing.expectEqual(list_a.get(i), list_b.get(i));
+    }
+
+    // Lookups alone are seed-independent for a correct skip list; the actual tree-shape claim
+    // is the per-node height (top_level), which only the level-generation PRNG determines.
+    var node_a = Instance.TaggedPtr.unpack(list_a.header.forward[0].load(.monotonic)).ptr;
+    var node_b = Instance.TaggedPtr.unpack(list_b.header.forward[0].load(.monotonic)).ptr;
+    var compared: usize = 0;
+    while (node_a) |na| {
+        const nb = node_b.?;
+        try testing.expectEqual(na.top_level, nb.top_level);
+        node_a = Instance.TaggedPtr.unpack(na.forward[0].load(.monotonic)).ptr;
+        node_b = Instance.TaggedPtr.unpack(nb.forward[0].load(.monotonic)).ptr;
+        compared += 1;
+    }
+    try testing.expectEqual(@as(?*Instance.Node, null), node_b);
+    try testing.expectEqual(@as(usize, 40), compared);
 }
