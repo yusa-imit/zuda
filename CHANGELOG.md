@@ -47,6 +47,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mechanical renames, no behavior change. Plan 001 item 4 — `mem.indexOf*` → `find*` and
   `std.AutoArrayHashMap` → `AutoArrayHashMapUnmanaged` are deferred to the toolchain-flip item
   since neither target exists (or means the same thing) under the repo's pinned Zig 0.15.2.
+- `ConcurrentSkipList.init(allocator, ctx)` → `init(allocator, ctx, .{ .seed = s })` (ADR 0001
+  D1): the level-generation PRNG no longer seeds itself from `std.time.milliTimestamp()`, closing
+  one of plan 001's `std.time.*` sites and making the list's shape reproducible from a seed. The
+  `Io.Mutex`/`Io.Group` half of ADR 0001's positive-space proof for this file (Group B) is
+  deferred to the toolchain-flip item — those types don't exist under the repo's pinned Zig
+  0.15.2. **Breaking**: part of the v3.0.0 signature break; no default seed.
 
 ## [2.0.0] - 2026-03-26
 
