@@ -828,4 +828,9 @@ test {
     // Explicitly import optimize modules to trigger their tests
     _ = @import("optimize/line_search.zig");
     _ = @import("optimize/unconstrained.zig");
+
+    // Explicitly import containers modules whose tests are only reachable through a nested
+    // pub-const re-export -- refAllDecls is non-recursive, so without this line these tests
+    // silently never run under `zig build test` (see issue #38).
+    _ = @import("containers/lists/concurrent_skip_list.zig");
 }
