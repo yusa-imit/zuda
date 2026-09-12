@@ -53,6 +53,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Io.Mutex`/`Io.Group` half of ADR 0001's positive-space proof for this file (Group B) is
   deferred to the toolchain-flip item — those types don't exist under the repo's pinned Zig
   0.15.2. **Breaking**: part of the v3.0.0 signature break; no default seed.
+- `RobinHoodHashMap.init(allocator, ctx)` / `.initCapacity(allocator, ctx, cap)` →
+  `..., .{ .seed = s })` (ADR 0001 D1): the hash-mixing salt no longer seeds itself from
+  `std.time.timestamp()`, closing another of plan 001's `std.time.*` sites and making probe
+  sequences reproducible from a seed. `SliceBuilder.toHashMap` gained a required trailing `seed:
+  u64` parameter for the same reason. **Breaking**: part of the v3.0.0 signature break; no
+  default seed.
 
 ## [2.0.0] - 2026-03-26
 

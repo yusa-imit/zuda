@@ -198,7 +198,7 @@ test "memory safety: hash containers - empty state cleanup" {
 
     // RobinHoodHashMap
     {
-        var map = try zuda.containers.hashing.RobinHoodHashMap(i32, i32, IntContext, IntContext.hash, IntContext.eql).init(allocator, .{});
+        var map = try zuda.containers.hashing.RobinHoodHashMap(i32, i32, IntContext, IntContext.hash, IntContext.eql).init(allocator, .{}, .{ .seed = 1 });
         defer map.deinit();
         try testing.expectEqual(0, map.count());
     }
@@ -233,7 +233,7 @@ test "memory safety: hash containers - single element cleanup" {
 
     // RobinHoodHashMap
     {
-        var map = try zuda.containers.hashing.RobinHoodHashMap(i32, i32, IntContext, IntContext.hash, IntContext.eql).init(allocator, .{});
+        var map = try zuda.containers.hashing.RobinHoodHashMap(i32, i32, IntContext, IntContext.hash, IntContext.eql).init(allocator, .{}, .{ .seed = 1 });
         defer map.deinit();
         _ = try map.insert(1, 100);
         try testing.expectEqual(1, map.count());

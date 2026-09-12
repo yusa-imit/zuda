@@ -65,29 +65,40 @@ pub fn RobinHoodHashMap(
         const DEFAULT_CAPACITY = 16;
         const LOAD_FACTOR_THRESHOLD = 0.875; // 87.5% load factor
 
+        /// `seed` drives the hash-mixing salt (see ADR 0001 D1): a clock-derived seed is an
+        /// unauditable, untestable execution-context leak into container state. Callers that
+        /// only care about default behavior can pass a fixed seed; there is no default.
+        pub const Options = struct {
+            seed: u64,
+        };
+
         /// Initialize an empty RobinHoodHashMap
+        /// `options.seed` seeds the hash-mixing salt (ADR 0001 D1): the same seed produces the
+        /// same salt and therefore the same probe sequence for a given operation sequence.
         /// Time: O(1) | Space: O(capacity)
-        pub fn init(allocator: std.mem.Allocator, context: Context) !Self {
-            return initCapacity(allocator, context, DEFAULT_CAPACITY);
+        pub fn init(allocator: std.mem.Allocator, context: Context, options: Options) !Self {
+            return initCapacity(allocator, context, DEFAULT_CAPACITY, options);
         }
 
         /// Initialize with specific capacity
         /// Time: O(capacity) | Space: O(capacity)
-        pub fn initCapacity(allocator: std.mem.Allocator, context: Context, initial_capacity: usize) !Self {
+        pub fn initCapacity(
+            allocator: std.mem.Allocator,
+            context: Context,
+            initial_capacity: usize,
+            options: Options,
+        ) !Self {
             const cap = if (initial_capacity < 4) 4 else std.math.ceilPowerOfTwo(usize, initial_capacity) catch return error.CapacityTooLarge;
 
             const slots = try allocator.alloc(Slot, cap);
             @memset(slots, .{ .entry = undefined, .psl = 0, .occupied = false });
-
-            var prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.timestamp())));
-            const random = prng.random();
 
             return Self{
                 .allocator = allocator,
                 .slots = slots,
                 .context = context,
                 .len = 0,
-                .seed = random.int(u64),
+                .seed = options.seed,
             };
         }
 
@@ -388,7 +399,7 @@ pub fn AutoRobinHoodHashMap(comptime K: type, comptime V: type) type {
 // --- Tests ---
 
 test "RobinHoodHashMap: basic insert and get" {
-    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
     defer map.deinit();
 
     try testing.expect(map.isEmpty());
@@ -403,7 +414,7 @@ test "RobinHoodHashMap: basic insert and get" {
 }
 
 test "RobinHoodHashMap: update existing key" {
-    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
     defer map.deinit();
 
     _ = try map.insert(1, 100);
@@ -414,7 +425,7 @@ test "RobinHoodHashMap: update existing key" {
 }
 
 test "RobinHoodHashMap: remove" {
-    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
     defer map.deinit();
 
     _ = try map.insert(1, 100);
@@ -431,7 +442,7 @@ test "RobinHoodHashMap: remove" {
 }
 
 test "RobinHoodHashMap: contains" {
-    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
     defer map.deinit();
 
     try testing.expect(!map.contains(1));
@@ -442,7 +453,7 @@ test "RobinHoodHashMap: contains" {
 }
 
 test "RobinHoodHashMap: iterator" {
-    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
     defer map.deinit();
 
     _ = try map.insert(1, 100);
@@ -458,7 +469,7 @@ test "RobinHoodHashMap: iterator" {
 }
 
 test "RobinHoodHashMap: clear" {
-    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
     defer map.deinit();
 
     _ = try map.insert(1, 100);
@@ -472,7 +483,7 @@ test "RobinHoodHashMap: clear" {
 }
 
 test "RobinHoodHashMap: stress test with many insertions" {
-    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
     defer map.deinit();
 
     const n = 1000;
@@ -495,7 +506,7 @@ test "RobinHoodHashMap: stress test with many insertions" {
 }
 
 test "RobinHoodHashMap: Robin Hood heuristic reduces variance" {
-    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
     defer map.deinit();
 
     // Insert many items to trigger Robin Hood swaps
@@ -519,7 +530,7 @@ test "RobinHoodHashMap: Robin Hood heuristic reduces variance" {
 }
 
 test "RobinHoodHashMap: clone" {
-    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
     defer map.deinit();
 
     _ = try map.insert(1, 100);
@@ -539,7 +550,7 @@ test "RobinHoodHashMap: clone" {
 }
 
 test "RobinHoodHashMap: capacity growth" {
-    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
     defer map.deinit();
 
     const initial_capacity = map.capacity();
@@ -556,7 +567,7 @@ test "RobinHoodHashMap: capacity growth" {
 }
 
 test "RobinHoodHashMap: memory leak test" {
-    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
     defer map.deinit();
 
     for (0..100) |i| {
@@ -580,7 +591,7 @@ test "RobinHoodHashMap: memory leak test" {
 }
 
 test "RobinHoodHashMap: validate invariants" {
-    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
     defer map.deinit();
 
     try map.validate();
@@ -604,7 +615,7 @@ test "RobinHoodHashMap: validate invariants" {
 }
 
 test "RobinHoodHashMap: empty operations" {
-    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
     defer map.deinit();
 
     try testing.expectEqual(@as(?u32, null), map.get(1));
@@ -616,7 +627,7 @@ test "RobinHoodHashMap: empty operations" {
 }
 
 test "RobinHoodHashMap: backward shift deletion maintains invariants" {
-    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
     defer map.deinit();
 
     // Insert items that will create a chain
@@ -644,7 +655,7 @@ test "RobinHoodHashMap: backward shift deletion maintains invariants" {
 }
 
 test "RobinHoodHashMap: high load factor performance" {
-    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
     defer map.deinit();
 
     // Insert up to 87.5% load factor
@@ -663,4 +674,36 @@ test "RobinHoodHashMap: high load factor performance" {
     }
 
     try map.validate();
+}
+
+test "RobinHoodHashMap: same seed produces identical probe-length sequence" {
+    var map_a = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 7 });
+    defer map_a.deinit();
+    var map_b = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 7 });
+    defer map_b.deinit();
+
+    try testing.expectEqual(map_a.seed, map_b.seed);
+
+    for (0..50) |i| {
+        const key = @as(u32, @intCast(i));
+        _ = try map_a.insert(key, key);
+        _ = try map_b.insert(key, key);
+    }
+
+    for (map_a.slots, map_b.slots) |slot_a, slot_b| {
+        try testing.expectEqual(slot_a.occupied, slot_b.occupied);
+        try testing.expectEqual(slot_a.psl, slot_b.psl);
+        if (slot_a.occupied) {
+            try testing.expectEqual(slot_a.entry.key, slot_b.entry.key);
+        }
+    }
+}
+
+test "RobinHoodHashMap: different seeds diverge in hash-mixing salt" {
+    var map_a = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
+    defer map_a.deinit();
+    var map_b = try AutoRobinHoodHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 2 });
+    defer map_b.deinit();
+
+    try testing.expect(map_a.seed != map_b.seed);
 }

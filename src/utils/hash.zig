@@ -5,9 +5,8 @@
 ///
 /// Example:
 /// ```zig
-/// const map = RobinHoodHashMap(Point, i32, void, hash.auto(Point)).init(allocator, {});
+/// const map = RobinHoodHashMap(Point, i32, void, hash.auto(Point), eqlFn).init(allocator, {}, .{ .seed = 1 });
 /// ```
-
 const std = @import("std");
 
 /// Returns an auto-hash function for any type that implements std.hash.autoHash.
@@ -179,7 +178,7 @@ test "integration with RobinHoodHashMap" {
     const RobinHoodHashMap = @import("../containers/hashing/robin_hood_hash_map.zig").RobinHoodHashMap;
 
     const Point = struct { x: i32, y: i32 };
-    var map = try RobinHoodHashMap(Point, []const u8, void, auto(Point), eqlAuto(Point)).init(testing.allocator, {});
+    var map = try RobinHoodHashMap(Point, []const u8, void, auto(Point), eqlAuto(Point)).init(testing.allocator, {}, .{ .seed = 1 });
     defer map.deinit();
 
     const p1 = Point{ .x = 10, .y = 20 };

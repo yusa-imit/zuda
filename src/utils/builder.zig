@@ -96,6 +96,7 @@ pub fn SliceBuilder(comptime T: type) type {
         }
 
         /// Convert to RobinHoodHashMap
+        /// `seed` seeds the map's hash-mixing salt (ADR 0001 D1) — there is no default.
         /// Time: O(n) average | Space: O(n)
         pub fn toHashMap(
             self: Self,
@@ -105,8 +106,9 @@ pub fn SliceBuilder(comptime T: type) type {
             ctx: anytype,
             hashFn: fn (@TypeOf(ctx), K) u64,
             eqlFn: fn (@TypeOf(ctx), K, K) bool,
+            seed: u64,
         ) !RobinHoodHashMap(K, V, @TypeOf(ctx), hashFn, eqlFn) {
-            var map = try RobinHoodHashMap(K, V, @TypeOf(ctx), hashFn, eqlFn).init(allocator, ctx);
+            var map = try RobinHoodHashMap(K, V, @TypeOf(ctx), hashFn, eqlFn).init(allocator, ctx, .{ .seed = seed });
             errdefer map.deinit();
             for (self.items) |pair| {
                 _ = try map.insert(pair.key, pair.value);
@@ -229,6 +231,7 @@ test "fromSlice to HashMap" {
         StringCtx{},
         StringCtx.hash,
         StringCtx.eql,
+        1,
     );
     defer map.deinit();
 
@@ -265,6 +268,7 @@ test "fromSlice to HashMap retrieves correct values" {
         IntCtx{},
         IntCtx.hash,
         IntCtx.eql,
+        1,
     );
     defer map.deinit();
 
@@ -345,6 +349,7 @@ test "fromSlice empty to HashMap" {
         IntCtx{},
         IntCtx.hash,
         IntCtx.eql,
+        1,
     );
     defer map.deinit();
 
@@ -415,6 +420,7 @@ test "fromSlice single element to HashMap" {
         StringCtx{},
         StringCtx.hash,
         StringCtx.eql,
+        1,
     );
     defer map.deinit();
 
@@ -482,6 +488,7 @@ test "fromSlice duplicates in HashMap overwrites" {
         IntCtx{},
         IntCtx.hash,
         IntCtx.eql,
+        1,
     );
     defer map.deinit();
 
@@ -602,6 +609,7 @@ test "fromSlice HashMap with string keys" {
         StringCtx{},
         StringCtx.hash,
         StringCtx.eql,
+        1,
     );
     defer map.deinit();
 

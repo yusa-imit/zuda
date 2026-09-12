@@ -62,7 +62,7 @@ fn benchCuckooHashMapGet(allocator: std.mem.Allocator) !void {
 
 /// Benchmark: RobinHoodHashMap insert
 fn benchRobinHoodHashMapInsert(allocator: std.mem.Allocator) !void {
-    var map = try AutoRobinHoodHashMap(i64, i64).init(allocator, .{});
+    var map = try AutoRobinHoodHashMap(i64, i64).init(allocator, .{}, .{ .seed = 42 });
     defer map.deinit();
 
     var prng = std.Random.DefaultPrng.init(42);
@@ -78,7 +78,7 @@ fn benchRobinHoodHashMapInsert(allocator: std.mem.Allocator) !void {
 
 /// Benchmark: RobinHoodHashMap get
 fn benchRobinHoodHashMapGet(allocator: std.mem.Allocator) !void {
-    var map = try AutoRobinHoodHashMap(i64, i64).init(allocator, .{});
+    var map = try AutoRobinHoodHashMap(i64, i64).init(allocator, .{}, .{ .seed = 42 });
     defer map.deinit();
 
     var prng = std.Random.DefaultPrng.init(42);
