@@ -17,7 +17,7 @@ const AutoConsistentHashRing = zuda.containers.hashing.AutoConsistentHashRing;
 
 /// Benchmark: CuckooHashMap insert with 100k random keys
 fn benchCuckooHashMapInsert(allocator: std.mem.Allocator) !void {
-    var map = try AutoCuckooHashMap(i64, i64).init(allocator, .{});
+    var map = try AutoCuckooHashMap(i64, i64).init(allocator, .{}, .{ .seed = 0x5EED });
     defer map.deinit();
 
     var prng = std.Random.DefaultPrng.init(42);
@@ -33,7 +33,7 @@ fn benchCuckooHashMapInsert(allocator: std.mem.Allocator) !void {
 
 /// Benchmark: CuckooHashMap get (worst-case O(1) lookup)
 fn benchCuckooHashMapGet(allocator: std.mem.Allocator) !void {
-    var map = try AutoCuckooHashMap(i64, i64).init(allocator, .{});
+    var map = try AutoCuckooHashMap(i64, i64).init(allocator, .{}, .{ .seed = 0x5EED });
     defer map.deinit();
 
     var prng = std.Random.DefaultPrng.init(42);
