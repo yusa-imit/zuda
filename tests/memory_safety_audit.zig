@@ -191,7 +191,7 @@ test "memory safety: hash containers - empty state cleanup" {
 
     // CuckooHashMap
     {
-        var map = try zuda.containers.hashing.CuckooHashMap(i32, i32, IntContext, IntContext.hash, IntContext.hash2, IntContext.eql).init(allocator, .{});
+        var map = try zuda.containers.hashing.CuckooHashMap(i32, i32, IntContext, IntContext.hash, IntContext.hash2, IntContext.eql).init(allocator, .{}, .{ .seed = 0x5EED });
         defer map.deinit();
         try testing.expectEqual(0, map.count());
     }
@@ -223,7 +223,7 @@ test "memory safety: hash containers - single element cleanup" {
 
     // CuckooHashMap
     {
-        var map = try zuda.containers.hashing.CuckooHashMap(i32, i32, IntContext, IntContext.hash, IntContext.hash2, IntContext.eql).init(allocator, .{});
+        var map = try zuda.containers.hashing.CuckooHashMap(i32, i32, IntContext, IntContext.hash, IntContext.hash2, IntContext.eql).init(allocator, .{}, .{ .seed = 0x5EED });
         defer map.deinit();
         _ = try map.insert(1, 100);
         try testing.expectEqual(1, map.count());
@@ -489,7 +489,7 @@ test "memory safety: stress test - large allocation and cleanup" {
 
     // CuckooHashMap with 10k elements
     {
-        var map = try zuda.containers.hashing.CuckooHashMap(i32, i32, IntContext, IntContext.hash, IntContext.hash2, IntContext.eql).init(allocator, .{});
+        var map = try zuda.containers.hashing.CuckooHashMap(i32, i32, IntContext, IntContext.hash, IntContext.hash2, IntContext.eql).init(allocator, .{}, .{ .seed = 0x5EED });
         defer map.deinit();
 
         var i: i32 = 0;

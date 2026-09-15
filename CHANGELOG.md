@@ -59,6 +59,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sequences reproducible from a seed. `SliceBuilder.toHashMap` gained a required trailing `seed:
   u64` parameter for the same reason. **Breaking**: part of the v3.0.0 signature break; no
   default seed.
+- `CuckooHashMap.init(allocator, ctx)` / `.initCapacity(allocator, ctx, cap)` →
+  `..., .{ .seed = s })` (ADR 0001 D1): a stored `prng: std.Random.DefaultPrng` field, seeded
+  once at init, replaces both `std.time.timestamp()`-derived initial seeding and
+  `rehash()`'s per-max-displacement re-seeding from `std.time.nanoTimestamp()` — `seed1`/
+  `seed2` are now reproducible from the init seed across every rehash. **Breaking**: part of
+  the v3.0.0 signature break; no default seed.
 
 ## [2.0.0] - 2026-03-26
 

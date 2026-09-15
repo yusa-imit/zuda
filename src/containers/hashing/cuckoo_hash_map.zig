@@ -67,21 +67,36 @@ pub fn CuckooHashMap(
         len: usize,
         seed1: u64, // Seed for hash1
         seed2: u64, // Seed for hash2
+        prng: std.Random.DefaultPrng, // Drives seed1/seed2 at init and on every rehash
         max_displacement: usize, // Max cuckoo kicks before rehash
 
         const DEFAULT_CAPACITY = 16;
         const MAX_DISPLACEMENT = 512;
         const LOAD_FACTOR_THRESHOLD = 0.5; // Rehash when 50% full
 
+        /// `seed` drives the hash-mixing salts (see ADR 0001 D1): a clock-derived seed is an
+        /// unauditable, untestable execution-context leak into container state. Callers that
+        /// only care about default behavior can pass a fixed seed; there is no default.
+        pub const Options = struct {
+            seed: u64,
+        };
+
         /// Initialize an empty CuckooHashMap
+        /// `options.seed` seeds the stored PRNG (ADR 0001 D1): the same seed produces the same
+        /// `seed1`/`seed2` derivation at init and across every subsequent `rehash()`.
         /// Time: O(1) | Space: O(capacity)
-        pub fn init(allocator: std.mem.Allocator, context: Context) !Self {
-            return initCapacity(allocator, context, DEFAULT_CAPACITY);
+        pub fn init(allocator: std.mem.Allocator, context: Context, options: Options) !Self {
+            return initCapacity(allocator, context, DEFAULT_CAPACITY, options);
         }
 
         /// Initialize with specific capacity
         /// Time: O(capacity) | Space: O(capacity)
-        pub fn initCapacity(allocator: std.mem.Allocator, context: Context, initial_capacity: usize) !Self {
+        pub fn initCapacity(
+            allocator: std.mem.Allocator,
+            context: Context,
+            initial_capacity: usize,
+            options: Options,
+        ) !Self {
             const cap = if (initial_capacity < 4) 4 else std.math.ceilPowerOfTwo(usize, initial_capacity) catch return error.CapacityTooLarge;
 
             const table1 = try allocator.alloc(Slot, cap);
@@ -92,8 +107,10 @@ pub fn CuckooHashMap(
             @memset(table1, .{ .entry = undefined, .occupied = false });
             @memset(table2, .{ .entry = undefined, .occupied = false });
 
-            var prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.timestamp())));
+            var prng = std.Random.DefaultPrng.init(options.seed);
             const random = prng.random();
+            const seed1 = random.int(u64);
+            const seed2 = random.int(u64);
 
             return Self{
                 .allocator = allocator,
@@ -101,8 +118,9 @@ pub fn CuckooHashMap(
                 .table2 = table2,
                 .context = context,
                 .len = 0,
-                .seed1 = random.int(u64),
-                .seed2 = random.int(u64),
+                .seed1 = seed1,
+                .seed2 = seed2,
+                .prng = prng,
                 .max_displacement = MAX_DISPLACEMENT,
             };
         }
@@ -115,7 +133,8 @@ pub fn CuckooHashMap(
             self.* = undefined;
         }
 
-        /// Create a deep copy
+        /// Create a deep copy. The stored PRNG state is duplicated verbatim, so the clone's
+        /// future `rehash()` seed sequence matches the parent's until either one rehashes.
         /// Time: O(capacity) | Space: O(capacity)
         pub fn clone(self: *const Self) !Self {
             const table1 = try self.allocator.alloc(Slot, self.table1.len);
@@ -134,6 +153,7 @@ pub fn CuckooHashMap(
                 .len = self.len,
                 .seed1 = self.seed1,
                 .seed2 = self.seed2,
+                .prng = self.prng,
                 .max_displacement = self.max_displacement,
             };
         }
@@ -263,9 +283,9 @@ pub fn CuckooHashMap(
         }
 
         fn rehash(self: *Self) !void {
-            // Change hash seeds to get new hash functions
-            var prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.nanoTimestamp())));
-            const random = prng.random();
+            // Draw new hash seeds from the stored PRNG (ADR 0001 D1) rather than re-seeding
+            // from the clock: the resulting sequence stays reproducible from the init seed.
+            const random = self.prng.random();
             self.seed1 = random.int(u64);
             self.seed2 = random.int(u64);
 
@@ -442,7 +462,7 @@ pub fn AutoCuckooHashMap(comptime K: type, comptime V: type) type {
 // --- Tests ---
 
 test "CuckooHashMap: basic insert and get" {
-    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 0x5EED });
     defer map.deinit();
 
     try testing.expect(map.isEmpty());
@@ -457,7 +477,7 @@ test "CuckooHashMap: basic insert and get" {
 }
 
 test "CuckooHashMap: update existing key" {
-    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 0x5EED });
     defer map.deinit();
 
     _ = try map.insert(1, 100);
@@ -468,7 +488,7 @@ test "CuckooHashMap: update existing key" {
 }
 
 test "CuckooHashMap: remove" {
-    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 0x5EED });
     defer map.deinit();
 
     _ = try map.insert(1, 100);
@@ -485,7 +505,7 @@ test "CuckooHashMap: remove" {
 }
 
 test "CuckooHashMap: contains" {
-    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 0x5EED });
     defer map.deinit();
 
     try testing.expect(!map.contains(1));
@@ -496,7 +516,7 @@ test "CuckooHashMap: contains" {
 }
 
 test "CuckooHashMap: iterator" {
-    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 0x5EED });
     defer map.deinit();
 
     _ = try map.insert(1, 100);
@@ -512,7 +532,7 @@ test "CuckooHashMap: iterator" {
 }
 
 test "CuckooHashMap: clear" {
-    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 0x5EED });
     defer map.deinit();
 
     _ = try map.insert(1, 100);
@@ -526,7 +546,7 @@ test "CuckooHashMap: clear" {
 }
 
 test "CuckooHashMap: stress test with many insertions" {
-    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 0x5EED });
     defer map.deinit();
 
     const n = 1000;
@@ -549,7 +569,7 @@ test "CuckooHashMap: stress test with many insertions" {
 }
 
 test "CuckooHashMap: collision handling with sequential keys" {
-    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 0x5EED });
     defer map.deinit();
 
     // Insert many sequential keys to test cuckoo hashing
@@ -569,7 +589,7 @@ test "CuckooHashMap: collision handling with sequential keys" {
 }
 
 test "CuckooHashMap: clone" {
-    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 0x5EED });
     defer map.deinit();
 
     _ = try map.insert(1, 100);
@@ -589,7 +609,7 @@ test "CuckooHashMap: clone" {
 }
 
 test "CuckooHashMap: capacity growth" {
-    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 0x5EED });
     defer map.deinit();
 
     const initial_capacity = map.capacity();
@@ -606,7 +626,7 @@ test "CuckooHashMap: capacity growth" {
 }
 
 test "CuckooHashMap: memory leak test" {
-    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 0x5EED });
     defer map.deinit();
 
     for (0..100) |i| {
@@ -630,7 +650,7 @@ test "CuckooHashMap: memory leak test" {
 }
 
 test "CuckooHashMap: validate invariants" {
-    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 0x5EED });
     defer map.deinit();
 
     try map.validate();
@@ -654,7 +674,7 @@ test "CuckooHashMap: validate invariants" {
 }
 
 test "CuckooHashMap: empty operations" {
-    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 0x5EED });
     defer map.deinit();
 
     try testing.expectEqual(@as(?u32, null), map.get(1));
@@ -666,7 +686,7 @@ test "CuckooHashMap: empty operations" {
 }
 
 test "CuckooHashMap: O(1) worst-case lookup guarantee" {
-    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{});
+    var map = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 0x5EED });
     defer map.deinit();
 
     // Insert many items
@@ -684,4 +704,42 @@ test "CuckooHashMap: O(1) worst-case lookup guarantee" {
     }
 
     try map.validate();
+}
+
+test "CuckooHashMap: same seed produces identical initial seed derivation" {
+    var map1 = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 42 });
+    defer map1.deinit();
+    var map2 = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 42 });
+    defer map2.deinit();
+
+    try testing.expectEqual(map1.seed1, map2.seed1);
+    try testing.expectEqual(map1.seed2, map2.seed2);
+}
+
+test "CuckooHashMap: different seeds diverge in initial seed derivation" {
+    var map1 = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 1 });
+    defer map1.deinit();
+    var map2 = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 2 });
+    defer map2.deinit();
+
+    try testing.expect(map1.seed1 != map2.seed1 or map1.seed2 != map2.seed2);
+}
+
+test "CuckooHashMap: rehash draws deterministically from the stored prng, not the clock" {
+    var map1 = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 7 });
+    defer map1.deinit();
+    var map2 = try AutoCuckooHashMap(u32, u32).init(testing.allocator, .{}, .{ .seed = 7 });
+    defer map2.deinit();
+
+    const seed1_before = map1.seed1;
+    const seed2_before = map1.seed2;
+
+    try map1.rehash();
+    try map2.rehash();
+
+    // Same init seed -> same stored-prng state -> identical post-rehash seeds.
+    try testing.expectEqual(map1.seed1, map2.seed1);
+    try testing.expectEqual(map1.seed2, map2.seed2);
+    // rehash() actually advances the seeds rather than being a no-op.
+    try testing.expect(map1.seed1 != seed1_before or map1.seed2 != seed2_before);
 }
