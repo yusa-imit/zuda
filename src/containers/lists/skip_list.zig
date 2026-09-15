@@ -38,7 +38,8 @@ const Order = std.math.Order;
 ///         return std.math.order(a, b);
 ///     }
 /// };
-/// var list = SkipList(i32, []const u8, IntContext, IntContext.compare).init(allocator, .{});
+/// var list = SkipList(i32, []const u8, IntContext, IntContext.compare)
+///     .init(allocator, .{}, .{ .seed = 42 });
 /// defer list.deinit();
 /// ```
 pub fn SkipList(
@@ -144,15 +145,22 @@ pub fn SkipList(
 
         // -- Lifecycle --
 
-        /// Initialize an empty skip list
+        /// `seed` drives the level-promotion PRNG (ADR 0001 D1): a clock-derived seed is an
+        /// unobservable input that breaks reproducibility, so it is a required option with
+        /// no default.
+        pub const Options = struct {
+            seed: u64,
+        };
+
+        /// Initialize an empty skip list.
+        /// `options.seed` seeds the level-promotion PRNG (ADR 0001 D1): the same seed produces
+        /// the same level sequence for the same sequence of inserts.
         /// Time: O(1) | Space: O(1)
-        pub fn init(allocator: Allocator, ctx: Context) !Self {
+        pub fn init(allocator: Allocator, ctx: Context, options: Options) !Self {
             const header = try allocator.create(Node);
             header.* = Node.init(undefined, undefined);
 
-            // Initialize with timestamp-based seed for randomness
-            const seed = @as(u64, @intCast(std.time.milliTimestamp()));
-            const prng = std.Random.DefaultPrng.init(seed);
+            const prng = std.Random.DefaultPrng.init(options.seed);
 
             return Self{
                 .allocator = allocator,
@@ -165,30 +173,14 @@ pub fn SkipList(
             };
         }
 
-        /// Initialize with a specific random seed (for deterministic testing)
-        /// Time: O(1) | Space: O(1)
-        pub fn initWithSeed(allocator: Allocator, ctx: Context, seed: u64) !Self {
-            const header = try allocator.create(Node);
-            header.* = Node.init(undefined, undefined);
-
-            const prng = std.Random.DefaultPrng.init(seed);
-
-            return Self{
-                .allocator = allocator,
-                .header = header,
-                .level = 0,
-                .len = 0,
-                .ctx = ctx,
-                .prng = prng,
-                .tail = null,
-            };
-        }
-
-        /// Initialize with default comparison function for i32 keys
+        /// Initialize with default comparison function for i32/f64/[]const u8 keys.
+        /// This convenience constructor is itself a fixed default, so it seeds the
+        /// level-promotion PRNG with a fixed constant rather than taking `Options` — ADR 0001
+        /// D1's "no default seed" rule governs `init`, not this wrapper.
         /// Time: O(1) | Space: O(1)
         pub fn initDefault(allocator: Allocator) !Self {
             if (K == i32 or K == f64 or K == []const u8) {
-                return init(allocator, {});
+                return init(allocator, {}, .{ .seed = 0x5EED });
             } else {
                 @compileError("initDefault() is only available for i32, f64, or []const u8 key types");
             }
@@ -209,8 +201,12 @@ pub fn SkipList(
         /// Create a deep copy of the skip list
         /// Time: O(n) | Space: O(n)
         pub fn clone(self: *const Self) !Self {
-            var new_list = try Self.init(self.allocator, self.ctx);
+            // Seed is a placeholder: the PRNG state is overwritten below with a direct copy of
+            // self.prng so the clone continues the exact same random-level sequence as self
+            // (Xoshiro256 is a plain value type, safe to copy — see ADR 0001 D1 discussion).
+            var new_list = try Self.init(self.allocator, self.ctx, .{ .seed = 0 });
             errdefer new_list.deinit();
+            new_list.prng = self.prng;
 
             var it = self.iterator();
             while (it.next()) |entry| {
@@ -522,10 +518,11 @@ pub fn SkipList(
 
         // -- Bulk Operations --
 
-        /// Create a skip list from a slice of entries
+        /// Create a skip list from a slice of entries.
+        /// `options.seed` seeds the level-promotion PRNG (ADR 0001 D1) — there is no default.
         /// Time: O(n log n) | Space: O(n)
-        pub fn fromSlice(allocator: Allocator, ctx: Context, entries: []const Entry) !Self {
-            var list = try Self.init(allocator, ctx);
+        pub fn fromSlice(allocator: Allocator, ctx: Context, entries: []const Entry, options: Options) !Self {
+            var list = try Self.init(allocator, ctx, options);
             errdefer list.deinit();
 
             for (entries) |entry| {
@@ -593,7 +590,7 @@ const IntContext = struct {
 };
 
 test "skip list: init and deinit" {
-    var list = try SkipList(i32, []const u8, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, []const u8, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     try testing.expectEqual(0, list.count());
@@ -601,7 +598,7 @@ test "skip list: init and deinit" {
 }
 
 test "skip list: insert and get" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     try testing.expectEqual(null, try list.insert(5, 50));
@@ -616,7 +613,7 @@ test "skip list: insert and get" {
 }
 
 test "skip list: insert duplicate updates value" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     try testing.expectEqual(null, try list.insert(5, 50));
@@ -626,7 +623,7 @@ test "skip list: insert duplicate updates value" {
 }
 
 test "skip list: remove" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     _ = try list.insert(5, 50);
@@ -643,7 +640,7 @@ test "skip list: remove" {
 }
 
 test "skip list: iterator order" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     const keys = [_]i32{ 5, 3, 7, 1, 9, 2, 8, 4, 6 };
@@ -661,7 +658,7 @@ test "skip list: iterator order" {
 }
 
 test "skip list: min and max" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     try testing.expectEqual(null, list.min());
@@ -676,7 +673,7 @@ test "skip list: min and max" {
 }
 
 test "skip list: range iterator" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     for (0..10) |i| {
@@ -701,7 +698,7 @@ test "skip list: range iterator" {
 }
 
 test "skip list: clear" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     _ = try list.insert(5, 50);
@@ -714,7 +711,7 @@ test "skip list: clear" {
 }
 
 test "skip list: validate" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     for (0..100) |i| {
@@ -741,7 +738,7 @@ test "skip list: validate" {
 }
 
 test "skip list: stress test with random operations" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     var reference = std.AutoHashMap(i32, i32).init(testing.allocator);
@@ -783,7 +780,7 @@ test "skip list: stress test with random operations" {
 }
 
 test "skip list: toSlice and fromSlice" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     for (0..10) |i| {
@@ -795,7 +792,8 @@ test "skip list: toSlice and fromSlice" {
 
     try testing.expectEqual(10, slice.len);
 
-    var list2 = try SkipList(i32, i32, IntContext, IntContext.compare).fromSlice(testing.allocator, .{}, slice);
+    var list2 = try SkipList(i32, i32, IntContext, IntContext.compare)
+        .fromSlice(testing.allocator, .{}, slice, .{ .seed = 42 });
     defer list2.deinit();
 
     try testing.expectEqual(list.count(), list2.count());
@@ -1173,7 +1171,7 @@ test "skip list: initDefault behavior identical to explicit context init with i3
     defer list1.deinit();
 
     // Create list with explicit context
-    var list2 = try SkipList(i32, i32, void, defaultCompareInt).initWithSeed(testing.allocator, {}, 42);
+    var list2 = try SkipList(i32, i32, void, defaultCompareInt).init(testing.allocator, {}, .{ .seed = 42 });
     defer list2.deinit();
 
     // Both should start empty
@@ -1213,7 +1211,7 @@ test "skip list: initDefault behavior identical to explicit context init with f6
     var list1 = try SkipList(f64, f64, void, defaultCompareFloat).initDefault(testing.allocator);
     defer list1.deinit();
 
-    var list2 = try SkipList(f64, f64, void, defaultCompareFloat).initWithSeed(testing.allocator, {}, 42);
+    var list2 = try SkipList(f64, f64, void, defaultCompareFloat).init(testing.allocator, {}, .{ .seed = 42 });
     defer list2.deinit();
 
     try testing.expectEqual(0, list1.count());
@@ -1247,7 +1245,7 @@ test "skip list: initDefault behavior identical to explicit context init with st
     var list1 = try SkipList([]const u8, i32, void, defaultCompareString).initDefault(testing.allocator);
     defer list1.deinit();
 
-    var list2 = try SkipList([]const u8, i32, void, defaultCompareString).initWithSeed(testing.allocator, {}, 42);
+    var list2 = try SkipList([]const u8, i32, void, defaultCompareString).init(testing.allocator, {}, .{ .seed = 42 });
     defer list2.deinit();
 
     try testing.expectEqual(0, list1.count());
@@ -1344,7 +1342,7 @@ test "skip list: initDefault range iterator with strings" {
 // -- Tests for reverseIterator() --
 
 test "skip list: reverse iterator over empty list" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     var iter = list.reverseIterator();
@@ -1354,7 +1352,7 @@ test "skip list: reverse iterator over empty list" {
 }
 
 test "skip list: reverse iterator with single element" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     _ = try list.insert(42, 420);
@@ -1369,7 +1367,7 @@ test "skip list: reverse iterator with single element" {
 }
 
 test "skip list: reverse iterator yields entries in descending order" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     const keys = [_]i32{ 1, 2, 3, 4, 5 };
@@ -1392,7 +1390,7 @@ test "skip list: reverse iterator yields entries in descending order" {
 }
 
 test "skip list: reverse iterator with unordered insertions" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     const keys = [_]i32{ 5, 3, 7, 1, 9, 2, 8, 4, 6 };
@@ -1415,7 +1413,7 @@ test "skip list: reverse iterator with unordered insertions" {
 }
 
 test "skip list: reverse iterator stress test with 1000 elements" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     // Insert 1000 unique elements
@@ -1437,7 +1435,7 @@ test "skip list: reverse iterator stress test with 1000 elements" {
 }
 
 test "skip list: reverse iterator after removals" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     // Insert 0..99
@@ -1464,7 +1462,7 @@ test "skip list: reverse iterator after removals" {
 }
 
 test "skip list: reverse iterator consistency with forward iterator" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     const keys = [_]i32{ 10, 5, 15, 3, 7, 12, 18, 1, 20, 8 };
@@ -1503,7 +1501,7 @@ test "skip list: reverse iterator consistency with forward iterator" {
 }
 
 test "skip list: reverse iterator multiple iterations" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     for (0..10) |i| {
@@ -1531,7 +1529,7 @@ test "skip list: reverse iterator multiple iterations" {
 }
 
 test "skip list: reverse iterator partial iteration with deinit" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     for (0..50) |i| {
@@ -1551,7 +1549,7 @@ test "skip list: reverse iterator partial iteration with deinit" {
 }
 
 test "skip list: reverse iterator values are correct" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     const test_data = [_]struct { key: i32, value: i32 }{
@@ -1582,7 +1580,7 @@ test "skip list: reverse iterator values are correct" {
 }
 
 test "skip list: reverse iterator with duplicate removals and insertions" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     // Insert some values
@@ -1664,7 +1662,7 @@ test "skip list: reverse iterator with string keys" {
 }
 
 test "skip list: reverse iterator empty after clear" {
-    var list = try SkipList(i32, i32, IntContext, IntContext.compare).initWithSeed(testing.allocator, .{}, 42);
+    var list = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
 
     for (0..10) |i| {
@@ -1677,4 +1675,33 @@ test "skip list: reverse iterator empty after clear" {
     defer iter.deinit();
 
     try testing.expect(iter.next() == null);
+}
+
+test "skip list: same seed produces identical random-level sequence" {
+    var list_a = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 7 });
+    defer list_a.deinit();
+    var list_b = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 7 });
+    defer list_b.deinit();
+
+    var i: usize = 0;
+    while (i < 32) : (i += 1) {
+        try testing.expectEqual(list_a.randomLevel(), list_b.randomLevel());
+    }
+}
+
+test "skip list: different seeds diverge in random-level sequence" {
+    var list_a = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 1 });
+    defer list_a.deinit();
+    var list_b = try SkipList(i32, i32, IntContext, IntContext.compare).init(testing.allocator, .{}, .{ .seed = 2 });
+    defer list_b.deinit();
+
+    // Probabilistic, not a mathematical guarantee: two distinct seeds could in principle draw
+    // 32 identical levels in a row. With std.Random.DefaultPrng this is astronomically
+    // unlikely; if this ever flakes, raise the draw count rather than assuming a bad seed pair.
+    var i: usize = 0;
+    var diverged = false;
+    while (i < 32) : (i += 1) {
+        if (list_a.randomLevel() != list_b.randomLevel()) diverged = true;
+    }
+    try testing.expect(diverged);
 }

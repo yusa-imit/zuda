@@ -61,15 +61,17 @@ pub fn SliceBuilder(comptime T: type) type {
             return list;
         }
 
-        /// Convert to SkipList with custom comparator
+        /// Convert to SkipList with custom comparator.
+        /// `seed` seeds the level-promotion PRNG (ADR 0001 D1) — there is no default.
         /// Time: O(n log n) average | Space: O(n)
         pub fn toSkipList(
             self: Self,
             allocator: Allocator,
             ctx: anytype,
             compareFn: fn (@TypeOf(ctx), T, T) Order,
+            seed: u64,
         ) !SkipList(T, void, @TypeOf(ctx), compareFn) {
-            var list = try SkipList(T, void, @TypeOf(ctx), compareFn).init(allocator, ctx);
+            var list = try SkipList(T, void, @TypeOf(ctx), compareFn).init(allocator, ctx, .{ .seed = seed });
             errdefer list.deinit();
             for (self.items) |item| {
                 _ = try list.insert(item, {});
@@ -287,6 +289,7 @@ test "fromSlice to SkipList" {
         allocator,
         {},
         cmp.ascending(i32),
+        0x5EED,
     );
     defer list.deinit();
 
@@ -304,6 +307,7 @@ test "fromSlice to SkipList maintains sorted order" {
         allocator,
         {},
         cmp.ascending(i32),
+        0x5EED,
     );
     defer list.deinit();
 
@@ -380,6 +384,7 @@ test "fromSlice empty to SkipList" {
         allocator,
         {},
         cmp.ascending(i32),
+        0x5EED,
     );
     defer list.deinit();
 
@@ -454,6 +459,7 @@ test "fromSlice single element to SkipList" {
         allocator,
         {},
         cmp.ascending(i32),
+        0x5EED,
     );
     defer list.deinit();
 
@@ -504,6 +510,7 @@ test "fromSlice duplicates in SkipList deduplicates" {
         allocator,
         {},
         cmp.ascending(i32),
+        0x5EED,
     );
     defer list.deinit();
 
@@ -572,6 +579,7 @@ test "fromSlice with custom comparator" {
         allocator,
         DescContext{},
         DescContext.compare,
+        0x5EED,
     );
     defer list.deinit();
 
