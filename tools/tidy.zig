@@ -56,8 +56,12 @@ fn isIdentChar(c: u8) bool {
 
 /// Finds the name of a function declared as `fn name(` on this line (with no
 /// space between the name and the opening paren, per Zig style). Returns
-/// null when the line does not open a named function.
+/// null when the line does not open a named function, or when the line is a
+/// `//`/`///`/`//!` comment (doc-comment usage examples often show a `fn`
+/// signature that is not real code).
 pub fn extractFnName(line: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trimStart(u8, line, " \t");
+    if (std.mem.startsWith(u8, trimmed, "//")) return null;
     const idx = std.mem.indexOf(u8, line, "fn ") orelse return null;
     if (idx > 0 and isIdentChar(line[idx - 1])) return null;
     var i = idx + 3;
@@ -919,6 +923,13 @@ test "extractFnName finds a named function opener" {
     try std.testing.expectEqualStrings("bar", extractFnName("fn bar() void {").?);
     try std.testing.expect(extractFnName("const x = fnLike(1);") == null);
     try std.testing.expect(extractFnName("fn (a: u32) void {") == null);
+}
+
+test "extractFnName ignores fn signatures written inside comment lines" {
+    try std.testing.expect(extractFnName("///   fn compare(ctx: Context, a: K, b: K) Order") == null);
+    try std.testing.expect(extractFnName("///     pub fn compare(_: @This(), a: i32, b: i32) Order {") == null);
+    try std.testing.expect(extractFnName("// fn scratch() void {") == null);
+    try std.testing.expect(extractFnName("//! fn scratch() void {") == null);
 }
 
 test "braceDelta ignores braces in strings and comments" {
