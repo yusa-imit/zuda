@@ -45,7 +45,7 @@ fn demo1_basic_operations(allocator: std.mem.Allocator) !void {
     std.debug.print("─────────────────────────────────────────────────\n", .{});
 
     const SkipList = zuda.containers.lists.SkipList(i32, []const u8, i32AscContext, i32AscContext.compare);
-    var list = try SkipList.init(allocator, .{});
+    var list = try SkipList.init(allocator, .{}, .{ .seed = 0x5EED });
     defer list.deinit();
 
     // Insert key-value pairs
@@ -89,7 +89,7 @@ fn demo2_custom_comparator(allocator: std.mem.Allocator) !void {
     std.debug.print("─────────────────────────────────────────────────\n", .{});
 
     const SkipList = zuda.containers.lists.SkipList(f64, []const u8, f64DescContext, f64DescContext.compare);
-    var list = try SkipList.init(allocator, .{});
+    var list = try SkipList.init(allocator, .{}, .{ .seed = 0x5EED });
     defer list.deinit();
 
     _ = try list.insert(3.14, "pi");
@@ -112,7 +112,7 @@ fn demo3_range_queries(allocator: std.mem.Allocator) !void {
     std.debug.print("─────────────────────────────────────────────────\n", .{});
 
     const SkipList = zuda.containers.lists.SkipList(i32, []const u8, i32AscContext, i32AscContext.compare);
-    var list = try SkipList.init(allocator, .{});
+    var list = try SkipList.init(allocator, .{}, .{ .seed = 0x5EED });
     defer list.deinit();
 
     // Insert student scores
@@ -154,7 +154,7 @@ fn demo4_leaderboard(allocator: std.mem.Allocator) !void {
     };
 
     const SkipList = zuda.containers.lists.SkipList(u64, Player, u64DescContext, u64DescContext.compare);
-    var leaderboard = try SkipList.init(allocator, .{});
+    var leaderboard = try SkipList.init(allocator, .{}, .{ .seed = 0x5EED });
     defer leaderboard.deinit();
 
     // Insert players with scores (key = score, value = player info)
