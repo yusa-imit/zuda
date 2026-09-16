@@ -24,7 +24,7 @@ const IntContext = struct {
 
 /// Benchmark: SkipList insert with 100k random keys
 fn benchSkipListInsert(allocator: std.mem.Allocator) !void {
-    var list = try SkipList(i64, i64, IntContext, IntContext.compare).init(allocator, .{});
+    var list = try SkipList(i64, i64, IntContext, IntContext.compare).init(allocator, .{}, .{ .seed = 0x5EED });
     defer list.deinit();
 
     var prng = std.Random.DefaultPrng.init(42);
@@ -40,7 +40,7 @@ fn benchSkipListInsert(allocator: std.mem.Allocator) !void {
 
 /// Benchmark: SkipList search with 100k keys
 fn benchSkipListSearch(allocator: std.mem.Allocator) !void {
-    var list = try SkipList(i64, i64, IntContext, IntContext.compare).init(allocator, .{});
+    var list = try SkipList(i64, i64, IntContext, IntContext.compare).init(allocator, .{}, .{ .seed = 0x5EED });
     defer list.deinit();
 
     var prng = std.Random.DefaultPrng.init(42);

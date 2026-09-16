@@ -88,7 +88,7 @@ pub const SortedSet = struct {
         return .{
             .allocator = allocator,
             .member_to_score = std.StringHashMap(f64).init(allocator),
-            .score_to_member = try InnerSkipList.init(allocator),
+            .score_to_member = try InnerSkipList.init(allocator, {}, .{ .seed = 0x5EED }),
         };
     }
 

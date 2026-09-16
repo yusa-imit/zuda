@@ -34,7 +34,7 @@ fn profileSkipList(allocator: std.mem.Allocator) !void {
         }
     }.compare;
 
-    var list = try zuda.containers.lists.SkipList(i64, i64, void, CompareFn).init(allocator, {});
+    var list = try zuda.containers.lists.SkipList(i64, i64, void, CompareFn).init(allocator, {}, .{ .seed = 0x5EED });
     defer list.deinit();
 
     var i: i64 = 0;

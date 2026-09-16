@@ -31,7 +31,7 @@ test "memory safety: lists - empty state cleanup" {
 
     // SkipList
     {
-        var list = try zuda.containers.lists.SkipList(i32, void, IntContext, IntContext.compare).init(allocator, .{});
+        var list = try zuda.containers.lists.SkipList(i32, void, IntContext, IntContext.compare).init(allocator, .{}, .{ .seed = 0x5EED });
         defer list.deinit();
         try testing.expectEqual(0, list.count());
     }
@@ -56,7 +56,7 @@ test "memory safety: lists - single element cleanup" {
 
     // SkipList
     {
-        var list = try zuda.containers.lists.SkipList(i32, void, IntContext, IntContext.compare).init(allocator, .{});
+        var list = try zuda.containers.lists.SkipList(i32, void, IntContext, IntContext.compare).init(allocator, .{}, .{ .seed = 0x5EED });
         defer list.deinit();
         _ = try list.insert(42, {});
         try testing.expectEqual(1, list.count());
@@ -470,7 +470,7 @@ test "memory safety: stress test - large allocation and cleanup" {
 
     // SkipList with 10k elements
     {
-        var list = try zuda.containers.lists.SkipList(i32, void, IntContext, IntContext.compare).init(allocator, .{});
+        var list = try zuda.containers.lists.SkipList(i32, void, IntContext, IntContext.compare).init(allocator, .{}, .{ .seed = 0x5EED });
         defer list.deinit();
 
         var i: i32 = 0;
