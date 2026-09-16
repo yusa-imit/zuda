@@ -123,19 +123,17 @@ pub const SortedSet = struct {
 
         // Check if member already exists
         if (self.member_to_score.get(member)) |old_score| {
-            // Remove old score→member entry from SkipList and free the old string
+            // Remove the old entry from the HashMap first: its stored key is the same
+            // allocation as the SkipList entry's value freed below, so it must be unlinked
+            // before that allocation is freed.
+            _ = self.member_to_score.remove(member);
+
+            // Remove old score→member entry from SkipList and free the old owned string.
             if (self.score_to_member.remove(old_score)) |entry| {
                 self.allocator.free(entry.value);
             }
 
-            // Remove old entry from HashMap to get the old owned key
-            if (self.member_to_score.remove(member)) {
-                // The old owned key was in the HashMap, now we insert the new one
-                try self.member_to_score.put(owned_member, new_score);
-            } else {
-                // Should not happen, but just in case
-                try self.member_to_score.put(owned_member, new_score);
-            }
+            try self.member_to_score.put(owned_member, new_score);
 
             // Insert new score→member into SkipList
             _ = try self.score_to_member.insert(new_score, owned_member);
@@ -168,13 +166,15 @@ pub const SortedSet = struct {
         // Look up the score
         const member_score = self.member_to_score.get(member) orelse return false;
 
-        // Remove from SkipList (returns the Entry with owned member string)
+        // Remove from HashMap first: its stored key is the same allocation as the SkipList
+        // entry's value (both point at the one `owned_member` dupe from `add`), so it must be
+        // unlinked from the HashMap before that allocation is freed below.
+        _ = self.member_to_score.remove(member);
+
+        // Remove from SkipList (returns the Entry with the owned member string) and free it.
         if (self.score_to_member.remove(member_score)) |entry| {
             self.allocator.free(entry.value);
         }
-
-        // Remove from HashMap
-        _ = self.member_to_score.remove(member);
 
         return true;
     }
@@ -227,19 +227,19 @@ pub const SortedSet = struct {
     pub fn range(self: *Self, start: usize, end: usize) ![]Entry {
         const size = if (end > start) end - start else 0;
         var result = try std.ArrayList(Entry).initCapacity(self.allocator, size);
-        errdefer result.deinit();
+        errdefer result.deinit(self.allocator);
 
         var iter = self.score_to_member.iterator();
         var index: usize = 0;
         while (iter.next()) |entry| {
             if (index >= end) break;
             if (index >= start) {
-                try result.append(.{ .member = entry.value, .score = entry.key });
+                try result.append(self.allocator, .{ .member = entry.value, .score = entry.key });
             }
             index += 1;
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(self.allocator);
     }
 
     /// Get members with scores in the range [min, max].
@@ -253,7 +253,7 @@ pub const SortedSet = struct {
     /// Time: O(n + k) where k = number of returned entries | Space: O(k)
     pub fn rangeByScore(self: *Self, min: f64, max: f64) ![]Entry {
         var result = try std.ArrayList(Entry).initCapacity(self.allocator, self.member_to_score.count());
-        errdefer result.deinit();
+        errdefer result.deinit(self.allocator);
 
         var iter = self.score_to_member.iterator();
         while (iter.next()) |entry| {
@@ -261,11 +261,11 @@ pub const SortedSet = struct {
             if (entry.key > max) break;
             // Only include if in range
             if (entry.key >= min) {
-                try result.append(.{ .member = entry.value, .score = entry.key });
+                try result.append(self.allocator, .{ .member = entry.value, .score = entry.key });
             }
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(self.allocator);
     }
 
     /// A member-score pair entry.
