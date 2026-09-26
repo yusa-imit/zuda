@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored in a container, and lands on ~18 public functions instead of ~40.
 
 ### Fixed
+- `src/compat/zoltraak_sortedset.zig`: `range()`/`rangeByScore()` called `ArrayList.append`
+  with one argument, but this repo's pinned Zig 0.15.2 `std.ArrayList` requires
+  `(self, gpa, item)` — fixed `append`, `deinit`, and `toOwnedSlice` call sites to pass the
+  allocator. Also fixed a use-after-free in `remove()`/`add()`'s update path: both freed the
+  SkipList entry's owned member string before removing the same allocation's `StringHashMap`
+  key, causing a segfault (or silent corruption) on the very next lookup — reordered to unlink
+  from the `HashMap` first. Fixes #44.
 - `BloomFilter`'s benchmark-arithmetic test no longer depends on `std.time.Timer` (a wall-clock
   throughput assertion, flaky under CI/wasm and removed from library code by Zig 0.16); it now
   asserts pure ops/sec arithmetic and lookup correctness deterministically.
