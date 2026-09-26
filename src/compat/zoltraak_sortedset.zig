@@ -16,7 +16,7 @@
 //! - ✅ `add(member, score)` — adds or updates member with new score
 //! - ✅ `remove(member)` — removes member, returns true if found
 //! - ✅ `score(member)` — O(1) lookup of member's score
-//! - ✅ `rank(member)` — returns 0-based rank (count of members with lower scores)
+//! - ✅ `rank(member)` — returns 0-based rank (count of members ordered before it)
 //! - ✅ `range(start, end)` — returns members in sorted order by index [start, end)
 //! - ✅ `rangeByScore(min, max)` — returns members with scores in [min, max]
 //!
@@ -41,11 +41,18 @@
 const std = @import("std");
 const SkipList = @import("../containers/lists/skip_list.zig").SkipList;
 
-/// Comparison function for f64 scores (ascending order).
-fn compareF64(_: void, a: f64, b: f64) std.math.Order {
-    if (a < b) return .lt;
-    if (a > b) return .gt;
-    return .eq;
+/// Sort key: score first, then member bytes, so members sharing a score stay distinct and
+/// ordered exactly as Redis ZSET orders them. `member` is owned by the set once inserted.
+const Key = struct {
+    score: f64,
+    member: []const u8,
+};
+
+/// Comparison function for composite keys (ascending score, then ascending member bytes).
+fn compareKey(_: void, a: Key, b: Key) std.math.Order {
+    if (a.score < b.score) return .lt;
+    if (a.score > b.score) return .gt;
+    return std.mem.order(u8, a.member, b.member);
 }
 
 /// Compatibility wrapper for zoltraak's SortedSet API.
@@ -69,9 +76,8 @@ fn compareF64(_: void, a: f64, b: f64) std.math.Order {
 pub const SortedSet = struct {
     const Self = @This();
 
-    /// Internal SkipList (score → member)
-    /// Key: f64 (score), Value: []const u8 (owned member string)
-    const InnerSkipList = SkipList(f64, []const u8, void, compareF64);
+    /// Internal SkipList keyed by (score, member); the key's member is the owned string.
+    const InnerSkipList = SkipList(Key, void, void, compareKey);
 
     allocator: std.mem.Allocator,
     /// Map from member name to score for O(1) lookup
@@ -99,7 +105,7 @@ pub const SortedSet = struct {
         // Free member strings from SkipList values (the owned copies)
         var it = self.score_to_member.iterator();
         while (it.next()) |entry| {
-            self.allocator.free(entry.value);
+            self.allocator.free(entry.key.member);
         }
         self.member_to_score.deinit();
         self.score_to_member.deinit();
@@ -129,23 +135,24 @@ pub const SortedSet = struct {
             _ = self.member_to_score.remove(member);
 
             // Remove old score→member entry from SkipList and free the old owned string.
-            if (self.score_to_member.remove(old_score)) |entry| {
-                self.allocator.free(entry.value);
+            if (self.score_to_member.remove(.{ .score = old_score, .member = member })) |entry| {
+                self.allocator.free(entry.key.member);
             }
 
             try self.member_to_score.put(owned_member, new_score);
 
             // Insert new score→member into SkipList
-            _ = try self.score_to_member.insert(new_score, owned_member);
+            _ = try self.score_to_member.insert(.{ .score = new_score, .member = owned_member }, {});
             return;
         }
 
         // Member doesn't exist yet
 
         // Insert score→member into SkipList first (so we can rollback on failure)
-        _ = try self.score_to_member.insert(new_score, owned_member);
+        const key: Key = .{ .score = new_score, .member = owned_member };
+        _ = try self.score_to_member.insert(key, {});
         errdefer {
-            _ = self.score_to_member.remove(new_score);
+            _ = self.score_to_member.remove(key);
             self.allocator.free(owned_member);
         }
 
@@ -172,8 +179,8 @@ pub const SortedSet = struct {
         _ = self.member_to_score.remove(member);
 
         // Remove from SkipList (returns the Entry with the owned member string) and free it.
-        if (self.score_to_member.remove(member_score)) |entry| {
-            self.allocator.free(entry.value);
+        if (self.score_to_member.remove(.{ .score = member_score, .member = member })) |entry| {
+            self.allocator.free(entry.key.member);
         }
 
         return true;
@@ -196,7 +203,7 @@ pub const SortedSet = struct {
     ///
     /// **zoltraak API**: `pub fn rank(self: *SortedSet, member: []const u8) ?usize`
     ///
-    /// Rank is the count of members with scores strictly less than the target member's score.
+    /// Rank is the count of members ordered before the target by (score, member bytes).
     ///
     /// Returns:
     /// - The 0-based rank if member exists
@@ -209,7 +216,8 @@ pub const SortedSet = struct {
         var member_rank: usize = 0;
         var iter = self.score_to_member.iterator();
         while (iter.next()) |entry| {
-            if (entry.key >= target_score) break;
+            const order = compareKey({}, entry.key, .{ .score = target_score, .member = member });
+            if (order != .lt) break;
             member_rank += 1;
         }
         return member_rank;
@@ -234,7 +242,7 @@ pub const SortedSet = struct {
         while (iter.next()) |entry| {
             if (index >= end) break;
             if (index >= start) {
-                try result.append(self.allocator, .{ .member = entry.value, .score = entry.key });
+                try result.append(self.allocator, .{ .member = entry.key.member, .score = entry.key.score });
             }
             index += 1;
         }
@@ -258,10 +266,10 @@ pub const SortedSet = struct {
         var iter = self.score_to_member.iterator();
         while (iter.next()) |entry| {
             // Stop early if we've passed max (SkipList is sorted)
-            if (entry.key > max) break;
+            if (entry.key.score > max) break;
             // Only include if in range
-            if (entry.key >= min) {
-                try result.append(self.allocator, .{ .member = entry.value, .score = entry.key });
+            if (entry.key.score >= min) {
+                try result.append(self.allocator, .{ .member = entry.key.member, .score = entry.key.score });
             }
         }
 
@@ -509,7 +517,44 @@ test "zoltraak SortedSet compatibility - duplicate scores with different members
     defer allocator.free(range);
 
     try std.testing.expectEqual(@as(usize, 3), range.len);
-    // Note: Order among same-score members is not guaranteed by SkipList
+    // Ties are ordered by member bytes (Redis ZSET semantics).
+    try std.testing.expectEqualStrings("user1", range[0].member);
+    try std.testing.expectEqualStrings("user2", range[1].member);
+    try std.testing.expectEqualStrings("user3", range[2].member);
+}
+
+test "zoltraak SortedSet compatibility - tied scores rank, update and remove" {
+    const allocator = std.testing.allocator;
+
+    var set = try SortedSet.init(allocator);
+    defer set.deinit();
+
+    try set.add("c", 1.0);
+    try set.add("a", 1.0);
+    try set.add("b", 1.0);
+    try set.add("z", 0.5);
+
+    try std.testing.expectEqual(@as(?usize, 0), set.rank("z"));
+    try std.testing.expectEqual(@as(?usize, 1), set.rank("a"));
+    try std.testing.expectEqual(@as(?usize, 2), set.rank("b"));
+    try std.testing.expectEqual(@as(?usize, 3), set.rank("c"));
+
+    // Removing one tied member leaves the others reachable.
+    try std.testing.expect(try set.remove("b"));
+    const after_remove = try set.range(0, 10);
+    defer allocator.free(after_remove);
+    try std.testing.expectEqual(@as(usize, 3), after_remove.len);
+    try std.testing.expectEqualStrings("a", after_remove[1].member);
+    try std.testing.expectEqualStrings("c", after_remove[2].member);
+
+    // Updating one tied member's score moves only that member.
+    try set.add("a", 2.0);
+    const after_update = try set.range(0, 10);
+    defer allocator.free(after_update);
+    try std.testing.expectEqual(@as(usize, 3), after_update.len);
+    try std.testing.expectEqualStrings("z", after_update[0].member);
+    try std.testing.expectEqualStrings("c", after_update[1].member);
+    try std.testing.expectEqualStrings("a", after_update[2].member);
 }
 
 test "zoltraak SortedSet compatibility - stress test 1000 operations" {

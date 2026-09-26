@@ -833,4 +833,5 @@ test {
     // pub-const re-export -- refAllDecls is non-recursive, so without this line these tests
     // silently never run under `zig build test` (see issue #38).
     _ = @import("containers/lists/concurrent_skip_list.zig");
+    _ = @import("compat/zoltraak_sortedset.zig");
 }
