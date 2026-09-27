@@ -401,9 +401,9 @@ test "BloomFilter - empty and edge cases" {
 
 test "BloomFilter - benchmark calculation verification" {
     // Verifies throughput arithmetic and lookup correctness without a wall-clock timer: a
-    // machine-speed assertion (ops/sec >= 1M) is flaky under CI/wasm and calls std.time.Timer,
-    // which Zig 0.16 removes from library code (Tiger Style rule 14: inject the clock; ADR 0001
-    // D1). The wall-clock measurement itself belongs in bench/, not a unit test.
+    // machine-speed assertion (ops/sec >= 1M) is flaky under CI/wasm and needs a clock type Zig
+    // 0.16 removes from library code (Tiger Style rule 14: inject the clock; ADR 0001 D1). The
+    // wall-clock measurement itself belongs in bench/, not a unit test.
     const Filter = BloomFilter(u64, void, defaultHashInt(u64));
 
     var filter = try Filter.init(testing.allocator, 100_000, 7, {});
