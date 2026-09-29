@@ -28,7 +28,7 @@ const Finding = struct {
 
 const Options = struct {
     root: []const u8 = ".",
-    baseline_path: []const u8 = "./tidy_baseline.txt",
+    baseline_path: []const u8 = "./tools/tidy_baseline.txt",
 };
 
 /// Parses `--root <dir>` and `--baseline <path>` from a raw argument list
@@ -966,7 +966,7 @@ test "splitLines trims a trailing newline and CRLF" {
 test "parseArgs reads --root and --baseline, defaults otherwise" {
     const defaults = parseArgs(&.{});
     try std.testing.expectEqualStrings(".", defaults.root);
-    try std.testing.expectEqualStrings("./tidy_baseline.txt", defaults.baseline_path);
+    try std.testing.expectEqualStrings("./tools/tidy_baseline.txt", defaults.baseline_path);
 
     const custom = parseArgs(&.{ "--root", "/tmp/x", "--baseline", "b.txt" });
     try std.testing.expectEqualStrings("/tmp/x", custom.root);
