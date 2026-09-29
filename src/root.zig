@@ -834,4 +834,5 @@ test {
     // silently never run under `zig build test` (see issue #38).
     _ = @import("containers/lists/concurrent_skip_list.zig");
     _ = @import("compat/zoltraak_sortedset.zig");
+    _ = @import("containers/queues/deque.zig");
 }

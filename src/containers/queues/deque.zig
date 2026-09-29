@@ -161,7 +161,7 @@ pub fn Deque(comptime T: type) type {
 
             self.buffer = new_buffer;
             self.head = 0;
-            self.tail = self.length;
+            self.tail = 0; // Full after shrinking: tail wraps to head.
         }
 
         // -- Modification --
@@ -404,21 +404,16 @@ pub fn Deque(comptime T: type) type {
                 if (self.tail >= self.buffer.len) return error.TailOutOfBounds;
             }
 
-            // If empty, head and tail should be 0
-            if (self.length == 0 and self.buffer.len > 0) {
-                if (self.head != 0 or self.tail != 0) {
-                    return error.EmptyDequeInvalidPointers;
-                }
+            // An empty deque has head == tail (both may sit anywhere after pops).
+            if (self.length == 0 and self.tail != self.head) {
+                return error.EmptyDequeInvalidPointers;
             }
 
-            // Verify length matches circular buffer state
-            const computed_length = if (self.tail >= self.head)
-                self.tail - self.head
-            else
-                self.buffer.len - self.head + self.tail;
-
-            if (self.buffer.len > 0 and self.length != computed_length) {
-                return error.LengthMismatch;
+            // `tail` is derived from `head` and `length`; deriving it modulo capacity keeps a
+            // full deque (head == tail, length == capacity) valid.
+            if (self.buffer.len > 0) {
+                const expected_tail = (self.head + self.length) % self.buffer.len;
+                if (self.tail != expected_tail) return error.LengthMismatch;
             }
         }
     };
@@ -670,7 +665,7 @@ test "Deque: stress test with many operations" {
 
     // Push to front
     i = -1;
-    while (i >= -49) : (i -= 1) {
+    while (i >= -50) : (i -= 1) {
         try deque.push_front(i);
     }
 
