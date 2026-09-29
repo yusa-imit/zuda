@@ -657,6 +657,19 @@ pub const AhoCorasickASCII = struct {
         }
     }
 
+    /// Follow `node`'s failure chain to the first node with a `ch` transition. Root's children
+    /// are all filled before the BFS reaches depth 2, so the walk always finds a target there;
+    /// `root` is returned only if the chain ends without one.
+    fn failureTarget(node: *NodeASCII, ch: u8, root: *NodeASCII) *NodeASCII {
+        var fail = node.failure;
+        while (fail) |f| {
+            if (f.children[@as(usize, ch)]) |target| return target;
+            if (f == root) return root;
+            fail = f.failure;
+        }
+        return root;
+    }
+
     fn buildFailureLinks(self: *Self) !void {
         const Deque = @import("../../containers/queues/deque.zig").Deque;
         var queue = Deque(*NodeASCII).init(self.allocator);
@@ -691,19 +704,7 @@ pub const AhoCorasickASCII = struct {
 
                     const ch = @as(u8, @intCast(ch_idx));
 
-                    // Find failure link
-                    var fail = current.failure;
-                    while (fail) |f| {
-                        if (f.children[@as(usize, ch)]) |target| {
-                            child.failure = target;
-                            break;
-                        }
-                        if (f == self.root) {
-                            child.failure = self.root;
-                            break;
-                        }
-                        fail = f.failure;
-                    }
+                    child.failure = failureTarget(current, ch, self.root);
 
                     // Build output link
                     if (child.failure) |fail_node| {
@@ -718,16 +719,7 @@ pub const AhoCorasickASCII = struct {
                     // This is the KEY OPTIMIZATION: goto function completion
                     const ch = @as(u8, @intCast(ch_idx));
 
-                    // Follow failure link to find target, default to root
-                    child_opt.* = self.root; // Default fallback
-                    var fail = current.failure;
-                    while (fail) |f| {
-                        if (f.children[@as(usize, ch)]) |target| {
-                            child_opt.* = target;
-                            break;
-                        }
-                        fail = f.failure;
-                    }
+                    child_opt.* = failureTarget(current, ch, self.root);
                 }
             }
         }

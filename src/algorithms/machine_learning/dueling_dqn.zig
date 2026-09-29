@@ -40,7 +40,6 @@
 /// - vs Rainbow: Simpler (single enhancement), less performant
 /// - vs Distributional RL: Learns mean Q, not distribution
 /// - vs Policy Gradient: Discrete actions, more sample efficient
-
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -178,10 +177,17 @@ const DuelingQNetwork = struct {
     h_shared: []f64,
     h_value: []f64,
     h_adv: []f64,
-    values: []f64,     // V(s) scalar stored as [1]
+    values: []f64, // V(s) scalar stored as [1]
     advantages: []f64, // A(s,a) for all actions
 
     allocator: Allocator,
+
+    /// Fill `weights` uniformly in ±sqrt(2 / `fan_in`). Precondition: `fan_in > 0`.
+    fn xavier_fill(rng: std.Random, weights: []f64, fan_in: usize) void {
+        std.debug.assert(fan_in > 0);
+        const bound = @sqrt(2.0 / @as(f64, @floatFromInt(fan_in)));
+        for (weights) |*w| w.* = (rng.float(f64) - 0.5) * 2.0 * bound;
+    }
 
     fn init(
         allocator: Allocator,
@@ -197,8 +203,7 @@ const DuelingQNetwork = struct {
         const b_shared = try allocator.alloc(f64, hidden_size);
 
         // Xavier initialization for shared
-        const xavier_shared = @sqrt(2.0 / @as(f64, @floatFromInt(input_size)));
-        for (w_shared) |*w| w.* = (rng.float(f64) - 0.5) * 2.0 * xavier_shared;
+        xavier_fill(rng, w_shared, input_size);
         @memset(b_shared, 0.0);
 
         // Value stream
@@ -206,12 +211,10 @@ const DuelingQNetwork = struct {
         const b_value1 = try allocator.alloc(f64, value_stream_size);
         const w_value2 = try allocator.alloc(f64, value_stream_size);
 
-        const xavier_value1 = @sqrt(2.0 / @as(f64, @floatFromInt(hidden_size)));
-        for (w_value1) |*w| w.* = (rng.float(f64) - 0.5) * 2.0 * xavier_value1;
+        xavier_fill(rng, w_value1, hidden_size);
         @memset(b_value1, 0.0);
 
-        const xavier_value2 = @sqrt(2.0 / @as(f64, @floatFromInt(value_stream_size)));
-        for (w_value2) |*w| w.* = (rng.float(f64) - 0.5) * 2.0 * xavier_value2;
+        xavier_fill(rng, w_value2, value_stream_size);
 
         // Advantage stream
         const w_adv1 = try allocator.alloc(f64, hidden_size * advantage_stream_size);
@@ -219,12 +222,10 @@ const DuelingQNetwork = struct {
         const w_adv2 = try allocator.alloc(f64, advantage_stream_size * num_actions);
         const b_adv2 = try allocator.alloc(f64, num_actions);
 
-        const xavier_adv1 = @sqrt(2.0 / @as(f64, @floatFromInt(hidden_size)));
-        for (w_adv1) |*w| w.* = (rng.float(f64) - 0.5) * 2.0 * xavier_adv1;
+        xavier_fill(rng, w_adv1, hidden_size);
         @memset(b_adv1, 0.0);
 
-        const xavier_adv2 = @sqrt(2.0 / @as(f64, @floatFromInt(advantage_stream_size)));
-        for (w_adv2) |*w| w.* = (rng.float(f64) - 0.5) * 2.0 * xavier_adv2;
+        xavier_fill(rng, w_adv2, advantage_stream_size);
         @memset(b_adv2, 0.0);
 
         // Activations
