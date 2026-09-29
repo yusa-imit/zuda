@@ -73,9 +73,7 @@ pub fn SliceBuilder(comptime T: type) type {
         ) !SkipList(T, void, @TypeOf(ctx), compareFn) {
             var list = try SkipList(T, void, @TypeOf(ctx), compareFn).init(allocator, ctx, .{ .seed = seed });
             errdefer list.deinit();
-            for (self.items) |item| {
-                _ = try list.insert(item, {});
-            }
+            for (self.items) |item| _ = try list.insert(item, {});
             return list;
         }
 
@@ -91,9 +89,7 @@ pub fn SliceBuilder(comptime T: type) type {
         ) !RedBlackTree(K, V, @TypeOf(ctx), compareFn) {
             var tree = RedBlackTree(K, V, @TypeOf(ctx), compareFn).init(allocator, ctx);
             errdefer tree.deinit();
-            for (self.items) |pair| {
-                _ = try tree.insert(pair.key, pair.value);
-            }
+            for (self.items) |pair| _ = try tree.insert(pair.key, pair.value);
             return tree;
         }
 
@@ -112,9 +108,7 @@ pub fn SliceBuilder(comptime T: type) type {
         ) !RobinHoodHashMap(K, V, @TypeOf(ctx), hashFn, eqlFn) {
             var map = try RobinHoodHashMap(K, V, @TypeOf(ctx), hashFn, eqlFn).init(allocator, ctx, .{ .seed = seed });
             errdefer map.deinit();
-            for (self.items) |pair| {
-                _ = try map.insert(pair.key, pair.value);
-            }
+            for (self.items) |pair| _ = try map.insert(pair.key, pair.value);
             return map;
         }
     };

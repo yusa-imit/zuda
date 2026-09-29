@@ -16,7 +16,6 @@ bench/scientific_computing.zig:main:396
 bench/strings.zig:main:96
 bench/trees.zig:main:91
 build.zig:build:961
-src/algorithms/backtracking.zig:backtrack:73
 src/algorithms/cache/fifo.zig:FIFO:157
 src/algorithms/cache/lfu.zig:LFU:198
 src/algorithms/cache/lru.zig:LRU:163
@@ -230,7 +229,6 @@ src/algorithms/sorting/timsort.zig:TimSort:305
 src/algorithms/streaming/count_min_sketch.zig:CountMinSketch:116
 src/algorithms/streaming/hyperloglog.zig:HyperLogLog:119
 src/algorithms/string/aho_corasick.zig:AhoCorasick:278
-src/algorithms/string/aho_corasick.zig:buildFailureLinks:75
 src/algorithms/string/boyer_moore.zig:BoyerMoore:192
 src/algorithms/string/double_metaphone.zig:processChar:116
 src/algorithms/string/glob_match.zig:matchAt:80
@@ -307,7 +305,6 @@ src/containers/trees/trie.zig:Trie:453
 src/containers/trees/van_emde_boas_tree.zig:VanEmdeBoasTree:485
 src/containers/trees/van_emde_boas_tree.zig:remove:96
 src/containers/trees/wavelet_tree.zig:WaveletTree:389
-src/iterators/flat_map.zig:toRange:78
 src/iterators/partition.zig:Partition:75
 src/iterators/skip.zig:Skip:105
 src/iterators/take.zig:Take:84
