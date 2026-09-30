@@ -835,4 +835,5 @@ test {
     _ = @import("containers/lists/concurrent_skip_list.zig");
     _ = @import("compat/zoltraak_sortedset.zig");
     _ = @import("containers/queues/deque.zig");
+    _ = @import("algorithms/string/aho_corasick.zig");
 }
