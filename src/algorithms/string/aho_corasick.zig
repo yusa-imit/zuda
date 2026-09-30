@@ -1060,10 +1060,10 @@ test "AhoCorasickASCII - findFirst returns earliest match" {
     const text = "hello world";
     const match = ac.findFirst(text);
     try std.testing.expect(match != null);
-    // "or" appears at position 7, "world" at position 6
-    // findFirst should find "world" as it ends first
-    try std.testing.expectEqual(@as(usize, 0), match.?.pattern_index);
-    try std.testing.expectEqual(@as(usize, 6), match.?.position);
+    // "world" starts at 6 but ends at 11; "or" starts at 7 and ends at 9. findFirst scans left
+    // to right and returns the match that completes first, so "or" wins.
+    try std.testing.expectEqual(@as(usize, 1), match.?.pattern_index);
+    try std.testing.expectEqual(@as(usize, 7), match.?.position);
 }
 
 test "AhoCorasickASCII - memory cleanup on early return" {
