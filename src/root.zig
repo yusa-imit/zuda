@@ -836,4 +836,6 @@ test {
     _ = @import("compat/zoltraak_sortedset.zig");
     _ = @import("containers/queues/deque.zig");
     _ = @import("algorithms/string/aho_corasick.zig");
+    _ = @import("linalg/sparse.zig");
+    _ = @import("linalg/preconditioner.zig");
 }
