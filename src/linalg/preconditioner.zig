@@ -140,13 +140,14 @@ pub fn ILUPreconditioner(comptime T: type) type {
 
         /// Initialize from sparse CSR matrix
         ///
-        /// Computes ILU(0) factorization with zero fill-in.
+        /// ILU(0) with zero fill-in; each row of `A` must have strictly ascending columns.
         ///
         /// Time: O(nnz × nnz_row_avg) ≈ O(nnz²) worst case
         /// Space: O(nnz)
         pub fn init(allocator: Allocator, A: *const sparse.CSR(T)) !Self {
             assert(A.rows == A.cols);
             assert(A.row_ptr.len == A.rows + 1);
+            assert(rows_sorted(T, A));
 
             // Working copy of A, factorized in place.
             var work = try csr_alloc(allocator, A.rows, A.values.len);
@@ -330,6 +331,20 @@ pub fn ILUPreconditioner(comptime T: type) type {
             }
         }
     };
+}
+
+/// Whether every row of `m` stores its column indices in strictly ascending order, which the
+/// in-place ILU factorization requires (`COO.sort` before `CSR.fromCOO` guarantees it).
+fn rows_sorted(comptime T: type, m: *const sparse.CSR(T)) bool {
+    for (0..m.rows) |i| {
+        const row_start = m.row_ptr[i];
+        const row_end = m.row_ptr[i + 1];
+        if (row_end - row_start < 2) continue;
+        for (row_start + 1..row_end) |idx| {
+            if (m.col_indices[idx - 1] >= m.col_indices[idx]) return false;
+        }
+    }
+    return true;
 }
 
 // ============================================================================

@@ -838,4 +838,5 @@ test {
     _ = @import("algorithms/string/aho_corasick.zig");
     _ = @import("linalg/sparse.zig");
     _ = @import("linalg/preconditioner.zig");
+    _ = @import("linalg/iterative.zig");
 }

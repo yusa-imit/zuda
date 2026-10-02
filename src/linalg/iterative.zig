@@ -263,16 +263,16 @@ pub fn conjugateGradient(
         rz_dot = rz_dot_new;
     }
 
-    // Max iterations reached without convergence
+    // Max iterations reached without convergence. The norm is read before `r` is freed.
+    const r_norm_final = norm2(T, r);
     allocator.free(r);
     allocator.free(z);
     allocator.free(p);
     allocator.free(Ap);
-
     return SolverResult(T){
         .x = x,
         .iterations = k,
-        .residual_norm = norm2(T, r),
+        .residual_norm = r_norm_final,
         .converged = false,
         .allocator = allocator,
     };
@@ -446,16 +446,15 @@ pub fn gmres(
             const h_jp1 = norm2(T, w);
             H[j * (m + 1) + j + 1] = h_jp1;
 
-            // Check for breakdown
-            if (@abs(h_jp1) < 1e-14) {
-                // Lucky breakdown: exact solution found
-                break;
-            }
+            // Lucky breakdown: the Krylov space is invariant, the solve below is exact.
+            const breakdown = @abs(h_jp1) < 1e-14;
 
             // vⱼ₊₁ = w / ||w||
-            const v_jp1 = V_data[(j + 1) * n .. (j + 2) * n];
-            for (0..n) |k| {
-                v_jp1[k] = w[k] / h_jp1;
+            if (!breakdown) {
+                const v_jp1 = V_data[(j + 1) * n .. (j + 2) * n];
+                for (0..n) |k| {
+                    v_jp1[k] = w[k] / h_jp1;
+                }
             }
 
             // Apply previous Givens rotations to H(:, j)
@@ -469,6 +468,7 @@ pub fn gmres(
             const h_jj = H[j * (m + 1) + j];
             const h_jp1j = H[j * (m + 1) + j + 1];
             const rho = @sqrt(h_jj * h_jj + h_jp1j * h_jp1j);
+            if (rho == 0) return error.SingularMatrix;
             cs[j] = h_jj / rho;
             sn[j] = h_jp1j / rho;
 
@@ -481,7 +481,7 @@ pub fn gmres(
             s[j] = cs[j] * s[j];
 
             // Check convergence: |s[j+1]| = residual norm
-            if (@abs(s[j + 1]) < tol) {
+            if (breakdown or @abs(s[j + 1]) < tol) {
                 // Converged within this restart
                 // Solve upper triangular system Hy = s
                 const y = try allocator.alloc(T, j + 1);
@@ -803,6 +803,37 @@ test "CG: max iterations limit" {
     // May or may not have converged in 1 iteration
 }
 
+test "CG: residual_norm after max_iter matches the true residual" {
+    const allocator = testing.allocator;
+
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
+    defer coo.deinit();
+    for (0..3) |i| {
+        try coo.append(i, i, 3.0);
+    }
+    for (0..2) |i| {
+        try coo.append(i, i + 1, -1.0);
+        try coo.append(i + 1, i, -1.0);
+    }
+    try coo.sort();
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 1.0, 2.0, 3.0 };
+    var result = try conjugateGradient(void, f64, allocator, &A, &b, null, {}, 1e-12, 1);
+    defer result.deinit();
+    try testing.expect(!result.converged);
+
+    const Ax = try A.matvec(allocator, result.x);
+    defer allocator.free(Ax);
+    var true_norm: f64 = 0;
+    for (Ax, 0..) |v, i| {
+        true_norm += (b[i] - v) * (b[i] - v);
+    }
+    try testing.expectApproxEqAbs(@sqrt(true_norm), result.residual_norm, 1e-12);
+}
+
 test "CG: dimension mismatch errors" {
     const allocator = testing.allocator;
 
@@ -953,6 +984,7 @@ test "PCG: with ILU(0) preconditioner" {
         try coo.append(i + 1, i, -1.0);
     }
 
+    try coo.sort();
     var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
     defer A.deinit();
 
@@ -1041,6 +1073,21 @@ test "PCG: memory safety (10 iterations)" {
 // ============================================================================
 // GMRES Tests
 // ============================================================================
+
+test "GMRES: zero matrix is singular" {
+    const allocator = testing.allocator;
+
+    var coo = sparse.COO(f64).init(allocator, 2, 2);
+    defer coo.deinit();
+    try coo.append(0, 0, 0.0);
+
+    var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
+    defer A.deinit();
+
+    const b = [_]f64{ 1.0, 0.0 };
+    const result = gmres(void, f64, allocator, &A, &b, null, {}, 1e-10, 10, 10);
+    try testing.expectError(error.SingularMatrix, result);
+}
 
 test "GMRES: 2×2 identity system" {
     const allocator = testing.allocator;
@@ -1221,7 +1268,7 @@ test "GMRES: dimension mismatch errors" {
 
     const b = [_]f64{ 1.0, 2.0 };
 
-    const result = gmres(f64, allocator, &A, &b, null, 1e-6, 10, 10);
+    const result = gmres(void, f64, allocator, &A, &b, null, {}, 1e-6, 10, 10);
     try testing.expectError(error.DimensionMismatch, result);
 }
 
@@ -1239,7 +1286,7 @@ test "GMRES: b length mismatch" {
 
     const b = [_]f64{ 1.0, 2.0 }; // Wrong length
 
-    const result = gmres(f64, allocator, &A, &b, null, 1e-6, 10, 10);
+    const result = gmres(void, f64, allocator, &A, &b, null, {}, 1e-6, 10, 10);
     try testing.expectError(error.DimensionMismatch, result);
 }
 
@@ -1257,7 +1304,7 @@ test "GMRES: x0 length mismatch" {
     const b = [_]f64{ 1.0, 2.0 };
     const x0 = [_]f64{ 1.0, 2.0, 3.0 }; // Wrong length
 
-    const result = gmres(f64, allocator, &A, &b, &x0, 1e-6, 10, 10);
+    const result = gmres(void, f64, allocator, &A, &b, &x0, {}, 1e-6, 10, 10);
     try testing.expectError(error.DimensionMismatch, result);
 }
 
@@ -1761,7 +1808,7 @@ test "BiCGSTAB: non-square matrix error" {
 
     const b = [_]f64{ 1.0, 2.0 };
 
-    const result = bicgstab(f64, allocator, &A, &b, null, 1e-6, 10);
+    const result = bicgstab(void, f64, allocator, &A, &b, null, {}, 1e-6, 10);
     try testing.expectError(error.DimensionMismatch, result);
 }
 
@@ -1779,7 +1826,7 @@ test "BiCGSTAB: b length mismatch" {
 
     const b = [_]f64{ 1.0, 2.0 }; // Wrong length
 
-    const result = bicgstab(f64, allocator, &A, &b, null, 1e-6, 10);
+    const result = bicgstab(void, f64, allocator, &A, &b, null, {}, 1e-6, 10);
     try testing.expectError(error.DimensionMismatch, result);
 }
 
@@ -1797,7 +1844,7 @@ test "BiCGSTAB: x0 length mismatch" {
     const b = [_]f64{ 1.0, 2.0 };
     const x0 = [_]f64{ 1.0, 2.0, 3.0 }; // Wrong length
 
-    const result = bicgstab(f64, allocator, &A, &b, &x0, 1e-6, 10);
+    const result = bicgstab(void, f64, allocator, &A, &b, &x0, {}, 1e-6, 10);
     try testing.expectError(error.DimensionMismatch, result);
 }
 
@@ -1892,6 +1939,7 @@ test "GMRES with ILU preconditioner: 3×3 tridiagonal system" {
     try coo.append(2, 1, -1.0);
     try coo.append(2, 2, 4.0);
 
+    try coo.sort();
     var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
     defer A.deinit();
 
@@ -2021,6 +2069,7 @@ test "BiCGSTAB with ILU preconditioner: 3×3 non-symmetric system" {
     try coo.append(2, 1, 1.0);
     try coo.append(2, 2, 3.0);
 
+    try coo.sort();
     var A = try sparse.CSR(f64).fromCOO(allocator, &coo);
     defer A.deinit();
 
