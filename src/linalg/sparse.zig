@@ -3117,11 +3117,11 @@ test "CSR hadamard: general sparse matrices" {
     try testing.expectEqual(@as(usize, 3), result.nnz());
 
     // Check values
-    try testing.expectEqual(@as(f64, 4.0), result.get(0, 2));  // 2×2=4
-    try testing.expectEqual(@as(f64, 9.0), result.get(1, 1));  // 3×3=9
+    try testing.expectEqual(@as(f64, 4.0), result.get(0, 2)); // 2×2=4
+    try testing.expectEqual(@as(f64, 9.0), result.get(1, 1)); // 3×3=9
     try testing.expectEqual(@as(f64, 16.0), result.get(2, 0)); // 4×4=16
-    try testing.expectEqual(@as(f64, 0.0), result.get(0, 0));  // No overlap
-    try testing.expectEqual(@as(f64, 0.0), result.get(2, 2));  // No overlap
+    try testing.expectEqual(@as(f64, 0.0), result.get(0, 0)); // No overlap
+    try testing.expectEqual(@as(f64, 0.0), result.get(2, 2)); // No overlap
 }
 
 test "CSR hadamard: diagonal matrices" {
@@ -3150,9 +3150,9 @@ test "CSR hadamard: diagonal matrices" {
     defer result.deinit();
 
     try testing.expectEqual(@as(usize, 3), result.nnz());
-    try testing.expectEqual(@as(f64, 4.0), result.get(0, 0));   // 1×4=4
-    try testing.expectEqual(@as(f64, 10.0), result.get(1, 1));  // 2×5=10
-    try testing.expectEqual(@as(f64, 18.0), result.get(2, 2));  // 3×6=18
+    try testing.expectEqual(@as(f64, 4.0), result.get(0, 0)); // 1×4=4
+    try testing.expectEqual(@as(f64, 10.0), result.get(1, 1)); // 2×5=10
+    try testing.expectEqual(@as(f64, 18.0), result.get(2, 2)); // 3×6=18
 }
 
 test "CSR hadamard: no overlap (result is zero matrix)" {
@@ -3179,7 +3179,7 @@ test "CSR hadamard: no overlap (result is zero matrix)" {
     defer result.deinit();
 
     try testing.expectEqual(@as(usize, 0), result.nnz());
-    try testing.expect(result.isEmpty());
+    try testing.expectEqual(@as(usize, 0), result.values.len);
 }
 
 test "CSR hadamard: complete overlap" {
@@ -3249,7 +3249,7 @@ test "CSR hadamard: empty matrices" {
     defer result.deinit();
 
     try testing.expectEqual(@as(usize, 0), result.nnz());
-    try testing.expect(result.isEmpty());
+    try testing.expectEqual(@as(usize, 0), result.values.len);
 }
 
 test "CSR hadamard: integer type" {
@@ -4059,11 +4059,11 @@ test "CSC hadamard: general sparse matrices" {
     try testing.expectEqual(@as(usize, 3), result.nnz());
 
     // Check values
-    try testing.expectEqual(@as(f64, 4.0), result.get(0, 2));  // 2×2=4
-    try testing.expectEqual(@as(f64, 9.0), result.get(1, 1));  // 3×3=9
+    try testing.expectEqual(@as(f64, 4.0), result.get(0, 2)); // 2×2=4
+    try testing.expectEqual(@as(f64, 9.0), result.get(1, 1)); // 3×3=9
     try testing.expectEqual(@as(f64, 16.0), result.get(2, 0)); // 4×4=16
-    try testing.expectEqual(@as(f64, 0.0), result.get(0, 0));  // No overlap
-    try testing.expectEqual(@as(f64, 0.0), result.get(2, 2));  // No overlap
+    try testing.expectEqual(@as(f64, 0.0), result.get(0, 0)); // No overlap
+    try testing.expectEqual(@as(f64, 0.0), result.get(2, 2)); // No overlap
 }
 
 test "CSC hadamard: diagonal matrices" {
@@ -4092,9 +4092,9 @@ test "CSC hadamard: diagonal matrices" {
     defer result.deinit();
 
     try testing.expectEqual(@as(usize, 3), result.nnz());
-    try testing.expectEqual(@as(f64, 4.0), result.get(0, 0));   // 1×4=4
-    try testing.expectEqual(@as(f64, 10.0), result.get(1, 1));  // 2×5=10
-    try testing.expectEqual(@as(f64, 18.0), result.get(2, 2));  // 3×6=18
+    try testing.expectEqual(@as(f64, 4.0), result.get(0, 0)); // 1×4=4
+    try testing.expectEqual(@as(f64, 10.0), result.get(1, 1)); // 2×5=10
+    try testing.expectEqual(@as(f64, 18.0), result.get(2, 2)); // 3×6=18
 }
 
 test "CSC hadamard: no overlap (result is zero matrix)" {
@@ -5006,7 +5006,12 @@ test "COO: validate detects out-of-bounds row" {
     defer coo.deinit();
 
     try coo.append(0, 0, 1.0);
-    try coo.append(3, 0, 2.0); // row 3 is out of bounds for 3x3 matrix
+    // `append` rejects row 3 for a 3x3 matrix, so corrupt the lists directly: valid data
+    // becoming invalid is what `validate` must catch.
+    try testing.expectError(error.OutOfBounds, coo.append(3, 0, 2.0));
+    try coo.row_indices.append(testing.allocator, 3);
+    try coo.col_indices.append(testing.allocator, 0);
+    try coo.values.append(testing.allocator, 2.0);
 
     // Should fail validation
     const result = coo.validate();
@@ -5018,7 +5023,11 @@ test "COO: validate detects out-of-bounds column" {
     defer coo.deinit();
 
     try coo.append(0, 0, 1.0);
-    try coo.append(0, 3, 2.0); // col 3 is out of bounds for 3x3 matrix
+    // `append` rejects col 3 for a 3x3 matrix, so corrupt the lists directly.
+    try testing.expectError(error.OutOfBounds, coo.append(0, 3, 2.0));
+    try coo.row_indices.append(testing.allocator, 0);
+    try coo.col_indices.append(testing.allocator, 3);
+    try coo.values.append(testing.allocator, 2.0);
 
     // Should fail validation
     const result = coo.validate();
@@ -5145,10 +5154,10 @@ test "CSR kronecker: diagonal matrices" {
     try testing.expectEqual(@as(usize, 4), result.nnz());
 
     // Verify diagonal entries
-    try testing.expectEqual(@as(f64, 8.0), result.get(0, 0));   // 2*4
-    try testing.expectEqual(@as(f64, 10.0), result.get(1, 1));  // 2*5
-    try testing.expectEqual(@as(f64, 12.0), result.get(2, 2));  // 3*4
-    try testing.expectEqual(@as(f64, 15.0), result.get(3, 3));  // 3*5
+    try testing.expectEqual(@as(f64, 8.0), result.get(0, 0)); // 2*4
+    try testing.expectEqual(@as(f64, 10.0), result.get(1, 1)); // 2*5
+    try testing.expectEqual(@as(f64, 12.0), result.get(2, 2)); // 3*4
+    try testing.expectEqual(@as(f64, 15.0), result.get(3, 3)); // 3*5
 }
 
 test "CSR kronecker: general sparse matrices" {
@@ -5188,10 +5197,10 @@ test "CSR kronecker: general sparse matrices" {
     try testing.expectEqual(@as(usize, 4), result.nnz());
 
     // Verify specific entries
-    try testing.expectEqual(@as(f64, 2.0), result.get(0, 0));   // 1×2
-    try testing.expectEqual(@as(f64, 4.0), result.get(1, 1));   // 1×4
-    try testing.expectEqual(@as(f64, 6.0), result.get(2, 2));   // 3×2
-    try testing.expectEqual(@as(f64, 12.0), result.get(3, 3));  // 3×4
+    try testing.expectEqual(@as(f64, 2.0), result.get(0, 0)); // 1×2
+    try testing.expectEqual(@as(f64, 4.0), result.get(1, 1)); // 1×4
+    try testing.expectEqual(@as(f64, 6.0), result.get(2, 2)); // 3×2
+    try testing.expectEqual(@as(f64, 12.0), result.get(3, 3)); // 3×4
 }
 
 test "CSR kronecker: single element matrix" {
@@ -5228,8 +5237,8 @@ test "CSR kronecker: single element matrix" {
     try testing.expectEqual(@as(usize, 2), result.nnz());
 
     // Verify entries
-    try testing.expectEqual(@as(f64, 3.0), result.get(0, 0));  // 3×1
-    try testing.expectEqual(@as(f64, 6.0), result.get(1, 1));  // 3×2
+    try testing.expectEqual(@as(f64, 3.0), result.get(0, 0)); // 3×1
+    try testing.expectEqual(@as(f64, 6.0), result.get(1, 1)); // 3×2
 }
 
 test "CSR kronecker: empty matrix (zero non-zeros)" {
@@ -5392,10 +5401,10 @@ test "CSC kronecker: diagonal matrices" {
     try testing.expectEqual(@as(usize, 4), result.nnz());
 
     // Verify diagonal entries
-    try testing.expectEqual(@as(f64, 8.0), result.get(0, 0));   // 2*4
-    try testing.expectEqual(@as(f64, 10.0), result.get(1, 1));  // 2*5
-    try testing.expectEqual(@as(f64, 12.0), result.get(2, 2));  // 3*4
-    try testing.expectEqual(@as(f64, 15.0), result.get(3, 3));  // 3*5
+    try testing.expectEqual(@as(f64, 8.0), result.get(0, 0)); // 2*4
+    try testing.expectEqual(@as(f64, 10.0), result.get(1, 1)); // 2*5
+    try testing.expectEqual(@as(f64, 12.0), result.get(2, 2)); // 3*4
+    try testing.expectEqual(@as(f64, 15.0), result.get(3, 3)); // 3*5
 }
 
 test "CSC kronecker: general sparse matrices" {

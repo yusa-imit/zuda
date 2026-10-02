@@ -28,6 +28,7 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 const testing = std.testing;
 const math = std.math;
+const assert = std.debug.assert;
 const sparse = @import("sparse.zig");
 
 /// Jacobi (diagonal) preconditioner
@@ -68,7 +69,7 @@ pub fn JacobiPreconditioner(comptime T: type) type {
                 const row_start = A.row_ptr[i];
                 const row_end = A.row_ptr[i + 1];
                 for (row_start..row_end) |idx| {
-                    if (A.col_idx[idx] == i) {
+                    if (A.col_indices[idx] == i) {
                         const val = A.values[idx];
                         // Avoid division by zero - use 1.0 for zero diagonal
                         diag[i] = if (@abs(val) < 1e-14) 1.0 else val;
@@ -144,139 +145,128 @@ pub fn ILUPreconditioner(comptime T: type) type {
         /// Time: O(nnz × nnz_row_avg) ≈ O(nnz²) worst case
         /// Space: O(nnz)
         pub fn init(allocator: Allocator, A: *const sparse.CSR(T)) !Self {
-            const n = A.rows;
+            assert(A.rows == A.cols);
+            assert(A.row_ptr.len == A.rows + 1);
 
-            // Create working copy of A for in-place factorization
-            var work = try sparse.CSR(T).init(allocator, n, n, A.values.len);
-            errdefer work.deinit();
+            // Working copy of A, factorized in place.
+            var work = try csr_alloc(allocator, A.rows, A.values.len);
+            defer work.deinit();
 
-            // Copy A to work matrix
             @memcpy(work.row_ptr, A.row_ptr);
-            @memcpy(work.col_idx, A.col_idx);
+            @memcpy(work.col_indices, A.col_indices);
             @memcpy(work.values, A.values);
 
-            // ILU(0) factorization - in-place on work matrix
-            for (0..n) |i| {
-                const row_start = work.row_ptr[i];
-                const row_end = work.row_ptr[i + 1];
+            try factorize_in_place(&work);
 
-                // Find diagonal element
-                var diag_idx: ?usize = null;
-                for (row_start..row_end) |idx| {
-                    if (work.col_idx[idx] == i) {
-                        diag_idx = idx;
-                        break;
-                    }
-                }
+            return split_factors(allocator, &work);
+        }
 
-                if (diag_idx == null or @abs(work.values[diag_idx.?]) < 1e-14) {
-                    work.deinit();
-                    return error.SingularMatrix;
-                }
+        /// Allocate an uninitialized square CSR matrix with room for `nnz_count` entries.
+        fn csr_alloc(allocator: Allocator, n: usize, nnz_count: usize) !sparse.CSR(T) {
+            const row_ptr = try allocator.alloc(usize, n + 1);
+            errdefer allocator.free(row_ptr);
 
-                // Update current row based on previous rows
-                for (row_start..row_end) |k_idx| {
-                    const k = work.col_idx[k_idx];
-                    if (k >= i) break; // Only process lower triangular part
+            const col_indices = try allocator.alloc(usize, nnz_count);
+            errdefer allocator.free(col_indices);
 
-                    // Get U[k,k] from row k
-                    const k_row_start = work.row_ptr[k];
-                    const k_row_end = work.row_ptr[k + 1];
-                    var ukk: T = 0.0;
-                    for (k_row_start..k_row_end) |idx| {
-                        if (work.col_idx[idx] == k) {
-                            ukk = work.values[idx];
-                            break;
-                        }
-                    }
+            const values = try allocator.alloc(T, nnz_count);
 
+            return sparse.CSR(T){
+                .rows = n,
+                .cols = n,
+                .row_ptr = row_ptr,
+                .col_indices = col_indices,
+                .values = values,
+                .allocator = allocator,
+            };
+        }
+
+        /// Index of the entry for column `col` within row `row` of `m`, if stored.
+        fn find_entry(m: *const sparse.CSR(T), row: usize, col: usize) ?usize {
+            for (m.row_ptr[row]..m.row_ptr[row + 1]) |idx| {
+                if (m.col_indices[idx] == col) return idx;
+            }
+            return null;
+        }
+
+        /// ILU(0) factorization in place: strictly lower entries become L multipliers, the
+        /// rest becomes U. Returns `error.SingularMatrix` on a missing or near-zero pivot.
+        fn factorize_in_place(work: *sparse.CSR(T)) error{SingularMatrix}!void {
+            for (0..work.rows) |i| {
+                const diag_idx = find_entry(work, i, i) orelse return error.SingularMatrix;
+                if (@abs(work.values[diag_idx]) < 1e-14) return error.SingularMatrix;
+
+                for (work.row_ptr[i]..work.row_ptr[i + 1]) |k_idx| {
+                    const k = work.col_indices[k_idx];
+                    if (k >= i) break; // Only process lower triangular part.
+
+                    const ukk_idx = find_entry(work, k, k) orelse continue;
+                    const ukk = work.values[ukk_idx];
                     if (@abs(ukk) < 1e-14) continue;
 
-                    // Compute multiplier L[i,k] = A[i,k] / U[k,k]
+                    // Multiplier L[i,k] = A[i,k] / U[k,k].
                     const mult = work.values[k_idx] / ukk;
                     work.values[k_idx] = mult;
 
-                    // Update U entries: U[i,j] -= L[i,k] * U[k,j]
-                    for (row_start..row_end) |j_idx| {
-                        const j = work.col_idx[j_idx];
-                        if (j < i) continue; // Only update upper triangular
-
-                        // Find U[k,j] in row k
-                        for (k_row_start..k_row_end) |kj_idx| {
-                            if (work.col_idx[kj_idx] == j) {
-                                work.values[j_idx] -= mult * work.values[kj_idx];
-                                break;
-                            }
-                        }
+                    // Update U entries of row i: U[i,j] -= L[i,k] * U[k,j].
+                    for (work.row_ptr[i]..work.row_ptr[i + 1]) |j_idx| {
+                        const j = work.col_indices[j_idx];
+                        if (j < i) continue;
+                        const kj_idx = find_entry(work, k, j) orelse continue;
+                        work.values[j_idx] -= mult * work.values[kj_idx];
                     }
                 }
             }
+        }
 
-            // Split work matrix into L (lower) and U (upper)
-            // Count nnz for L and U
+        /// Split a factorized matrix into unit-diagonal L and upper U.
+        fn split_factors(allocator: Allocator, work: *const sparse.CSR(T)) !Self {
+            const n = work.rows;
+
             var nnz_L: usize = 0;
             var nnz_U: usize = 0;
             for (0..n) |i| {
-                const row_start = work.row_ptr[i];
-                const row_end = work.row_ptr[i + 1];
-                for (row_start..row_end) |idx| {
-                    const j = work.col_idx[idx];
-                    if (j < i) nnz_L += 1;
-                    if (j >= i) nnz_U += 1;
+                for (work.row_ptr[i]..work.row_ptr[i + 1]) |idx| {
+                    if (work.col_indices[idx] < i) nnz_L += 1 else nnz_U += 1;
                 }
             }
+            assert(nnz_L + nnz_U == work.values.len);
 
-            // Allocate L and U
-            var L = try sparse.CSR(T).init(allocator, n, n, nnz_L + n); // +n for unit diagonal
+            var L = try csr_alloc(allocator, n, nnz_L + n); // +n for the unit diagonal.
             errdefer L.deinit();
-            var U = try sparse.CSR(T).init(allocator, n, n, nnz_U);
+
+            var U = try csr_alloc(allocator, n, nnz_U);
             errdefer U.deinit();
 
-            // Fill L and U
             var l_count: usize = 0;
             var u_count: usize = 0;
             for (0..n) |i| {
                 L.row_ptr[i] = l_count;
                 U.row_ptr[i] = u_count;
 
-                const row_start = work.row_ptr[i];
-                const row_end = work.row_ptr[i + 1];
-
-                // Copy lower triangular to L
-                for (row_start..row_end) |idx| {
-                    const j = work.col_idx[idx];
+                for (work.row_ptr[i]..work.row_ptr[i + 1]) |idx| {
+                    const j = work.col_indices[idx];
                     if (j < i) {
-                        L.col_idx[l_count] = j;
+                        L.col_indices[l_count] = j;
                         L.values[l_count] = work.values[idx];
                         l_count += 1;
-                    }
-                }
-
-                // Add unit diagonal to L
-                L.col_idx[l_count] = i;
-                L.values[l_count] = 1.0;
-                l_count += 1;
-
-                // Copy upper triangular to U
-                for (row_start..row_end) |idx| {
-                    const j = work.col_idx[idx];
-                    if (j >= i) {
-                        U.col_idx[u_count] = j;
+                    } else {
+                        U.col_indices[u_count] = j;
                         U.values[u_count] = work.values[idx];
                         u_count += 1;
                     }
                 }
+
+                L.col_indices[l_count] = i;
+                L.values[l_count] = 1.0;
+                l_count += 1;
             }
             L.row_ptr[n] = l_count;
             U.row_ptr[n] = u_count;
+            assert(l_count == nnz_L + n);
+            assert(u_count == nnz_U);
 
-            work.deinit();
-
-            return Self{
-                .L = L,
-                .U = U,
-                .allocator = allocator,
-            };
+            return Self{ .L = L, .U = U, .allocator = allocator };
         }
 
         pub fn deinit(self: *Self) void {
@@ -310,7 +300,7 @@ pub fn ILUPreconditioner(comptime T: type) type {
                 const row_start = self.L.row_ptr[i];
                 const row_end = self.L.row_ptr[i + 1];
                 for (row_start..row_end) |idx| {
-                    const j = self.L.col_idx[idx];
+                    const j = self.L.col_indices[idx];
                     if (j < i) {
                         sum -= self.L.values[idx] * y[j];
                     }
@@ -329,7 +319,7 @@ pub fn ILUPreconditioner(comptime T: type) type {
                 // Find diagonal element
                 var diag_val: T = 1.0;
                 for (row_start..row_end) |idx| {
-                    const j = self.U.col_idx[idx];
+                    const j = self.U.col_indices[idx];
                     if (j == i) {
                         diag_val = self.U.values[idx];
                     } else if (j > i) {
@@ -350,7 +340,7 @@ test "Jacobi preconditioner - identity matrix" {
     const allocator = testing.allocator;
 
     // Identity matrix 3×3
-    var coo = try sparse.COO(f64).init(allocator, 3, 3);
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
     defer coo.deinit();
     try coo.append(0, 0, 1.0);
     try coo.append(1, 1, 1.0);
@@ -383,7 +373,7 @@ test "Jacobi preconditioner - diagonal matrix" {
     const allocator = testing.allocator;
 
     // Diagonal matrix with diag = [2, 3, 5]
-    var coo = try sparse.COO(f64).init(allocator, 3, 3);
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
     defer coo.deinit();
     try coo.append(0, 0, 2.0);
     try coo.append(1, 1, 3.0);
@@ -413,7 +403,7 @@ test "Jacobi preconditioner - general sparse matrix" {
     // [4  1  0]
     // [1  4  1]
     // [0  1  4]
-    var coo = try sparse.COO(f64).init(allocator, 3, 3);
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
     defer coo.deinit();
     try coo.append(0, 0, 4.0);
     try coo.append(0, 1, 1.0);
@@ -451,7 +441,7 @@ test "Jacobi preconditioner - zero diagonal handling" {
     // Matrix with zero diagonal entry:
     // [0  1]
     // [1  2]
-    var coo = try sparse.COO(f64).init(allocator, 2, 2);
+    var coo = sparse.COO(f64).init(allocator, 2, 2);
     defer coo.deinit();
     try coo.append(0, 1, 1.0);
     try coo.append(1, 0, 1.0);
@@ -471,7 +461,7 @@ test "Jacobi preconditioner - zero diagonal handling" {
 test "Jacobi preconditioner - dimension mismatch" {
     const allocator = testing.allocator;
 
-    var coo = try sparse.COO(f64).init(allocator, 2, 2);
+    var coo = sparse.COO(f64).init(allocator, 2, 2);
     defer coo.deinit();
     try coo.append(0, 0, 1.0);
     try coo.append(1, 1, 1.0);
@@ -490,7 +480,7 @@ test "Jacobi preconditioner - dimension mismatch" {
 test "Jacobi preconditioner - f32 precision" {
     const allocator = testing.allocator;
 
-    var coo = try sparse.COO(f32).init(allocator, 2, 2);
+    var coo = sparse.COO(f32).init(allocator, 2, 2);
     defer coo.deinit();
     try coo.append(0, 0, 2.0);
     try coo.append(1, 1, 4.0);
@@ -512,7 +502,7 @@ test "Jacobi preconditioner - f32 precision" {
 test "ILU preconditioner - identity matrix" {
     const allocator = testing.allocator;
 
-    var coo = try sparse.COO(f64).init(allocator, 3, 3);
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
     defer coo.deinit();
     try coo.append(0, 0, 1.0);
     try coo.append(1, 1, 1.0);
@@ -542,7 +532,7 @@ test "ILU preconditioner - tridiagonal matrix" {
     // [2 -1  0]
     // [-1  2 -1]
     // [0 -1  2]
-    var coo = try sparse.COO(f64).init(allocator, 3, 3);
+    var coo = sparse.COO(f64).init(allocator, 3, 3);
     defer coo.deinit();
     try coo.append(0, 0, 2.0);
     try coo.append(0, 1, -1.0);
@@ -576,7 +566,7 @@ test "ILU preconditioner - singular matrix detection" {
     // Singular matrix (zero diagonal):
     // [0  1]
     // [1  0]
-    var coo = try sparse.COO(f64).init(allocator, 2, 2);
+    var coo = sparse.COO(f64).init(allocator, 2, 2);
     defer coo.deinit();
     try coo.append(0, 1, 1.0);
     try coo.append(1, 0, 1.0);
@@ -590,7 +580,7 @@ test "ILU preconditioner - singular matrix detection" {
 test "ILU preconditioner - memory safety" {
     const allocator = testing.allocator;
 
-    var coo = try sparse.COO(f64).init(allocator, 4, 4);
+    var coo = sparse.COO(f64).init(allocator, 4, 4);
     defer coo.deinit();
     try coo.append(0, 0, 4.0);
     try coo.append(0, 1, 1.0);

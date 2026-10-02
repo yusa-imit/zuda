@@ -328,7 +328,6 @@ src/linalg/iterative.zig:conjugateGradient:164
 src/linalg/iterative.zig:gmres:284
 src/linalg/lu.zig:lu:114
 src/linalg/preconditioner.zig:ILUPreconditioner:215
-src/linalg/preconditioner.zig:init:135
 src/linalg/simd_blas.zig:gemm_blocked_4x4:86
 src/linalg/simd_blas.zig:gemm_blocked_tiled:105
 src/linalg/simd_blas.zig:gemm_simd:77
