@@ -541,7 +541,7 @@ pub fn anova_oneway(
     const grand_mean = grand_sum / @as(T, @floatFromInt(N));
 
     // Compute group means
-    var group_means = std.ArrayList(T){};
+    var group_means = std.ArrayList(T).empty;
     defer group_means.deinit(alloc);
 
     try group_means.ensureTotalCapacity(alloc, k);

@@ -19,9 +19,9 @@ const WorkStealingDeque = zuda.containers.queues.WorkStealingDeque;
 /// - Resize: Protected by mutex, rare due to amortized growth
 ///
 /// Run: zig build example-work-stealing-deque
-
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -35,7 +35,7 @@ pub fn main() !void {
         std.debug.print("--- Demo 3: Parallel Work Stealing ---\n", .{});
         std.debug.print("(Skipped — target does not support threading)\n\n", .{});
     } else {
-        try demo3_parallel_work_stealing(allocator);
+        try demo3_parallel_work_stealing(io, allocator);
     }
 
     try demo4_task_queue_simulation(allocator);
@@ -111,13 +111,14 @@ fn demo2_lifo_fifo_behavior(allocator: std.mem.Allocator) !void {
 }
 
 /// Demo 3: Parallel work stealing with threads
-fn demo3_parallel_work_stealing(allocator: std.mem.Allocator) !void {
+fn demo3_parallel_work_stealing(io: std.Io, allocator: std.mem.Allocator) !void {
     std.debug.print("--- Demo 3: Parallel Work Stealing ---\n", .{});
 
     const Context = struct {
         deque: *WorkStealingDeque(u32),
         stolen: *std.ArrayList(u32),
-        mutex: *std.Thread.Mutex,
+        mutex: *std.Io.Mutex,
+        io: std.Io,
         allocator: std.mem.Allocator,
     };
 
@@ -137,20 +138,20 @@ fn demo3_parallel_work_stealing(allocator: std.mem.Allocator) !void {
             var count: u32 = 0;
             while (ctx.deque.steal()) |task| {
                 count += 1;
-                ctx.mutex.lock();
+                ctx.mutex.lockUncancelable(ctx.io);
                 ctx.stolen.append(ctx.allocator, task) catch {};
-                ctx.mutex.unlock();
+                ctx.mutex.unlock(ctx.io);
                 // Simulate work
-                std.Thread.sleep(100_000); // 100µs
+                ctx.io.sleep(.fromNanoseconds(100_000), .awake) catch {}; // 100µs
             }
         }
     }.run;
 
     var stolen = try std.ArrayList(u32).initCapacity(allocator, 20);
     defer stolen.deinit(allocator);
-    var mutex = std.Thread.Mutex{};
+    var mutex: std.Io.Mutex = .init;
 
-    const ctx = Context{ .deque = &deque, .stolen = &stolen, .mutex = &mutex, .allocator = allocator };
+    const ctx = Context{ .deque = &deque, .stolen = &stolen, .mutex = &mutex, .io = io, .allocator = allocator };
 
     // Spawn 2 stealer threads
     const thread1 = try std.Thread.spawn(.{}, stealer_fn, .{ctx});
@@ -164,7 +165,7 @@ fn demo3_parallel_work_stealing(allocator: std.mem.Allocator) !void {
     while (deque.pop()) |task| {
         owner_count += 1;
         try owner_tasks.append(allocator, task);
-        std.Thread.sleep(150_000); // 150µs (slower than stealers)
+        io.sleep(.fromNanoseconds(150_000), .awake) catch {}; // 150µs (slower than stealers)
     }
 
     // Wait for stealers to finish

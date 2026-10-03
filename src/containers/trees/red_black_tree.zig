@@ -1201,7 +1201,7 @@ test "RedBlackTree reverseIterator consistency with forward iterator" {
     }
 
     // Collect reverse iteration results
-    var backward_keys = std.ArrayList(i32){};
+    var backward_keys = std.ArrayList(i32).empty;
     defer backward_keys.deinit(std.testing.allocator);
 
     var rev_iter = try tree.reverseIterator();

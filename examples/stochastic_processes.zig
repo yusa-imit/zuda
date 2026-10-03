@@ -6,7 +6,7 @@ const Normal = distributions.Normal;
 const descriptive = zuda.stats.descriptive;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -20,7 +20,7 @@ pub fn main() !void {
     const dt = 0.01; // time step
     const sqrt_dt = @sqrt(dt);
 
-    var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
+    var rng = std.Random.DefaultPrng.init(0x5eed);
     const random = rng.random();
 
     // Generate standard Brownian motion: W(t+dt) = W(t) + sqrt(dt) * Z

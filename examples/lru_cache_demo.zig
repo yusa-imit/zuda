@@ -17,7 +17,7 @@ const zuda = @import("zuda");
 
 // Example 1: Simple string cache (web request cache simulation)
 fn webRequestCacheDemo() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -72,7 +72,7 @@ fn evictionCallback(key: u32, value: u64) void {
 }
 
 fn fibonacciCacheDemo() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -140,7 +140,7 @@ const User = struct {
 };
 
 fn customContextDemo() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -178,7 +178,7 @@ fn customContextDemo() !void {
 
 // Example 4: Buffer pool simulation (silica use case)
 fn bufferPoolDemo() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

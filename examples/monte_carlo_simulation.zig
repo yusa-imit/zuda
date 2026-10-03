@@ -15,7 +15,7 @@ const integration = zuda.numeric.integration;
 /// 4. Confidence intervals and convergence analysis
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -42,7 +42,7 @@ fn estimatePi(allocator: std.mem.Allocator) !void {
 
     const n_samples: usize = 1000000;
     var uniform = try Uniform(f64).init(0.0, 1.0);
-    var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
+    var rng = std.Random.DefaultPrng.init(0x5eed);
 
     var inside: usize = 0;
     var i: usize = 0;
@@ -82,7 +82,7 @@ fn monteCarloIntegration(allocator: std.mem.Allocator) !void {
 
     const n_samples: usize = 100000;
     var uniform = try Uniform(f64).init(0.0, 1.0);
-    var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
+    var rng = std.Random.DefaultPrng.init(0x5eed);
 
     // Sample function values at random points
     var sum: f64 = 0.0;
@@ -134,7 +134,7 @@ fn optionPricing(allocator: std.mem.Allocator) !void {
     std.debug.print("  σ  = {d:.3} (volatility)\n\n", .{sigma});
 
     var normal = try Normal(f64).init(0.0, 1.0);
-    var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp() + 42));
+    var rng = std.Random.DefaultPrng.init(0x5eed + 42);
 
     // Simulate terminal stock prices: S_T = S₀ exp((r - σ²/2)T + σ√T Z)
     const drift = (r - 0.5 * sigma * sigma) * T;
@@ -219,7 +219,7 @@ fn convergenceAnalysis(allocator: std.mem.Allocator) !void {
     const sample_sizes = [_]usize{ 100, 1000, 10000, 100000, 1000000 };
 
     var uniform = try Uniform(f64).init(0.0, 1.0);
-    var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
+    var rng = std.Random.DefaultPrng.init(0x5eed);
 
     std.debug.print("{s:>12} {s:>12} {s:>12} {s:>12}\n", .{ "Samples", "π Estimate", "Error", "Std Error" });
     std.debug.print("{s:-<12} {s:-<12} {s:-<12} {s:-<12}\n", .{ "", "", "", "" });

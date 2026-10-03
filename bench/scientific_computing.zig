@@ -12,10 +12,12 @@
 //! Performance targets from docs/milestones.md - v2.0 Performance Targets
 
 const std = @import("std");
+const Timer = @import("timer.zig").Timer;
 const zuda = @import("zuda");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -35,7 +37,7 @@ pub fn main() !void {
         var y = try zuda.ndarray.NDArray(f64, 1).ones(allocator, &.{n}, .row_major);
         defer y.deinit();
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         const result = try blas.dot(f64, x, y);
         const elapsed_ns = timer.read();
         const time_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
@@ -48,14 +50,14 @@ pub fn main() !void {
     {
         const blas = zuda.linalg.blas;
         const n: usize = 256;
-        var A = try zuda.ndarray.NDArray(f64, 2).ones(allocator, &.{n, n}, .row_major);
+        var A = try zuda.ndarray.NDArray(f64, 2).ones(allocator, &.{ n, n }, .row_major);
         defer A.deinit();
-        var B = try zuda.ndarray.NDArray(f64, 2).ones(allocator, &.{n, n}, .row_major);
+        var B = try zuda.ndarray.NDArray(f64, 2).ones(allocator, &.{ n, n }, .row_major);
         defer B.deinit();
-        var C = try zuda.ndarray.NDArray(f64, 2).zeros(allocator, &.{n, n}, .row_major);
+        var C = try zuda.ndarray.NDArray(f64, 2).zeros(allocator, &.{ n, n }, .row_major);
         defer C.deinit();
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         try blas.gemm(f64, 1.0, A, B, 0.0, &C);
         const elapsed_ns = timer.read();
         const time_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
@@ -69,14 +71,14 @@ pub fn main() !void {
     {
         const blas = zuda.linalg.blas;
         const n: usize = 1024;
-        var A = try zuda.ndarray.NDArray(f64, 2).ones(allocator, &.{n, n}, .row_major);
+        var A = try zuda.ndarray.NDArray(f64, 2).ones(allocator, &.{ n, n }, .row_major);
         defer A.deinit();
-        var B = try zuda.ndarray.NDArray(f64, 2).ones(allocator, &.{n, n}, .row_major);
+        var B = try zuda.ndarray.NDArray(f64, 2).ones(allocator, &.{ n, n }, .row_major);
         defer B.deinit();
-        var C = try zuda.ndarray.NDArray(f64, 2).zeros(allocator, &.{n, n}, .row_major);
+        var C = try zuda.ndarray.NDArray(f64, 2).zeros(allocator, &.{ n, n }, .row_major);
         defer C.deinit();
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         try blas.gemm(f64, 1.0, A, B, 0.0, &C);
         const elapsed_ns = timer.read();
         const time_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
@@ -107,7 +109,7 @@ pub fn main() !void {
             }
         }
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         var result = try lu.lu(f64, allocator, A);
         defer result.P.deinit();
         defer result.L.deinit();
@@ -136,7 +138,7 @@ pub fn main() !void {
             }
         }
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         var result = try decomp.qr(f64, A, allocator);
         defer result.Q.deinit();
         defer result.R.deinit();
@@ -163,7 +165,7 @@ pub fn main() !void {
             }
         }
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         var result = try decomp.svd(f64, A, allocator);
         defer result.U.deinit();
         defer result.S.deinit();
@@ -186,7 +188,7 @@ pub fn main() !void {
             A.set(&.{ @as(isize, @intCast(i)), @as(isize, @intCast(i)) }, curr_val + @as(f64, @floatFromInt(n)));
         }
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         var result = try decomp.cholesky(f64, A, allocator);
         defer result.deinit();
         const elapsed_ns = timer.read();
@@ -210,7 +212,7 @@ pub fn main() !void {
             signal.appendAssumeCapacity(fft.Complex(f64).init(@sin(2.0 * std.math.pi * 10.0 * t), 0.0));
         }
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         const result = try fft.fft(f64, allocator, signal.items);
         defer allocator.free(result);
         const elapsed_ns = timer.read();
@@ -230,7 +232,7 @@ pub fn main() !void {
             signal.appendAssumeCapacity(fft.Complex(f64).init(@sin(2.0 * std.math.pi * 10.0 * t), 0.0));
         }
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         const result = try fft.fft(f64, allocator, signal.items);
         defer allocator.free(result);
         const elapsed_ns = timer.read();
@@ -250,7 +252,7 @@ pub fn main() !void {
             signal.appendAssumeCapacity(fft.Complex(f64).init(@sin(2.0 * std.math.pi * 10.0 * t), 0.0));
         }
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         const result = try fft.fftCached(f64, allocator, signal.items);
         defer allocator.free(result);
         const elapsed_ns = timer.read();
@@ -270,7 +272,7 @@ pub fn main() !void {
             signal.appendAssumeCapacity(fft.Complex(f64).init(@sin(2.0 * std.math.pi * 10.0 * t), 0.0));
         }
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         const result = try fft.fftCached(f64, allocator, signal.items);
         defer allocator.free(result);
         const elapsed_ns = timer.read();
@@ -290,7 +292,7 @@ pub fn main() !void {
             signal.appendAssumeCapacity(fft.Complex(f64).init(@sin(2.0 * std.math.pi * 10.0 * t), 0.0));
         }
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         try fft.fftInPlace(f64, signal.items);
         const elapsed_ns = timer.read();
         const time_us = @as(f64, @floatFromInt(elapsed_ns)) / 1_000.0;
@@ -309,7 +311,7 @@ pub fn main() !void {
             signal.appendAssumeCapacity(fft.Complex(f64).init(@sin(2.0 * std.math.pi * 10.0 * t), 0.0));
         }
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         try fft.fftInPlace(f64, signal.items);
         const elapsed_ns = timer.read();
         const time_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
@@ -329,7 +331,7 @@ pub fn main() !void {
         var y = try zuda.ndarray.NDArray(f64, 1).ones(allocator, &.{n}, .row_major);
         defer y.deinit();
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         var result = try x.add(&y);
         defer result.deinit();
         const elapsed_ns = timer.read();
@@ -345,7 +347,7 @@ pub fn main() !void {
         var x = try zuda.ndarray.NDArray(f64, 1).ones(allocator, &.{n}, .row_major);
         defer x.deinit();
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         const result = x.sum();
         const elapsed_ns = timer.read();
         const time_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
@@ -356,10 +358,10 @@ pub fn main() !void {
     // Matrix transpose (1024×1024)
     {
         const n: usize = 1024;
-        var A = try zuda.ndarray.NDArray(f64, 2).ones(allocator, &.{n, n}, .row_major);
+        var A = try zuda.ndarray.NDArray(f64, 2).ones(allocator, &.{ n, n }, .row_major);
         defer A.deinit();
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         _ = A.transpose();
         const elapsed_ns = timer.read();
         const time_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
@@ -381,7 +383,7 @@ pub fn main() !void {
             data.set(&.{@as(isize, @intCast(i))}, @as(f64, @floatFromInt(i % 100)));
         }
 
-        var timer = try std.time.Timer.start();
+        var timer = Timer.start(io);
         const mean_val = descriptive.mean(f64, data);
         const elapsed_ns = timer.read();
         const time_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Timer = @import("timer.zig").Timer;
 const zuda = @import("zuda");
 
 /// Cache profiling benchmark for Aho-Corasick string search variants.
@@ -6,9 +7,9 @@ const zuda = @import("zuda");
 ///
 /// Build: zig build bench-cache-profile
 /// Run with perf: perf stat -e cache-misses,cache-references,L1-dcache-load-misses ./zig-out/bin/bench-cache-profile
-
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -56,7 +57,7 @@ fn benchDoubleArrayTrie(allocator: std.mem.Allocator, patterns: []const []const 
 
     // Benchmark search phase (hot loop)
     const iterations: usize = 100;
-    var timer = try std.time.Timer.start();
+    var timer = Timer.start(io);
     for (0..iterations) |_| {
         const matches = try dat.findAll(allocator, text);
         allocator.free(matches);

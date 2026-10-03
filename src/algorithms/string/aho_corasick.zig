@@ -227,7 +227,7 @@ pub fn AhoCorasick(comptime T: type) type {
         /// Returns ArrayList of matches (pattern_index, position)
         /// Time: O(n + z) where z = number of matches | Space: O(z)
         pub fn findAll(self: *const Self, text: []const T, allocator: Allocator) !std.ArrayList(Match) {
-            var matches: std.ArrayList(Match) = .{};
+            var matches: std.ArrayList(Match) = .empty;
             errdefer matches.deinit(allocator);
 
             if (text.len == 0) return matches;
@@ -765,7 +765,7 @@ pub const AhoCorasickASCII = struct {
     /// Find all occurrences of all patterns in text
     /// Time: O(n + z) | Space: O(z)
     pub fn findAll(self: *const Self, text: []const u8, allocator: Allocator) !std.ArrayList(Match) {
-        var matches: std.ArrayList(Match) = .{};
+        var matches: std.ArrayList(Match) = .empty;
         errdefer matches.deinit(allocator);
 
         if (text.len == 0) return matches;

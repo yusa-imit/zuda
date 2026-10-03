@@ -19,7 +19,7 @@ const distributions = zuda.stats.distributions;
 ///           velocity(k+1) = velocity(k)
 ///   Measurement: observe position only (with noise)
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

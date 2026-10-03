@@ -192,7 +192,7 @@ fn benchConsistentHashRingGet(allocator: std.mem.Allocator) !void {
 
 /// Run all hash container benchmarks
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

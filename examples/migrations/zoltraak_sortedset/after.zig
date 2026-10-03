@@ -13,7 +13,7 @@ const zuda = @import("zuda");
 const SortedSet = zuda.compat.zoltraak_sortedset.SortedSet;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

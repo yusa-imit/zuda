@@ -12,7 +12,7 @@ const zuda = @import("zuda");
 /// 3. Displays the fitted coefficients, R² score, and prediction errors
 /// 4. Shows how to make predictions on new data points
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
