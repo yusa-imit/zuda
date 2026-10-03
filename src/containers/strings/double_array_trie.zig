@@ -130,7 +130,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                 allocator.free(output_lists);
             }
             for (output_lists) |*o| {
-                o.* = std.ArrayList(usize){};
+                o.* = std.ArrayList(usize).empty;
             }
 
             // Root state setup
@@ -180,7 +180,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                                     };
                                 }
                                 for (output_lists[old_len..new_len]) |*o| {
-                                    o.* = std.ArrayList(usize){};
+                                    o.* = std.ArrayList(usize).empty;
                                 }
                             }
                             if (states_arr[target_pos].check == 0xFFFFFFFF) {
@@ -215,7 +215,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                             };
                         }
                         for (output_lists[old_len..new_len]) |*o| {
-                            o.* = std.ArrayList(usize){};
+                            o.* = std.ArrayList(usize).empty;
                         }
                     }
 
@@ -293,7 +293,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
             if (self.states.len == 0) return;
 
             // Use a queue for BFS traversal
-            var queue = std.ArrayList(u32){};
+            var queue = std.ArrayList(u32).empty;
             defer queue.deinit(self.allocator);
 
             // Root's failure link is self (0 -> 0)
@@ -377,7 +377,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
                 self.allocator.free(output_lists);
             }
             for (output_lists) |*list| {
-                list.* = std.ArrayList(usize){};
+                list.* = std.ArrayList(usize).empty;
             }
 
             // For each state, collect patterns: direct + patterns from failure chain
@@ -601,7 +601,7 @@ pub fn DoubleArrayTrie(comptime T: type) type {
         /// Caller must free returned slice with allocator.free().
         /// Time: O(|text| + z) where z = number of matches | Space: O(z)
         pub fn findAll(self: *const Self, allocator: Allocator, text: []const T) ![]Match {
-            var matches = std.ArrayList(Match){};
+            var matches = std.ArrayList(Match).empty;
             errdefer matches.deinit(allocator);
 
             if (text.len == 0 or self.states.len == 0) {

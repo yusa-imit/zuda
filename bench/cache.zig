@@ -131,7 +131,8 @@ fn benchARCCacheGet(allocator: std.mem.Allocator) !void {
 }
 
 /// Run all cache benchmarks
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -142,7 +143,7 @@ pub fn main() !void {
 
     // LRUCache put
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -157,7 +158,7 @@ pub fn main() !void {
 
     // LRUCache get
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -172,7 +173,7 @@ pub fn main() !void {
 
     // LFUCache put
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -187,7 +188,7 @@ pub fn main() !void {
 
     // LFUCache get
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -202,7 +203,7 @@ pub fn main() !void {
 
     // ARCCache put
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -217,7 +218,7 @@ pub fn main() !void {
 
     // ARCCache get
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,

@@ -45,7 +45,7 @@ pub fn AdjacencyList(
 
             fn init(allocator: Allocator) Adjacency {
                 return .{
-                    .edges = std.ArrayList(Edge){},
+                    .edges = std.ArrayList(Edge).empty,
                     .allocator = allocator,
                 };
             }

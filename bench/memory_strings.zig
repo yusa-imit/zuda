@@ -83,7 +83,7 @@ pub fn main() !void {
     const random = prng.random();
 
     const pattern_count = 1000;
-    var patterns: std.ArrayList([]const u8) = .{};
+    var patterns: std.ArrayList([]const u8) = .empty;
     defer {
         for (patterns.items) |pattern| {
             allocator.free(pattern);

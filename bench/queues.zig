@@ -137,19 +137,19 @@ fn benchLockFreeStackPop(allocator: std.mem.Allocator) !void {
 }
 
 /// Benchmark: WorkStealingDeque push operations
-fn benchWorkStealingDequePush(allocator: std.mem.Allocator) !void {
+fn benchWorkStealingDequePush(io: std.Io, allocator: std.mem.Allocator) !void {
     var deque = try WorkStealingDeque(i64).init(allocator);
     defer deque.deinit();
 
     const count = 100_000;
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        try deque.push(@as(i64, @intCast(i)));
+        try deque.push(io, @as(i64, @intCast(i)));
     }
 }
 
 /// Benchmark: WorkStealingDeque pop operations
-fn benchWorkStealingDequePop(allocator: std.mem.Allocator) !void {
+fn benchWorkStealingDequePop(io: std.Io, allocator: std.mem.Allocator) !void {
     var deque = try WorkStealingDeque(i64).init(allocator);
     defer deque.deinit();
 
@@ -157,7 +157,7 @@ fn benchWorkStealingDequePop(allocator: std.mem.Allocator) !void {
     const count = 100_000;
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        try deque.push(@as(i64, @intCast(i)));
+        try deque.push(io, @as(i64, @intCast(i)));
     }
 
     // Benchmark pop
@@ -168,7 +168,7 @@ fn benchWorkStealingDequePop(allocator: std.mem.Allocator) !void {
 }
 
 /// Benchmark: WorkStealingDeque steal operations
-fn benchWorkStealingDequeSteal(allocator: std.mem.Allocator) !void {
+fn benchWorkStealingDequeSteal(io: std.Io, allocator: std.mem.Allocator) !void {
     var deque = try WorkStealingDeque(i64).init(allocator);
     defer deque.deinit();
 
@@ -176,7 +176,7 @@ fn benchWorkStealingDequeSteal(allocator: std.mem.Allocator) !void {
     const count = 100_000;
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        try deque.push(@as(i64, @intCast(i)));
+        try deque.push(io, @as(i64, @intCast(i)));
     }
 
     // Benchmark steal
@@ -187,7 +187,8 @@ fn benchWorkStealingDequeSteal(allocator: std.mem.Allocator) !void {
 }
 
 /// Run all queue benchmarks
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -198,7 +199,7 @@ pub fn main() !void {
 
     // Deque push_back
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -213,7 +214,7 @@ pub fn main() !void {
 
     // Deque push_front
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -228,7 +229,7 @@ pub fn main() !void {
 
     // Deque pop_back
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -243,7 +244,7 @@ pub fn main() !void {
 
     // LockFreeQueue enqueue
     if (has_lockfree_support) {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -260,7 +261,7 @@ pub fn main() !void {
 
     // LockFreeQueue dequeue
     if (has_lockfree_support) {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -277,7 +278,7 @@ pub fn main() !void {
 
     // LockFreeStack push
     if (has_lockfree_support) {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -294,7 +295,7 @@ pub fn main() !void {
 
     // LockFreeStack pop
     if (has_lockfree_support) {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -311,14 +312,14 @@ pub fn main() !void {
 
     // WorkStealingDeque push
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
         });
         defer benchmark.deinit();
 
-        const result = try benchmark.run(benchWorkStealingDequePush, .{allocator});
+        const result = try benchmark.run(benchWorkStealingDequePush, .{ io, allocator });
         const ns_per_op = @divFloor(result.mean_ns, 100_000);
         const status = if (ns_per_op <= 100) "✓ PASS" else "⚠ SLOW";
         std.debug.print("| WorkStealingDeque | push | {d} | {s} |\n", .{ ns_per_op, status });
@@ -326,14 +327,14 @@ pub fn main() !void {
 
     // WorkStealingDeque pop
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
         });
         defer benchmark.deinit();
 
-        const result = try benchmark.run(benchWorkStealingDequePop, .{allocator});
+        const result = try benchmark.run(benchWorkStealingDequePop, .{ io, allocator });
         const ns_per_op = @divFloor(result.mean_ns, 100_000);
         const status = if (ns_per_op <= 100) "✓ PASS" else "⚠ SLOW";
         std.debug.print("| WorkStealingDeque | pop | {d} | {s} |\n", .{ ns_per_op, status });
@@ -341,14 +342,14 @@ pub fn main() !void {
 
     // WorkStealingDeque steal
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
         });
         defer benchmark.deinit();
 
-        const result = try benchmark.run(benchWorkStealingDequeSteal, .{allocator});
+        const result = try benchmark.run(benchWorkStealingDequeSteal, .{ io, allocator });
         const ns_per_op = @divFloor(result.mean_ns, 100_000);
         const status = if (ns_per_op <= 100) "✓ PASS" else "⚠ SLOW";
         std.debug.print("| WorkStealingDeque | steal | {d} | {s} |\n", .{ ns_per_op, status });

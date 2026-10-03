@@ -56,7 +56,8 @@ fn benchFibonacciHeapDecreaseKey(allocator: std.mem.Allocator) !void {
 }
 
 /// Run all heap benchmarks and output markdown table
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -70,7 +71,7 @@ pub fn main() !void {
     {
         std.debug.print("Running FibonacciHeap insert (100k ops)...\n", .{});
 
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -94,7 +95,7 @@ pub fn main() !void {
     {
         std.debug.print("\nRunning FibonacciHeap decreaseKey (100k ops)...\n", .{});
 
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,

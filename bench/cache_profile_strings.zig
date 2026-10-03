@@ -26,13 +26,13 @@ pub fn main(init: std.process.Init) !void {
     defer allocator.free(text);
 
     // Benchmark DoubleArrayTrie
-    try benchDoubleArrayTrie(allocator, patterns, text);
+    try benchDoubleArrayTrie(io, allocator, patterns, text);
 
     std.debug.print("\nDone. Run with:\n", .{});
     std.debug.print("  perf stat -e cache-misses,cache-references,L1-dcache-load-misses,L1-dcache-loads ./zig-out/bin/bench-cache-profile\n", .{});
 }
 
-fn benchDoubleArrayTrie(allocator: std.mem.Allocator, patterns: []const []const u8, text: []const u8) !void {
+fn benchDoubleArrayTrie(io: std.Io, allocator: std.mem.Allocator, patterns: []const []const u8, text: []const u8) !void {
     const DoubleArrayTrie = zuda.containers.strings.DoubleArrayTrie(u8);
 
     // Build automaton

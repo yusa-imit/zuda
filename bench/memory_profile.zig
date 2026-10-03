@@ -77,7 +77,8 @@ fn profileBTree(allocator: std.mem.Allocator) !void {
     }
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -90,7 +91,7 @@ pub fn main() !void {
     // RedBlackTree
     {
         var tracker = bench.MemoryTracker.init(allocator);
-        var b = try bench.Benchmark.initWithMemoryTracking(tracker.allocator(), .{
+        var b = try bench.Benchmark.initWithMemoryTracking(io, tracker.allocator(), .{
             .min_iterations = 10,
             .max_iterations = 100,
         }, &tracker);
@@ -105,7 +106,7 @@ pub fn main() !void {
     // SkipList
     {
         var tracker = bench.MemoryTracker.init(allocator);
-        var b = try bench.Benchmark.initWithMemoryTracking(tracker.allocator(), .{
+        var b = try bench.Benchmark.initWithMemoryTracking(io, tracker.allocator(), .{
             .min_iterations = 10,
             .max_iterations = 100,
         }, &tracker);
@@ -120,7 +121,7 @@ pub fn main() !void {
     // FibonacciHeap
     {
         var tracker = bench.MemoryTracker.init(allocator);
-        var b = try bench.Benchmark.initWithMemoryTracking(tracker.allocator(), .{
+        var b = try bench.Benchmark.initWithMemoryTracking(io, tracker.allocator(), .{
             .min_iterations = 10,
             .max_iterations = 100,
         }, &tracker);
@@ -135,7 +136,7 @@ pub fn main() !void {
     // BTree
     {
         var tracker = bench.MemoryTracker.init(allocator);
-        var b = try bench.Benchmark.initWithMemoryTracking(tracker.allocator(), .{
+        var b = try bench.Benchmark.initWithMemoryTracking(io, tracker.allocator(), .{
             .min_iterations = 10,
             .max_iterations = 100,
         }, &tracker);

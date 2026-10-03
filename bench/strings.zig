@@ -24,7 +24,7 @@ const AhoCorasickContext = struct {
 
         // Generate 1000 random patterns (5-15 bytes each)
         const pattern_count = 1000;
-        var patterns: std.ArrayList([]const u8) = .{};
+        var patterns: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (patterns.items) |pattern| {
                 allocator.free(pattern);
@@ -86,7 +86,7 @@ const AhoCorasickASCIIContext = struct {
 
         // Generate 1000 random patterns (5-15 bytes each)
         const pattern_count = 1000;
-        var patterns: std.ArrayList([]const u8) = .{};
+        var patterns: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (patterns.items) |pattern| {
                 allocator.free(pattern);
@@ -148,7 +148,7 @@ const DoubleArrayTrieContext = struct {
 
         // Generate 1000 random patterns (5-15 bytes each)
         const pattern_count = 1000;
-        var patterns: std.ArrayList([]const u8) = .{};
+        var patterns: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (patterns.items) |pattern| {
                 allocator.free(pattern);
@@ -199,7 +199,8 @@ fn benchDoubleArrayTrieSearch(ctx: *DoubleArrayTrieContext) !void {
 }
 
 /// Run all string algorithm benchmarks and output markdown table
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -215,7 +216,7 @@ pub fn main() !void {
         var ctx = try AhoCorasickContext.init(allocator);
         defer ctx.deinit();
 
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -238,7 +239,7 @@ pub fn main() !void {
         var ctx = try AhoCorasickASCIIContext.init(allocator);
         defer ctx.deinit();
 
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -266,7 +267,7 @@ pub fn main() !void {
         var ctx = try DoubleArrayTrieContext.init(allocator);
         defer ctx.deinit();
 
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,

@@ -191,7 +191,8 @@ fn benchConsistentHashRingGet(allocator: std.mem.Allocator) !void {
 }
 
 /// Run all hash container benchmarks
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -202,7 +203,7 @@ pub fn main() !void {
 
     // CuckooHashMap insert
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -217,7 +218,7 @@ pub fn main() !void {
 
     // CuckooHashMap get
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -232,7 +233,7 @@ pub fn main() !void {
 
     // RobinHoodHashMap insert
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -247,7 +248,7 @@ pub fn main() !void {
 
     // RobinHoodHashMap get
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -262,7 +263,7 @@ pub fn main() !void {
 
     // SwissTable insert
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -277,7 +278,7 @@ pub fn main() !void {
 
     // SwissTable get
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -292,7 +293,7 @@ pub fn main() !void {
 
     // ConsistentHashRing add
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -307,7 +308,7 @@ pub fn main() !void {
 
     // ConsistentHashRing get
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
