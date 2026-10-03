@@ -39,8 +39,9 @@ fn benchBloomFilterLookup(filter: *BloomFilter(u64, U64Context, U64Context.hash)
 }
 
 /// Run all probabilistic benchmarks and output markdown table
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -71,7 +72,7 @@ pub fn main() !void {
         }
 
         // Now run benchmark on lookups only
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,

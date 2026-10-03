@@ -30,7 +30,7 @@ const descriptive = zuda.stats.descriptive;
 const poly = zuda.numeric.interpolation.polynomial;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

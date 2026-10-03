@@ -69,8 +69,8 @@ pub fn buildHuffmanTree(
         }
     };
 
-    var heap = std.PriorityQueue(*HuffmanNode, Context, Context.lessThan).init(allocator, .{});
-    defer heap.deinit();
+    var heap = std.PriorityQueue(*HuffmanNode, Context, Context.lessThan).initContext(.{});
+    defer heap.deinit(allocator);
 
     // Initialize heap with leaf nodes
     var it = freq_map.iterator();
@@ -82,13 +82,13 @@ pub fn buildHuffmanTree(
             .left = null,
             .right = null,
         };
-        try heap.add(node);
+        try heap.push(allocator, node);
     }
 
     // Build tree by merging nodes
     while (heap.count() > 1) {
-        const left = heap.remove();
-        const right = heap.remove();
+        const left = heap.pop().?;
+        const right = heap.pop().?;
 
         const parent = try allocator.create(HuffmanNode);
         parent.* = .{
@@ -97,10 +97,10 @@ pub fn buildHuffmanTree(
             .left = left,
             .right = right,
         };
-        try heap.add(parent);
+        try heap.push(allocator, parent);
     }
 
-    return heap.remove();
+    return heap.pop().?;
 }
 
 /// Generates Huffman codes for all symbols in the tree

@@ -87,7 +87,7 @@ pub fn TopologicalSort(
             }
 
             // Queue for vertices with in-degree 0
-            var queue: std.ArrayList(V) = .{};
+            var queue: std.ArrayList(V) = .empty;
             defer queue.deinit(allocator);
 
             var in_degree_it = in_degree.iterator();
@@ -98,7 +98,7 @@ pub fn TopologicalSort(
             }
 
             // Process vertices in topological order
-            var result: std.ArrayList(V) = .{};
+            var result: std.ArrayList(V) = .empty;
             errdefer result.deinit(allocator);
 
             while (queue.items.len > 0) {
@@ -122,7 +122,7 @@ pub fn TopologicalSort(
             const total_vertices = graph.vertexCount();
             if (result.items.len < total_vertices) {
                 // Cycle detected - collect remaining vertices
-                var cycle_vertices: std.ArrayList(V) = .{};
+                var cycle_vertices: std.ArrayList(V) = .empty;
                 errdefer cycle_vertices.deinit(allocator);
 
                 in_degree_it = in_degree.iterator();
@@ -133,7 +133,7 @@ pub fn TopologicalSort(
                 }
 
                 return Result{
-                    .order = std.ArrayList(V){},
+                    .order = std.ArrayList(V).empty,
                     .success = false,
                     .cycle_vertices = cycle_vertices,
                     .allocator = allocator,

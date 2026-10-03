@@ -24,7 +24,7 @@ const distributions = zuda.stats.distributions;
 const linalg = zuda.linalg;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -39,7 +39,7 @@ pub fn main() !void {
     const n_features: usize = 3;
 
     // Generate features: X ~ N(0, 1)
-    var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
+    var rng = std.Random.DefaultPrng.init(0x5eed);
     const random = rng.random();
 
     const X_data = try allocator.alloc(f64, n_samples * n_features);

@@ -51,7 +51,7 @@ pub fn DaryHeap(
             return .{
                 .allocator = allocator,
                 .context = context,
-                .items = .{},
+                .items = .empty,
             };
         }
 

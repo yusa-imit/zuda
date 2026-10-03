@@ -100,8 +100,25 @@ pub const Result = struct {
     }
 };
 
-/// Timer for high-precision benchmarking
-const Timer = std.time.Timer;
+/// Stopwatch on the monotonic clock of an injected `std.Io` (replaces `std.time.Timer`).
+const Timer = struct {
+    io: std.Io,
+    start_ns: i96,
+
+    fn start(io: std.Io) Timer {
+        return .{ .io = io, .start_ns = std.Io.Clock.awake.now(io).nanoseconds };
+    }
+
+    fn read(timer: *const Timer) u64 {
+        const elapsed_ns = std.Io.Clock.awake.now(timer.io).nanoseconds - timer.start_ns;
+        std.debug.assert(elapsed_ns >= 0);
+        return @intCast(elapsed_ns);
+    }
+
+    fn reset(timer: *Timer) void {
+        timer.start_ns = std.Io.Clock.awake.now(timer.io).nanoseconds;
+    }
+};
 
 /// Memory tracking allocator for benchmarking
 pub const MemoryTracker = struct {
@@ -218,22 +235,27 @@ pub const Benchmark = struct {
     memory_tracker: ?*MemoryTracker,
 
     /// Initialize a new benchmark with the given configuration
-    pub fn init(allocator: std.mem.Allocator, config: Config) !Benchmark {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, config: Config) !Benchmark {
         return Benchmark{
             .config = config,
-            .timer = try Timer.start(),
-            .times = std.ArrayList(u64){},
+            .timer = Timer.start(io),
+            .times = .empty,
             .allocator = allocator,
             .memory_tracker = null,
         };
     }
 
     /// Initialize a new benchmark with memory tracking
-    pub fn initWithMemoryTracking(allocator: std.mem.Allocator, config: Config, tracker: *MemoryTracker) !Benchmark {
+    pub fn initWithMemoryTracking(
+        io: std.Io,
+        allocator: std.mem.Allocator,
+        config: Config,
+        tracker: *MemoryTracker,
+    ) !Benchmark {
         return Benchmark{
             .config = config,
-            .timer = try Timer.start(),
-            .times = std.ArrayList(u64){},
+            .timer = Timer.start(io),
+            .times = .empty,
             .allocator = allocator,
             .memory_tracker = tracker,
         };
@@ -385,20 +407,23 @@ pub const Benchmark = struct {
 
 /// Simple benchmark runner that prints results
 pub fn benchmark(
+    io: std.Io,
     allocator: std.mem.Allocator,
     name: []const u8,
     comptime func: anytype,
     args: anytype,
 ) !void {
-    const stdout_file = std.io.getStdOut();
-    const stdout = stdout_file.writer();
+    var stdout_buffer: [512]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
+    const stdout = &stdout_writer.interface;
 
-    var bench = try Benchmark.init(allocator, .{});
+    var bench = try Benchmark.init(io, allocator, .{});
     defer bench.deinit();
 
     const result = try bench.run(func, args);
 
     try stdout.print("{s}: {f}\n", .{ name, result });
+    try stdout.flush();
 }
 
 /// Compare two benchmark results and print comparison
@@ -416,14 +441,14 @@ pub fn compare(name_a: []const u8, result_a: Result, name_b: []const u8, result_
 
 /// Markdown table formatter for benchmark results
 pub const MarkdownTable = struct {
-    writer: std.io.AnyWriter,
+    writer: *std.Io.Writer,
     track_memory: bool,
 
-    pub fn init(writer: std.io.AnyWriter) MarkdownTable {
+    pub fn init(writer: *std.Io.Writer) MarkdownTable {
         return .{ .writer = writer, .track_memory = false };
     }
 
-    pub fn initWithMemory(writer: std.io.AnyWriter) MarkdownTable {
+    pub fn initWithMemory(writer: *std.Io.Writer) MarkdownTable {
         return .{ .writer = writer, .track_memory = true };
     }
 
@@ -448,7 +473,7 @@ fn addNumbers(a: i64, b: i64) i64 {
 }
 
 test "benchmark basic operation" {
-    var bench = try Benchmark.init(std.testing.allocator, .{
+    var bench = try Benchmark.init(std.testing.io, std.testing.allocator, .{
         .min_iterations = 100,
         .max_iterations = 1000,
     });
@@ -461,7 +486,7 @@ test "benchmark basic operation" {
 }
 
 test "benchmark with fixed iterations" {
-    var bench = try Benchmark.init(std.testing.allocator, .{});
+    var bench = try Benchmark.init(std.testing.io, std.testing.allocator, .{});
     defer bench.deinit();
 
     const result = try bench.runIterations(addNumbers, .{ @as(i64, 42), @as(i64, 58) }, 50);
@@ -478,7 +503,7 @@ fn allocateAndFree(allocator: std.mem.Allocator, size: usize) !void {
 
 test "benchmark with memory tracking" {
     var tracker = MemoryTracker.init(std.testing.allocator);
-    var bench = try Benchmark.initWithMemoryTracking(tracker.allocator(), .{
+    var bench = try Benchmark.initWithMemoryTracking(std.testing.io, tracker.allocator(), .{
         .min_iterations = 10,
         .max_iterations = 100,
     }, &tracker);

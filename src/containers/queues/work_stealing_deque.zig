@@ -12,7 +12,7 @@ const std = @import("std");
 /// - Mutex only for resize operations (rare)
 ///
 /// **API**:
-/// - `push(task)`: Owner adds task to bottom (O(1) amortized)
+/// - `push(io, task)`: Owner adds task to bottom (O(1) amortized)
 /// - `pop()`: Owner removes task from bottom (O(1), LIFO)
 /// - `steal()`: Stealer removes task from top (O(1), FIFO)
 /// - `size()`: Approximate size (concurrent snapshot)
@@ -34,7 +34,7 @@ pub fn WorkStealingDeque(comptime T: type) type {
         top: std.atomic.Value(usize), // Stealers pop from top (FIFO)
         bottom: std.atomic.Value(usize), // Owner pushes/pops from bottom (LIFO)
         capacity: usize,
-        mutex: std.Thread.Mutex, // Protects resize operations
+        mutex: std.Io.Mutex, // Protects resize operations
 
         /// Initialize a new work-stealing deque.
         /// Time: O(1) | Space: O(MIN_CAPACITY)
@@ -46,7 +46,7 @@ pub fn WorkStealingDeque(comptime T: type) type {
                 .top = std.atomic.Value(usize).init(0),
                 .bottom = std.atomic.Value(usize).init(0),
                 .capacity = MIN_CAPACITY,
-                .mutex = std.Thread.Mutex{},
+                .mutex = .init,
             };
         }
 
@@ -58,15 +58,15 @@ pub fn WorkStealingDeque(comptime T: type) type {
 
         /// Push a task to the bottom of the deque (owner thread only).
         /// Time: O(1) amortized (O(n) on resize) | Space: O(1)
-        pub fn push(self: *Self, task: T) !void {
+        pub fn push(self: *Self, io: std.Io, task: T) !void {
             const b = self.bottom.load(.acquire);
             const t = self.top.load(.acquire);
             const current_size = b -% t;
 
             // Resize if full (only owner can resize)
             if (current_size >= self.capacity - 1) {
-                self.mutex.lock();
-                defer self.mutex.unlock();
+                self.mutex.lockUncancelable(io);
+                defer self.mutex.unlock(io);
                 try self.resize();
             }
 
@@ -225,9 +225,9 @@ test "WorkStealingDeque: basic push/pop" {
     var deque = try WorkStealingDeque(u32).init(testing.allocator);
     defer deque.deinit();
 
-    try deque.push(1);
-    try deque.push(2);
-    try deque.push(3);
+    try deque.push(std.testing.io, 1);
+    try deque.push(std.testing.io, 2);
+    try deque.push(std.testing.io, 3);
 
     try testing.expectEqual(@as(?u32, 3), deque.pop()); // LIFO
     try testing.expectEqual(@as(?u32, 2), deque.pop());
@@ -241,9 +241,9 @@ test "WorkStealingDeque: steal" {
     var deque = try WorkStealingDeque(u32).init(testing.allocator);
     defer deque.deinit();
 
-    try deque.push(10);
-    try deque.push(20);
-    try deque.push(30);
+    try deque.push(std.testing.io, 10);
+    try deque.push(std.testing.io, 20);
+    try deque.push(std.testing.io, 30);
 
     // Steal from the top (FIFO order)
     try testing.expectEqual(@as(?u32, 10), deque.steal());
@@ -262,7 +262,7 @@ test "WorkStealingDeque: resize" {
     // Push more than MIN_CAPACITY items to trigger resize
     var i: u32 = 0;
     while (i < 100) : (i += 1) {
-        try deque.push(i);
+        try deque.push(std.testing.io, i);
     }
 
     try testing.expectEqual(@as(usize, 100), deque.size());
@@ -287,7 +287,7 @@ test "WorkStealingDeque: concurrent push/steal" {
     const num_items = 1000;
     var i: u32 = 0;
     while (i < num_items) : (i += 1) {
-        try deque.push(i);
+        try deque.push(std.testing.io, i);
     }
 
     // Spawn a thief thread to steal items
@@ -331,11 +331,11 @@ test "WorkStealingDeque: owner vs stealer ordering" {
     defer deque.deinit();
 
     // Push [1, 2, 3, 4, 5]
-    try deque.push(1);
-    try deque.push(2);
-    try deque.push(3);
-    try deque.push(4);
-    try deque.push(5);
+    try deque.push(std.testing.io, 1);
+    try deque.push(std.testing.io, 2);
+    try deque.push(std.testing.io, 3);
+    try deque.push(std.testing.io, 4);
+    try deque.push(std.testing.io, 5);
 
     // Owner pops from bottom (LIFO): gets 5
     try testing.expectEqual(@as(?u32, 5), deque.pop());
@@ -366,12 +366,12 @@ test "WorkStealingDeque: empty edge cases" {
     try testing.expectEqual(@as(?u32, null), deque.steal());
 
     // Push one, pop one
-    try deque.push(42);
+    try deque.push(std.testing.io, 42);
     try testing.expectEqual(@as(?u32, 42), deque.pop());
     try testing.expect(deque.isEmpty());
 
     // Push one, steal one
-    try deque.push(99);
+    try deque.push(std.testing.io, 99);
     try testing.expectEqual(@as(?u32, 99), deque.steal());
     try testing.expect(deque.isEmpty());
 }
@@ -382,7 +382,7 @@ test "WorkStealingDeque: last element race" {
     defer deque.deinit();
 
     // Push one item
-    try deque.push(100);
+    try deque.push(std.testing.io, 100);
 
     // In real concurrent scenario, owner and stealer could race on last element.
     // Here we simulate: either pop or steal succeeds, the other gets null.
@@ -409,7 +409,7 @@ test "WorkStealingDeque: stress test" {
     // Push 10000 items
     var i: u32 = 0;
     while (i < 10000) : (i += 1) {
-        try deque.push(i);
+        try deque.push(std.testing.io, i);
     }
 
     try testing.expectEqual(@as(usize, 10000), deque.size());
@@ -435,7 +435,7 @@ test "WorkStealingDeque: memory leak check" {
     while (round < 10) : (round += 1) {
         var i: u32 = 0;
         while (i < 100) : (i += 1) {
-            try deque.push(i);
+            try deque.push(std.testing.io, i);
         }
 
         // Verify all pushed values can be popped
@@ -460,7 +460,7 @@ test "WorkStealingDeque: validate invariants" {
     try testing.expectEqual(true, deque.isEmpty());
     try deque.validate();
 
-    try deque.push(1);
+    try deque.push(std.testing.io, 1);
     try testing.expectEqual(false, deque.isEmpty());
     try deque.validate();
 
@@ -472,7 +472,7 @@ test "WorkStealingDeque: validate invariants" {
     // Trigger resize and verify count
     var i: u32 = 0;
     while (i < 100) : (i += 1) {
-        try deque.push(i);
+        try deque.push(std.testing.io, i);
     }
     try testing.expectEqual(false, deque.isEmpty());
     try deque.validate();
@@ -491,9 +491,9 @@ test "WorkStealingDeque: string type" {
     var deque = try WorkStealingDeque([]const u8).init(testing.allocator);
     defer deque.deinit();
 
-    try deque.push("hello");
-    try deque.push("world");
-    try deque.push("foo");
+    try deque.push(std.testing.io, "hello");
+    try deque.push(std.testing.io, "world");
+    try deque.push(std.testing.io, "foo");
 
     try testing.expectEqualStrings("foo", deque.pop().?);
     try testing.expectEqualStrings("hello", deque.steal().?);
@@ -514,7 +514,7 @@ test "WorkStealingDeque: pop on empty deque returns null (issue #13)" {
     try testing.expectEqual(@as(?u32, null), stolen);
 
     // Test pop after push+pop (returns to empty)
-    try deque.push(42);
+    try deque.push(std.testing.io, 42);
     try testing.expectEqual(@as(?u32, 42), deque.pop());
     try testing.expectEqual(@as(?u32, null), deque.pop());
 }
@@ -528,11 +528,11 @@ test "WorkStealingDeque: size tracks accurately through push pop steal" {
     try deque.validate();
 
     // Push 5 items
-    try deque.push(1);
-    try deque.push(2);
-    try deque.push(3);
-    try deque.push(4);
-    try deque.push(5);
+    try deque.push(std.testing.io, 1);
+    try deque.push(std.testing.io, 2);
+    try deque.push(std.testing.io, 3);
+    try deque.push(std.testing.io, 4);
+    try deque.push(std.testing.io, 5);
     try testing.expectEqual(@as(usize, 5), deque.size());
     try deque.validate();
 
@@ -565,16 +565,16 @@ test "WorkStealingDeque: interleaved push pop steal ordering" {
     defer deque.deinit();
 
     // Push 1, 2, 3
-    try deque.push(1);
-    try deque.push(2);
-    try deque.push(3);
+    try deque.push(std.testing.io, 1);
+    try deque.push(std.testing.io, 2);
+    try deque.push(std.testing.io, 3);
 
     // Steal from top (FIFO) → expect 1
     try testing.expectEqual(@as(?u32, 1), deque.steal());
 
     // Push 4, 5
-    try deque.push(4);
-    try deque.push(5);
+    try deque.push(std.testing.io, 4);
+    try deque.push(std.testing.io, 5);
 
     // Pop from bottom (LIFO) → expect 5
     try testing.expectEqual(@as(?u32, 5), deque.pop());
@@ -598,11 +598,11 @@ test "WorkStealingDeque: multiple sequential steal calls exhaust deque" {
     defer deque.deinit();
 
     // Push items 100, 200, 300, 400, 500
-    try deque.push(100);
-    try deque.push(200);
-    try deque.push(300);
-    try deque.push(400);
-    try deque.push(500);
+    try deque.push(std.testing.io, 100);
+    try deque.push(std.testing.io, 200);
+    try deque.push(std.testing.io, 300);
+    try deque.push(std.testing.io, 400);
+    try deque.push(std.testing.io, 500);
 
     // Steal all via steal() in a loop until null
     var stolen_items = [_]u32{0} ** 5;
@@ -634,14 +634,14 @@ test "WorkStealingDeque: validate after resize" {
     // MIN_CAPACITY = 32, so push 31 items to stay at capacity 32
     var i: u32 = 0;
     while (i < 31) : (i += 1) {
-        try deque.push(i);
+        try deque.push(std.testing.io, i);
     }
     try testing.expectEqual(@as(usize, 31), deque.size());
     try testing.expectEqual(@as(usize, 32), deque.capacity);
     try deque.validate();
 
     // Push one more (32nd) — triggers resize to 64
-    try deque.push(31);
+    try deque.push(std.testing.io, 31);
     try testing.expectEqual(@as(usize, 32), deque.size());
     try testing.expectEqual(@as(usize, 64), deque.capacity);
     try deque.validate();
@@ -663,7 +663,7 @@ test "WorkStealingDeque: init-deinit loop memory safety" {
         // Push 0..49
         var i: u32 = 0;
         while (i < 50) : (i += 1) {
-            try deque.push(i);
+            try deque.push(std.testing.io, i);
         }
         try testing.expectEqual(@as(usize, 50), deque.size());
 

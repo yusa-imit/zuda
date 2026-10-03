@@ -18,7 +18,7 @@ const descriptive = zuda.stats.descriptive;
 /// 4. Closed-loop simulation with disturbances
 /// 5. Performance metrics (settling time, overshoot, steady-state error)
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

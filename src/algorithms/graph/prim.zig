@@ -108,8 +108,8 @@ pub fn Prim(comptime V: type, comptime W: type) type {
             defer visited.deinit();
 
             // Priority queue for edges (min-heap by weight)
-            var pq = std.PriorityQueue(QueueEntry, void, QueueEntry.lessThan).init(self.allocator, {});
-            defer pq.deinit();
+            var pq = std.PriorityQueue(QueueEntry, void, QueueEntry.lessThan).empty;
+            defer pq.deinit(self.allocator);
 
             // MST edges
             var mst_edges: std.ArrayList(Edge) = .{};
@@ -123,7 +123,7 @@ pub fn Prim(comptime V: type, comptime W: type) type {
             // Add all edges from start vertex to priority queue
             if (adjacency_list.get(start_vertex)) |neighbors| {
                 for (neighbors.items) |neighbor_info| {
-                    try pq.add(.{
+                    try pq.push(self.allocator, .{
                         .vertex = neighbor_info.neighbor,
                         .from = start_vertex,
                         .weight = neighbor_info.weight,
@@ -132,7 +132,7 @@ pub fn Prim(comptime V: type, comptime W: type) type {
             }
 
             // Grow MST
-            while (pq.removeOrNull()) |entry| {
+            while (pq.pop()) |entry| {
                 // Skip if vertex already visited
                 if (visited.contains(entry.vertex)) {
                     continue;
@@ -158,7 +158,7 @@ pub fn Prim(comptime V: type, comptime W: type) type {
                 if (adjacency_list.get(entry.vertex)) |neighbors| {
                     for (neighbors.items) |neighbor_info| {
                         if (!visited.contains(neighbor_info.neighbor)) {
-                            try pq.add(.{
+                            try pq.push(self.allocator, .{
                                 .vertex = neighbor_info.neighbor,
                                 .from = entry.vertex,
                                 .weight = neighbor_info.weight,

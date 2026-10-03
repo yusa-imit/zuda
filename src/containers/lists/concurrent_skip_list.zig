@@ -134,7 +134,7 @@ pub fn ConcurrentSkipList(
         /// atomic-read-then-free pass is amortized rather than done per-remove.
         const Reclaim = struct {
             readers: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
-            mutex: std.Thread.Mutex = .{},
+            mutex: std.Io.Mutex = .init,
             retired_head: ?*Node = null,
             retired_count: usize = 0,
             /// Copied from `Options.retired_max` at `init`; drain is attempted once this many
@@ -158,7 +158,7 @@ pub fn ConcurrentSkipList(
         allocator: Allocator,
         header: *Node,
         ctx: Context,
-        prng_mutex: std.Thread.Mutex,
+        prng_mutex: std.Io.Mutex,
         prng: std.Random.DefaultPrng,
         rc: *Reclaim,
 
@@ -189,7 +189,7 @@ pub fn ConcurrentSkipList(
                 .allocator = allocator,
                 .header = header,
                 .ctx = ctx,
-                .prng_mutex = .{},
+                .prng_mutex = .init,
                 .prng = prng,
                 .rc = rc,
             };
@@ -238,8 +238,8 @@ pub fn ConcurrentSkipList(
         /// Thread-safe.
         ///
         /// Time: O(log n) expected | Space: O(1)
-        pub fn insert(self: *Self, key: K, value: V) !?V {
-            const level = self.randomLevel();
+        pub fn insert(self: *Self, io: std.Io, key: K, value: V) !?V {
+            const level = self.randomLevel(io);
             const new_node = try self.allocator.create(Node);
             new_node.* = Node.init(key, value, level);
 
@@ -314,7 +314,7 @@ pub fn ConcurrentSkipList(
         /// Thread-safe.
         ///
         /// Time: O(log n) expected | Space: O(1)
-        pub fn remove(self: *Self, key: K) ?V {
+        pub fn remove(self: *Self, io: std.Io, key: K) ?V {
             var preds: [max_level]?*Node = undefined;
             var succs: [max_level]?*Node = undefined;
 
@@ -372,7 +372,7 @@ pub fn ConcurrentSkipList(
             // normal walk will free it later, preserving "retired implies unlinked" so nothing
             // is ever double-freed.
             if (fully_unlinked) {
-                self.retire(victim);
+                self.retire(io, victim);
             }
 
             return old_value;
@@ -442,9 +442,9 @@ pub fn ConcurrentSkipList(
         /// logical contents -- `get`/`contains` never observe a retired node.
         ///
         /// Time: O(1) | Space: O(1)
-        pub fn pendingRetired(self: *const Self) usize {
-            self.rc.mutex.lock();
-            defer self.rc.mutex.unlock();
+        pub fn pendingRetired(self: *const Self, io: std.Io) usize {
+            self.rc.mutex.lockUncancelable(io);
+            defer self.rc.mutex.unlock(io);
 
             const count = self.rc.retired_count;
             assert(self.rc.retired_max > 0);
@@ -543,13 +543,13 @@ pub fn ConcurrentSkipList(
         /// yield-and-retry drain so a batch under sustained contention still gets reclaimed.
         /// Never call this on a node that might still be reachable from a concurrent traversal
         /// -- see `isUnlinked`.
-        fn retire(self: *Self, node: *Node) void {
+        fn retire(self: *Self, io: std.Io, node: *Node) void {
             assert(node.retire_next == null);
 
             var force_drain = false;
             {
-                self.rc.mutex.lock();
-                defer self.rc.mutex.unlock();
+                self.rc.mutex.lockUncancelable(io);
+                defer self.rc.mutex.unlock(io);
 
                 node.retire_next = self.rc.retired_head;
                 self.rc.retired_head = node;
@@ -559,7 +559,7 @@ pub fn ConcurrentSkipList(
                 force_drain = self.rc.retired_count >= self.rc.retired_max;
             }
 
-            self.drain(force_drain);
+            self.drain(io, force_drain);
         }
 
         /// Bounded attempt to reclaim the whole retired batch: free every retired node only once
@@ -569,7 +569,7 @@ pub fn ConcurrentSkipList(
         /// `drain_attempts_max` times with a yield in between, for the over-`retired_max` case
         /// where a batch must not be left to grow unboundedly under sustained contention. Either
         /// way this never blocks or spins unboundedly.
-        fn drain(self: *Self, force: bool) void {
+        fn drain(self: *Self, io: std.Io, force: bool) void {
             const drain_attempts_max: usize = 8;
             const attempts_max: usize = if (force) drain_attempts_max else 1;
             assert(attempts_max >= 1);
@@ -589,8 +589,8 @@ pub fn ConcurrentSkipList(
                 var head: ?*Node = null;
                 var drained_count: usize = 0;
                 {
-                    self.rc.mutex.lock();
-                    defer self.rc.mutex.unlock();
+                    self.rc.mutex.lockUncancelable(io);
+                    defer self.rc.mutex.unlock(io);
 
                     head = self.rc.retired_head;
                     drained_count = self.rc.retired_count;
@@ -613,9 +613,9 @@ pub fn ConcurrentSkipList(
         }
 
         /// Generate a random level for a new node.
-        fn randomLevel(self: *Self) usize {
-            self.prng_mutex.lock();
-            defer self.prng_mutex.unlock();
+        fn randomLevel(self: *Self, io: std.Io) usize {
+            self.prng_mutex.lockUncancelable(io);
+            defer self.prng_mutex.unlock(io);
 
             var level: usize = 0;
             const random = self.prng.random();
@@ -676,7 +676,7 @@ test "ConcurrentSkipList: insert and get single element" {
     );
     defer list.deinit();
 
-    const old = try list.insert(42, 100);
+    const old = try list.insert(testing.io, 42, 100);
     try testing.expectEqual(@as(?i32, null), old);
 
     const val = list.get(42);
@@ -697,8 +697,8 @@ test "ConcurrentSkipList: insert updates existing key" {
     );
     defer list.deinit();
 
-    _ = try list.insert(42, 100);
-    const old = try list.insert(42, 200);
+    _ = try list.insert(testing.io, 42, 100);
+    const old = try list.insert(testing.io, 42, 200);
 
     try testing.expectEqual(@as(?i32, 100), old);
     try testing.expectEqual(@as(?i32, 200), list.get(42));
@@ -718,12 +718,12 @@ test "ConcurrentSkipList: multiple inserts and lookups" {
     );
     defer list.deinit();
 
-    _ = try list.insert(3, 30);
-    _ = try list.insert(1, 10);
-    _ = try list.insert(4, 40);
-    _ = try list.insert(1, 15); // Update
-    _ = try list.insert(5, 50);
-    _ = try list.insert(9, 90);
+    _ = try list.insert(testing.io, 3, 30);
+    _ = try list.insert(testing.io, 1, 10);
+    _ = try list.insert(testing.io, 4, 40);
+    _ = try list.insert(testing.io, 1, 15); // Update
+    _ = try list.insert(testing.io, 5, 50);
+    _ = try list.insert(testing.io, 9, 90);
 
     try testing.expectEqual(@as(?i32, 15), list.get(1));
     try testing.expectEqual(@as(?i32, 30), list.get(3));
@@ -747,10 +747,10 @@ test "ConcurrentSkipList: remove element" {
     );
     defer list.deinit();
 
-    _ = try list.insert(42, 100);
+    _ = try list.insert(testing.io, 42, 100);
     try testing.expectEqual(@as(?i32, 100), list.get(42));
 
-    const removed = list.remove(42);
+    const removed = list.remove(testing.io, 42);
     try testing.expectEqual(@as(?i32, 100), removed);
     try testing.expectEqual(@as(?i32, null), list.get(42));
 }
@@ -769,11 +769,11 @@ test "ConcurrentSkipList: remove from multiple elements" {
     );
     defer list.deinit();
 
-    _ = try list.insert(1, 10);
-    _ = try list.insert(2, 20);
-    _ = try list.insert(3, 30);
+    _ = try list.insert(testing.io, 1, 10);
+    _ = try list.insert(testing.io, 2, 20);
+    _ = try list.insert(testing.io, 3, 30);
 
-    const removed = list.remove(2);
+    const removed = list.remove(testing.io, 2);
     try testing.expectEqual(@as(?i32, 20), removed);
     try testing.expectEqual(@as(?i32, 10), list.get(1));
     try testing.expectEqual(@as(?i32, null), list.get(2));
@@ -794,8 +794,8 @@ test "ConcurrentSkipList: remove non-existent key" {
     );
     defer list.deinit();
 
-    _ = try list.insert(1, 10);
-    const removed = list.remove(99);
+    _ = try list.insert(testing.io, 1, 10);
+    const removed = list.remove(testing.io, 99);
     try testing.expectEqual(@as(?i32, null), removed);
 }
 
@@ -815,10 +815,10 @@ test "ConcurrentSkipList: contains" {
 
     try testing.expect(!list.contains(42));
 
-    _ = try list.insert(42, 100);
+    _ = try list.insert(testing.io, 42, 100);
     try testing.expect(list.contains(42));
 
-    _ = list.remove(42);
+    _ = list.remove(testing.io, 42);
     try testing.expect(!list.contains(42));
 }
 
@@ -839,7 +839,7 @@ test "ConcurrentSkipList: stress test" {
     // Insert 100 elements
     var i: i32 = 0;
     while (i < 100) : (i += 1) {
-        _ = try list.insert(i, i * 10);
+        _ = try list.insert(testing.io, i, i * 10);
     }
 
     // Verify all elements
@@ -851,7 +851,7 @@ test "ConcurrentSkipList: stress test" {
     // Remove even elements
     i = 0;
     while (i < 100) : (i += 2) {
-        _ = list.remove(i);
+        _ = list.remove(testing.io, i);
     }
 
     // Verify odd elements remain
@@ -883,7 +883,7 @@ test "ConcurrentSkipList: memory leak check" {
 
     var i: i32 = 0;
     while (i < 50) : (i += 1) {
-        _ = try list.insert(i, i);
+        _ = try list.insert(testing.io, i, i);
     }
 
     // Verify all elements are present
@@ -896,7 +896,7 @@ test "ConcurrentSkipList: memory leak check" {
 
     i = 0;
     while (i < 50) : (i += 2) {
-        _ = list.remove(i);
+        _ = list.remove(testing.io, i);
     }
 
     // Verify remaining elements are the odd numbers
@@ -929,9 +929,9 @@ test "ConcurrentSkipList: with string keys" {
     );
     defer list.deinit();
 
-    _ = try list.insert("apple", 1);
-    _ = try list.insert("banana", 2);
-    _ = try list.insert("cherry", 3);
+    _ = try list.insert(testing.io, "apple", 1);
+    _ = try list.insert(testing.io, "banana", 2);
+    _ = try list.insert(testing.io, "cherry", 3);
 
     try testing.expectEqual(@as(?i32, 1), list.get("apple"));
     try testing.expectEqual(@as(?i32, 2), list.get("banana"));
@@ -954,12 +954,12 @@ test "ConcurrentSkipList: remove first element preserves rest" {
     defer list.deinit();
 
     // Insert in order
-    _ = try list.insert(1, 10);
-    _ = try list.insert(2, 20);
-    _ = try list.insert(3, 30);
+    _ = try list.insert(testing.io, 1, 10);
+    _ = try list.insert(testing.io, 2, 20);
+    _ = try list.insert(testing.io, 3, 30);
 
     // Remove first (minimum) element
-    const removed = list.remove(1);
+    const removed = list.remove(testing.io, 1);
     try testing.expectEqual(@as(?i32, 10), removed);
 
     // Verify first is gone and rest remain
@@ -983,12 +983,12 @@ test "ConcurrentSkipList: remove last element preserves rest" {
     defer list.deinit();
 
     // Insert in order
-    _ = try list.insert(10, 100);
-    _ = try list.insert(20, 200);
-    _ = try list.insert(30, 300);
+    _ = try list.insert(testing.io, 10, 100);
+    _ = try list.insert(testing.io, 20, 200);
+    _ = try list.insert(testing.io, 30, 300);
 
     // Remove last (maximum) element
-    const removed = list.remove(30);
+    const removed = list.remove(testing.io, 30);
     try testing.expectEqual(@as(?i32, 300), removed);
 
     // Verify last is gone and rest remain
@@ -1037,7 +1037,7 @@ test "ConcurrentSkipList: insert many then remove all leaves empty" {
     // Insert 20 items
     var i: i32 = 0;
     while (i < 20) : (i += 1) {
-        _ = try list.insert(i, i * 10);
+        _ = try list.insert(testing.io, i, i * 10);
     }
 
     // Verify some items
@@ -1047,7 +1047,7 @@ test "ConcurrentSkipList: insert many then remove all leaves empty" {
     // Remove all 20 items
     i = 0;
     while (i < 20) : (i += 1) {
-        _ = list.remove(i);
+        _ = list.remove(testing.io, i);
     }
 
     // Verify all are gone
@@ -1074,9 +1074,9 @@ test "ConcurrentSkipList: init-deinit loop memory safety" {
         );
 
         // Insert three items
-        _ = try list.insert(1, 10);
-        _ = try list.insert(2, 20);
-        _ = try list.insert(3, 30);
+        _ = try list.insert(testing.io, 1, 10);
+        _ = try list.insert(testing.io, 2, 20);
+        _ = try list.insert(testing.io, 3, 30);
 
         // Get all three (verify non-null)
         try testing.expectEqual(@as(?i32, 10), list.get(1));
@@ -1084,7 +1084,7 @@ test "ConcurrentSkipList: init-deinit loop memory safety" {
         try testing.expectEqual(@as(?i32, 30), list.get(3));
 
         // Remove one item
-        const removed = list.remove(2);
+        const removed = list.remove(testing.io, 2);
         try testing.expectEqual(@as(?i32, 20), removed);
 
         // Verify removal
@@ -1111,7 +1111,7 @@ test "ConcurrentSkipList: same seed produces identical random-level sequence" {
 
     var i: usize = 0;
     while (i < 32) : (i += 1) {
-        try testing.expectEqual(list_a.randomLevel(), list_b.randomLevel());
+        try testing.expectEqual(list_a.randomLevel(testing.io), list_b.randomLevel(testing.io));
     }
 }
 
@@ -1134,7 +1134,7 @@ test "ConcurrentSkipList: different seeds diverge in random-level sequence" {
     var i: usize = 0;
     var diverged = false;
     while (i < 32) : (i += 1) {
-        if (list_a.randomLevel() != list_b.randomLevel()) diverged = true;
+        if (list_a.randomLevel(testing.io) != list_b.randomLevel(testing.io)) diverged = true;
     }
     try testing.expect(diverged);
 }
@@ -1154,8 +1154,8 @@ test "ConcurrentSkipList: same seed produces identical tree shape across insert 
 
     var i: i32 = 0;
     while (i < 40) : (i += 1) {
-        _ = try list_a.insert(i, i * 10);
-        _ = try list_b.insert(i, i * 10);
+        _ = try list_a.insert(testing.io, i, i * 10);
+        _ = try list_b.insert(testing.io, i, i * 10);
     }
 
     i = 0;
@@ -1193,21 +1193,21 @@ test "ConcurrentSkipList: pendingRetired reaches zero after single-threaded remo
     defer list.deinit();
 
     // Boundary: nothing retired yet before any remove.
-    try testing.expectEqual(@as(usize, 0), list.pendingRetired());
+    try testing.expectEqual(@as(usize, 0), list.pendingRetired(testing.io));
 
-    _ = try list.insert(1, 10);
-    _ = try list.insert(2, 20);
-    _ = try list.insert(3, 30);
+    _ = try list.insert(testing.io, 1, 10);
+    _ = try list.insert(testing.io, 2, 20);
+    _ = try list.insert(testing.io, 3, 30);
 
-    _ = list.remove(2);
+    _ = list.remove(testing.io, 2);
 
     // Single-threaded: no concurrent traversal ever holds the reader count above zero across
     // this call, so the bounded drain must retire the node deterministically -- poll instead of
     // asserting instantly-zero so this doesn't depend on the drain running synchronously inside
     // remove() itself, only on it completing promptly with no other thread involved.
     var attempts: usize = 0;
-    while (list.pendingRetired() != 0 and attempts < 1000) : (attempts += 1) {}
-    try testing.expectEqual(@as(usize, 0), list.pendingRetired());
+    while (list.pendingRetired(testing.io) != 0 and attempts < 1000) : (attempts += 1) {}
+    try testing.expectEqual(@as(usize, 0), list.pendingRetired(testing.io));
 }
 
 test "ConcurrentSkipList: remove reclaims retired nodes without leaking (issue #38)" {
@@ -1225,12 +1225,12 @@ test "ConcurrentSkipList: remove reclaims retired nodes without leaking (issue #
 
     var i: i32 = 0;
     while (i < key_count) : (i += 1) {
-        _ = try list.insert(i, i * 10);
+        _ = try list.insert(testing.io, i, i * 10);
     }
 
     i = 0;
     while (i < key_count) : (i += 1) {
-        const removed = list.remove(i);
+        const removed = list.remove(testing.io, i);
         try testing.expectEqual(@as(?i32, i * 10), removed);
     }
 
@@ -1254,17 +1254,17 @@ test "ConcurrentSkipList: second remove of an already-removed key returns null, 
     var list = try Instance.init(testing.allocator, .{}, .{ .seed = 3 });
     defer list.deinit();
 
-    _ = try list.insert(7, 700);
+    _ = try list.insert(testing.io, 7, 700);
 
-    const first = list.remove(7);
+    const first = list.remove(testing.io, 7);
     try testing.expectEqual(@as(?i32, 700), first);
 
     // Idempotency: a second remove of the same, already-logically-deleted key must not retire
     // the same node a second time (that would double-free once the batch drains).
-    const second = list.remove(7);
+    const second = list.remove(testing.io, 7);
     try testing.expectEqual(@as(?i32, null), second);
 
-    const third = list.remove(7);
+    const third = list.remove(testing.io, 7);
     try testing.expectEqual(@as(?i32, null), third);
 }
 
@@ -1279,12 +1279,12 @@ test "ConcurrentSkipList: insert after remove of same key is visible to get" {
     var list = try Instance.init(testing.allocator, .{}, .{ .seed = 5 });
     defer list.deinit();
 
-    _ = try list.insert(9, 90);
-    const removed = list.remove(9);
+    _ = try list.insert(testing.io, 9, 90);
+    const removed = list.remove(testing.io, 9);
     try testing.expectEqual(@as(?i32, 90), removed);
     try testing.expectEqual(@as(?i32, null), list.get(9));
 
-    const old = try list.insert(9, 999);
+    const old = try list.insert(testing.io, 9, 999);
     try testing.expectEqual(@as(?i32, null), old);
     try testing.expectEqual(@as(?i32, 999), list.get(9));
 }
@@ -1306,7 +1306,7 @@ test "ConcurrentSkipList: concurrent readers survive a remover reclaiming nodes,
 
     var k: i32 = 0;
     while (k < key_count) : (k += 1) {
-        _ = try list.insert(k, k * 10);
+        _ = try list.insert(testing.io, k, k * 10);
     }
 
     const ReaderCtx = struct {
@@ -1335,7 +1335,7 @@ test "ConcurrentSkipList: concurrent readers survive a remover reclaiming nodes,
         fn run(ctx: RemoverCtx) void {
             var key: i32 = 0;
             while (key < ctx.keys_max) : (key += 1) {
-                _ = ctx.list_ptr.remove(key);
+                _ = ctx.list_ptr.remove(testing.io, key);
             }
         }
     }.run;

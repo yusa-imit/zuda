@@ -8,7 +8,7 @@ const RedBlackTree = zuda.containers.trees.RedBlackTree;
 fn demo1BasicOperations() !void {
     std.debug.print("\n=== Demo 1: Basic Operations ===\n", .{});
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -67,7 +67,7 @@ fn demo1BasicOperations() !void {
 fn demo2ReverseIteration() !void {
     std.debug.print("\n=== Demo 2: Reverse Iteration ===\n", .{});
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -118,7 +118,7 @@ fn demo2ReverseIteration() !void {
 fn demo3CustomKeys() !void {
     std.debug.print("\n=== Demo 3: Leaderboard with Custom Keys ===\n", .{});
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -180,7 +180,7 @@ fn demo3CustomKeys() !void {
 fn demo4RangeQuery() !void {
     std.debug.print("\n=== Demo 4: Range Query (Manual Bounds) ===\n", .{});
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -230,7 +230,7 @@ fn demo4RangeQuery() !void {
 fn demo5SortedSet() !void {
     std.debug.print("\n=== Demo 5: Sorted Set Use Case (zoltraak) ===\n", .{});
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

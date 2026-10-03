@@ -8,7 +8,7 @@ const descriptive = zuda.stats.descriptive;
 const fft = zuda.signal.fft;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

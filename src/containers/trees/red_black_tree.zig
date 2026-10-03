@@ -585,7 +585,7 @@ pub fn RedBlackTree(
         /// Create an in-order iterator (sorted by key).
         /// Time: O(log n) for initialization | Space: O(log n)
         pub fn iterator(self: *const Self) !Iterator {
-            var stack: std.ArrayList(*Node) = .{}; // Zig 0.15 API
+            var stack: std.ArrayList(*Node) = .empty;
             errdefer stack.deinit(self.allocator);
 
             // Initialize stack with leftmost path
@@ -604,7 +604,7 @@ pub fn RedBlackTree(
         /// Create a reverse in-order iterator (sorted by key, descending).
         /// Time: O(log n) for initialization | Space: O(log n)
         pub fn reverseIterator(self: *const Self) !ReverseIterator {
-            var stack: std.ArrayList(*Node) = .{}; // Zig 0.15 API
+            var stack: std.ArrayList(*Node) = .empty;
             errdefer stack.deinit(self.allocator);
 
             // Initialize stack with rightmost path
@@ -919,15 +919,15 @@ test "RedBlackTree: stress test with random operations" {
     var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
 
-    var inserted_keys = std.AutoArrayHashMap(i32, bool).init(std.testing.allocator);
-    defer inserted_keys.deinit();
+    var inserted_keys = std.AutoArrayHashMapUnmanaged(i32, bool).empty;
+    defer inserted_keys.deinit(std.testing.allocator);
 
     // Insert 1000 random elements
     var i: usize = 0;
     while (i < 1000) : (i += 1) {
         const key = random.intRangeAtMost(i32, 0, 999);
         _ = try tree.insert(key, key * 2);
-        try inserted_keys.put(key, true);
+        try inserted_keys.put(std.testing.allocator, key, true);
 
         if (i % 100 == 0) {
             try tree.validate();
@@ -1108,13 +1108,13 @@ test "RedBlackTree reverseIterator stress test with 1000 random inserts" {
     var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
 
-    var inserted_keys = std.AutoArrayHashMap(i32, bool).init(std.testing.allocator);
-    defer inserted_keys.deinit();
+    var inserted_keys = std.AutoArrayHashMapUnmanaged(i32, bool).empty;
+    defer inserted_keys.deinit(std.testing.allocator);
 
     for (0..1000) |_| {
         const key = random.intRangeAtMost(i32, 0, 9999);
         _ = try tree.insert(key, key * 2);
-        try inserted_keys.put(key, true);
+        try inserted_keys.put(std.testing.allocator, key, true);
     }
 
     var iter = try tree.reverseIterator();
@@ -1190,7 +1190,7 @@ test "RedBlackTree reverseIterator consistency with forward iterator" {
     }
 
     // Collect forward iteration results
-    var forward_keys = std.ArrayList(i32){};
+    var forward_keys = std.ArrayList(i32).empty;
     defer forward_keys.deinit(std.testing.allocator);
 
     var fwd_iter = try tree.iterator();
@@ -1201,7 +1201,7 @@ test "RedBlackTree reverseIterator consistency with forward iterator" {
     }
 
     // Collect reverse iteration results
-    var backward_keys = std.ArrayList(i32){};
+    var backward_keys = std.ArrayList(i32).empty;
     defer backward_keys.deinit(std.testing.allocator);
 
     var rev_iter = try tree.reverseIterator();

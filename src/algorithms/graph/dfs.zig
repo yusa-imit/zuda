@@ -155,10 +155,10 @@ pub fn DFS(
             var parents = std.HashMap(V, V, HashMapContext, std.hash_map.default_max_load_percentage).initContext(allocator, hm_ctx);
             errdefer parents.deinit();
 
-            var visit_order: std.ArrayList(V) = .{};
+            var visit_order: std.ArrayList(V) = .empty;
             errdefer visit_order.deinit(allocator);
 
-            var finish_order: std.ArrayList(V) = .{};
+            var finish_order: std.ArrayList(V) = .empty;
             errdefer finish_order.deinit(allocator);
 
             var states = std.HashMap(V, State, HashMapContext, std.hash_map.default_max_load_percentage).initContext(allocator, hm_ctx);
@@ -169,7 +169,7 @@ pub fn DFS(
 
             // Explicit stack for iterative DFS
             const StackFrame = struct { v: V, first_visit: bool };
-            var stack: std.ArrayList(StackFrame) = .{};
+            var stack: std.ArrayList(StackFrame) = .empty;
             defer stack.deinit(allocator);
 
             try stack.append(allocator, .{ .v = start, .first_visit = true });

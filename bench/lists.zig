@@ -126,7 +126,7 @@ fn benchUnrolledLinkedListIterate(allocator: std.mem.Allocator) !void {
 }
 
 /// Benchmark: ConcurrentSkipList insert
-fn benchConcurrentSkipListInsert(allocator: std.mem.Allocator) !void {
+fn benchConcurrentSkipListInsert(io: std.Io, allocator: std.mem.Allocator) !void {
     var list = try ConcurrentSkipList(i64, i64, IntContext, IntContext.compare)
         .init(allocator, .{}, .{ .seed = 42 });
     defer list.deinit();
@@ -138,13 +138,14 @@ fn benchConcurrentSkipListInsert(allocator: std.mem.Allocator) !void {
     var i: usize = 0;
     while (i < count) : (i += 1) {
         const value = random.int(i64);
-        _ = try list.insert(value, value);
+        _ = try list.insert(io, value, value);
     }
 }
 
 /// Run all list benchmarks
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -154,7 +155,7 @@ pub fn main() !void {
 
     // SkipList insert
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -169,7 +170,7 @@ pub fn main() !void {
 
     // SkipList search
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -184,7 +185,7 @@ pub fn main() !void {
 
     // XorLinkedList push
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -199,7 +200,7 @@ pub fn main() !void {
 
     // XorLinkedList iterate
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -214,7 +215,7 @@ pub fn main() !void {
 
     // UnrolledLinkedList insert
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -229,7 +230,7 @@ pub fn main() !void {
 
     // UnrolledLinkedList iterate
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
@@ -244,14 +245,14 @@ pub fn main() !void {
 
     // ConcurrentSkipList insert
     {
-        var benchmark = try bench.Benchmark.init(allocator, .{
+        var benchmark = try bench.Benchmark.init(io, allocator, .{
             .warmup_iterations = 2,
             .min_iterations = 5,
             .max_iterations = 10,
         });
         defer benchmark.deinit();
 
-        const result = try benchmark.run(benchConcurrentSkipListInsert, .{allocator});
+        const result = try benchmark.run(benchConcurrentSkipListInsert, .{ io, allocator });
         const ns_per_op = @divFloor(result.mean_ns, 100_000);
         const status = if (ns_per_op <= 1000) "✓ PASS" else "⚠ SLOW";
         std.debug.print("| ConcurrentSkipList | insert | {d} | {s} |\n", .{ ns_per_op, status });

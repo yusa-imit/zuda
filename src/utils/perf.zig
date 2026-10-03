@@ -14,21 +14,19 @@ const testing = std.testing;
 ///
 /// Example:
 /// ```zig
-/// const ns = try perf.timeFn(allocator, myFunction, .{arg1, arg2});
+/// const ns = try perf.timeFn(io, myFunction, .{arg1, arg2});
 /// std.debug.print("Took {} ns\n", .{ns});
 /// ```
 pub fn timeFn(
-    allocator: std.mem.Allocator,
+    io: std.Io,
     comptime func: anytype,
     args: anytype,
 ) !u64 {
-    _ = allocator; // For future use if function needs allocator
-
-    const start = std.time.nanoTimestamp();
+    const start = std.Io.Clock.awake.now(io);
     _ = @call(.auto, func, args);
-    const end = std.time.nanoTimestamp();
+    const end = std.Io.Clock.awake.now(io);
 
-    return @intCast(end - start);
+    return @intCast(end.nanoseconds - start.nanoseconds);
 }
 
 /// Measure execution time with multiple iterations (warmup + bench)
@@ -36,14 +34,12 @@ pub fn timeFn(
 ///
 /// Returns the minimum time observed (best case)
 pub fn timeFnIters(
-    allocator: std.mem.Allocator,
+    io: std.Io,
     comptime func: anytype,
     args: anytype,
     warmup: usize,
     iterations: usize,
 ) !u64 {
-    _ = allocator;
-
     // Warmup
     for (0..warmup) |_| {
         _ = @call(.auto, func, args);
@@ -52,11 +48,11 @@ pub fn timeFnIters(
     // Benchmark - track minimum
     var min_time: u64 = std.math.maxInt(u64);
     for (0..iterations) |_| {
-        const start = std.time.nanoTimestamp();
+        const start = std.Io.Clock.awake.now(io);
         _ = @call(.auto, func, args);
-        const end = std.time.nanoTimestamp();
+        const end = std.Io.Clock.awake.now(io);
 
-        const elapsed: u64 = @intCast(end - start);
+        const elapsed: u64 = @intCast(end.nanoseconds - start.nanoseconds);
         if (elapsed < min_time) {
             min_time = elapsed;
         }
@@ -255,18 +251,18 @@ pub const AllocTracker = struct {
 ///
 /// Example:
 /// ```zig
-/// try perf.expectFaster(allocator, fastFn, .{}, slowFn, .{}, 1000);
+/// try perf.expectFaster(io, fastFn, .{}, slowFn, .{}, 1000);
 /// ```
 pub fn expectFaster(
-    allocator: std.mem.Allocator,
+    io: std.Io,
     comptime fast_fn: anytype,
     fast_args: anytype,
     comptime slow_fn: anytype,
     slow_args: anytype,
     iterations: usize,
 ) !void {
-    const fast_time = try timeFnIters(allocator, fast_fn, fast_args, 10, iterations);
-    const slow_time = try timeFnIters(allocator, slow_fn, slow_args, 10, iterations);
+    const fast_time = try timeFnIters(io, fast_fn, fast_args, 10, iterations);
+    const slow_time = try timeFnIters(io, slow_fn, slow_args, 10, iterations);
 
     if (fast_time >= slow_time) {
         return error.TestExpectedFaster;
@@ -294,9 +290,7 @@ fn fastFunction() u64 {
 }
 
 test "timeFn measures execution time" {
-    const allocator = testing.allocator;
-
-    const time_ns = try timeFn(allocator, slowFunction, .{});
+    const time_ns = try timeFn(testing.io, slowFunction, .{});
 
     // Should take at least some time (not zero)
     // Note: May be 0 in optimized builds due to compiler optimization
@@ -304,9 +298,7 @@ test "timeFn measures execution time" {
 }
 
 test "timeFnIters with warmup and iterations" {
-    const allocator = testing.allocator;
-
-    const time_ns = try timeFnIters(allocator, slowFunction, .{}, 5, 10);
+    const time_ns = try timeFnIters(testing.io, slowFunction, .{}, 5, 10);
 
     // Should return minimum time from iterations
     // Note: May be 0 in optimized builds
@@ -386,9 +378,9 @@ test "AllocTracker report writes to a writer" {
     defer alloc.free(mem);
 
     var buffer: [512]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    try tracker.report(stream.writer());
-    const output = stream.getWritten();
+    var writer = std.Io.Writer.fixed(&buffer);
+    try tracker.report(&writer);
+    const output = writer.buffered();
 
     try testing.expect(std.mem.indexOf(u8, output, "AllocTracker Report") != null);
     try testing.expect(std.mem.indexOf(u8, output, "Allocations: 1") != null);
@@ -425,22 +417,18 @@ test "AllocTracker with ArrayList" {
 }
 
 test "expectFaster detects performance difference" {
-    const allocator = testing.allocator;
-
     // This should pass: fastFunction is faster than slowFunction
     // Note: In optimized builds both may be equal, so we don't assert
-    _ = expectFaster(allocator, fastFunction, .{}, slowFunction, .{}, 100) catch |err| {
+    _ = expectFaster(testing.io, fastFunction, .{}, slowFunction, .{}, 100) catch |err| {
         // Allow TestExpectedFaster in case compiler optimizes both equally
         if (err != error.TestExpectedFaster) return err;
     };
 }
 
 test "expectFaster fails when reversed" {
-    const allocator = testing.allocator;
-
     // This should fail: slowFunction is NOT faster than fastFunction
     // Note: In optimized builds both may be equal
-    _ = expectFaster(allocator, slowFunction, .{}, fastFunction, .{}, 100) catch |err| {
+    _ = expectFaster(testing.io, slowFunction, .{}, fastFunction, .{}, 100) catch |err| {
         // Expecting TestExpectedFaster error
         try testing.expectEqual(error.TestExpectedFaster, err);
         return;
@@ -449,15 +437,13 @@ test "expectFaster fails when reversed" {
 }
 
 test "timeFn with arguments" {
-    const allocator = testing.allocator;
-
     const Adder = struct {
         fn add(a: i32, b: i32) i32 {
             return a + b;
         }
     };
 
-    const time_ns = try timeFn(allocator, Adder.add, .{ 5, 3 });
+    const time_ns = try timeFn(testing.io, Adder.add, .{ 5, 3 });
 
     // Should complete in reasonable time
     try testing.expect(time_ns >= 0);
