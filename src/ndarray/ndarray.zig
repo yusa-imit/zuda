@@ -34,9 +34,7 @@ const AllocatorError = mem.Allocator.Error;
 const mem = stdlib.mem;
 const math = stdlib.math;
 const debug = stdlib.debug;
-const fs = stdlib.fs;
 const fmt = stdlib.fmt;
-const io = stdlib.io;
 const builtin = stdlib.builtin;
 const sorting = stdlib.sort;
 
@@ -1362,7 +1360,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = self.data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = false,
+                .owned = false,
             };
         }
 
@@ -1420,8 +1418,8 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                     .data = new_data,
                     .allocator = self.allocator,
                     .layout = self.layout,
-                                .owned = true,
-            };
+                    .owned = true,
+                };
             }
 
             // Non-contiguous: allocate new buffer and copy elements
@@ -1442,7 +1440,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = new_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = true,
+                .owned = true,
             };
         }
 
@@ -1693,7 +1691,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = true,
+                .owned = true,
             };
         }
 
@@ -1726,7 +1724,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = true,
+                .owned = true,
             };
         }
 
@@ -1767,7 +1765,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = true,
+                .owned = true,
             };
         }
 
@@ -1806,7 +1804,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = true,
+                .owned = true,
             };
         }
 
@@ -1845,7 +1843,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = true,
+                .owned = true,
             };
         }
 
@@ -1887,7 +1885,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = true,
+                .owned = true,
             };
         }
 
@@ -2058,7 +2056,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = true,
+                .owned = true,
             };
         }
 
@@ -2097,7 +2095,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = true,
+                .owned = true,
             };
         }
 
@@ -2136,7 +2134,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = true,
+                .owned = true,
             };
         }
 
@@ -2168,7 +2166,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = true,
+                .owned = true,
             };
         }
 
@@ -2200,7 +2198,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = true,
+                .owned = true,
             };
         }
 
@@ -2232,7 +2230,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = true,
+                .owned = true,
             };
         }
 
@@ -2277,7 +2275,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = true,
+                .owned = true,
             };
         }
 
@@ -2527,7 +2525,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = true,
+                .owned = true,
             };
         }
 
@@ -2559,7 +2557,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = result_data,
                 .allocator = self.allocator,
                 .layout = self.layout,
-                            .owned = true,
+                .owned = true,
             };
         }
 
@@ -2724,47 +2722,47 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// - count * sizeof(T) bytes: data
         ///
         /// Time: O(n) | Space: O(1) - writes directly to file
-        pub fn save(self: *const Self, path: []const u8) !void {
-            const file = try fs.cwd().createFile(path, .{});
-            defer file.close();
+        pub fn save(self: *const Self, io: stdlib.Io, path: []const u8) !void {
+            const file = try stdlib.Io.Dir.cwd().createFile(io, path, .{});
+            defer file.close(io);
 
             // Write magic number "NDAR" (4 bytes)
             var magic_bytes: [4]u8 = undefined;
             mem.writeInt(u32, &magic_bytes, 0x4E444152, .little);
-            _ = try file.write(&magic_bytes);
+            try file.writeStreamingAll(io, &magic_bytes);
 
             // Write version (1) (4 bytes)
             var version_bytes: [4]u8 = undefined;
             mem.writeInt(u32, &version_bytes, 1, .little);
-            _ = try file.write(&version_bytes);
+            try file.writeStreamingAll(io, &version_bytes);
 
             // Write ndim (1 byte)
-            _ = try file.write(&[_]u8{@intCast(ndim)});
+            try file.writeStreamingAll(io, &[_]u8{@intCast(ndim)});
 
             // Write type tag (1 byte)
             const type_tag = TypeTag.fromType(T);
-            _ = try file.write(&[_]u8{@intFromEnum(type_tag)});
+            try file.writeStreamingAll(io, &[_]u8{@intFromEnum(type_tag)});
 
             // Write layout (1 byte) - 0=row_major, 1=column_major
-            _ = try file.write(&[_]u8{if (self.layout == .row_major) 0 else 1});
+            try file.writeStreamingAll(io, &[_]u8{if (self.layout == .row_major) 0 else 1});
 
             // Write shape array
             for (self.shape) |dim| {
                 var dim_bytes: [@sizeOf(usize)]u8 = undefined;
                 mem.writeInt(usize, &dim_bytes, dim, .little);
-                _ = try file.write(&dim_bytes);
+                try file.writeStreamingAll(io, &dim_bytes);
             }
 
             // Write strides array
             for (self.strides) |stride| {
                 var stride_bytes: [@sizeOf(usize)]u8 = undefined;
                 mem.writeInt(usize, &stride_bytes, stride, .little);
-                _ = try file.write(&stride_bytes);
+                try file.writeStreamingAll(io, &stride_bytes);
             }
 
             // Write data
             const bytes = mem.sliceAsBytes(self.data);
-            _ = try file.write(bytes);
+            try file.writeStreamingAll(io, bytes);
         }
 
         /// Load NDArray from binary file
@@ -2779,13 +2777,16 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// - error.TypeMismatch if file type doesn't match T
         ///
         /// Time: O(n) | Space: O(n) for data allocation
-        pub fn load(allocator: mem.Allocator, path: []const u8) !Self {
-            const file = try fs.cwd().openFile(path, .{});
-            defer file.close();
+        pub fn load(io: stdlib.Io, allocator: mem.Allocator, path: []const u8) !Self {
+            const file = try stdlib.Io.Dir.cwd().openFile(io, path, .{});
+            defer file.close(io);
+
+            var reader_buffer: [4096]u8 = undefined;
+            var file_reader = file.reader(io, &reader_buffer);
 
             // Read and validate magic number (4 bytes)
             var magic_bytes: [4]u8 = undefined;
-            _ = try file.read(&magic_bytes);
+            try read_exact(&file_reader, &magic_bytes);
             const magic = mem.readInt(u32, &magic_bytes, .little);
             if (magic != 0x4E444152) {
                 return error.InvalidFormat;
@@ -2793,7 +2794,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
 
             // Read and validate version (4 bytes)
             var version_bytes: [4]u8 = undefined;
-            _ = try file.read(&version_bytes);
+            try read_exact(&file_reader, &version_bytes);
             const version = mem.readInt(u32, &version_bytes, .little);
             if (version != 1) {
                 return error.UnsupportedVersion;
@@ -2801,7 +2802,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
 
             // Read ndim (1 byte)
             var ndim_byte: [1]u8 = undefined;
-            _ = try file.read(&ndim_byte);
+            try read_exact(&file_reader, &ndim_byte);
             const file_ndim = ndim_byte[0];
             if (file_ndim != ndim) {
                 return error.DimensionMismatch;
@@ -2809,7 +2810,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
 
             // Read and validate type tag (1 byte)
             var type_tag_byte: [1]u8 = undefined;
-            _ = try file.read(&type_tag_byte);
+            try read_exact(&file_reader, &type_tag_byte);
             const file_type_tag: TypeTag = @enumFromInt(type_tag_byte[0]);
             const expected_type_tag = TypeTag.fromType(T);
             if (file_type_tag != expected_type_tag) {
@@ -2818,14 +2819,14 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
 
             // Read layout (1 byte)
             var layout_byte: [1]u8 = undefined;
-            _ = try file.read(&layout_byte);
+            try read_exact(&file_reader, &layout_byte);
             const layout: Layout = if (layout_byte[0] == 0) .row_major else .column_major;
 
             // Read shape
             var shape: [ndim]usize = undefined;
             for (0..ndim) |i| {
                 var dim_bytes: [@sizeOf(usize)]u8 = undefined;
-                _ = try file.read(&dim_bytes);
+                try read_exact(&file_reader, &dim_bytes);
                 shape[i] = mem.readInt(usize, &dim_bytes, .little);
             }
 
@@ -2833,7 +2834,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             var strides: [ndim]usize = undefined;
             for (0..ndim) |i| {
                 var stride_bytes: [@sizeOf(usize)]u8 = undefined;
-                _ = try file.read(&stride_bytes);
+                try read_exact(&file_reader, &stride_bytes);
                 strides[i] = mem.readInt(usize, &stride_bytes, .little);
             }
 
@@ -2848,10 +2849,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             errdefer allocator.free(data);
 
             const bytes = mem.sliceAsBytes(data);
-            const bytes_read = try file.read(bytes);
-            if (bytes_read != bytes.len) {
-                return error.UnexpectedEOF;
-            }
+            try read_exact(&file_reader, bytes);
 
             return Self{
                 .shape = shape,
@@ -2859,7 +2857,15 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .data = data,
                 .allocator = allocator,
                 .layout = layout,
-                            .owned = true,
+                .owned = true,
+            };
+        }
+
+        /// Fill `buffer` from `file_reader`; a short file is `error.UnexpectedEOF`.
+        fn read_exact(file_reader: *stdlib.Io.File.Reader, buffer: []u8) !void {
+            file_reader.interface.readSliceAll(buffer) catch |err| switch (err) {
+                error.EndOfStream => return error.UnexpectedEOF,
+                error.ReadFailed => return file_reader.err.?,
             };
         }
 
@@ -2869,6 +2875,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Only works for 2D arrays. Use delimiter parameter to customize separator.
         ///
         /// Parameters:
+        /// - io: I/O implementation used to write the file
         /// - path: File path to write CSV
         /// - delimiter: Character to separate values (default: ',')
         ///
@@ -2877,21 +2884,21 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// - File system errors
         ///
         /// Time: O(rows × cols) | Space: O(1) streaming write
-        pub fn toCSV(self: *const Self, path: []const u8, delimiter: u8) !void {
+        pub fn toCSV(self: *const Self, io: stdlib.Io, path: []const u8, delimiter: u8) !void {
             // Only 2D arrays can be saved as CSV
             if (ndim != 2) {
                 return error.DimensionMismatch;
             }
 
-            const file = try fs.cwd().createFile(path, .{});
-            defer file.close();
+            const file = try stdlib.Io.Dir.cwd().createFile(io, path, .{});
+            defer file.close(io);
 
             const rows = self.shape[0];
             const cols = self.shape[1];
 
             var buf: [4096]u8 = undefined;
-            var fbs = io.fixedBufferStream(&buf);
-            const writer = fbs.writer();
+            var file_writer = file.writer(io, &buf);
+            const writer = &file_writer.interface;
 
             for (0..rows) |r| {
                 for (0..cols) |c| {
@@ -2913,18 +2920,9 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                     }
                 }
                 try writer.writeByte('\n');
-
-                // Flush buffer when it gets reasonably full
-                if (fbs.pos > 3000) {
-                    _ = try file.write(fbs.getWritten());
-                    fbs.reset();
-                }
             }
 
-            // Flush remaining data
-            if (fbs.pos > 0) {
-                _ = try file.write(fbs.getWritten());
-            }
+            try writer.flush();
         }
 
         /// Load 2D NDArray from CSV file
@@ -2934,6 +2932,7 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// Supports custom delimiters (default: ',').
         ///
         /// Parameters:
+        /// - io: I/O implementation used to read the file
         /// - allocator: Memory allocator for data
         /// - path: File path to read CSV
         /// - delimiter: Character separating values (default: ',')
@@ -2946,18 +2945,20 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
         /// - error.EmptyArray if file is empty
         ///
         /// Time: O(rows × cols) | Space: O(rows × cols)
-        pub fn fromCSV(allocator: mem.Allocator, path: []const u8, delimiter: u8) !Self {
+        pub fn fromCSV(io: stdlib.Io, allocator: mem.Allocator, path: []const u8, delimiter: u8) !Self {
             // Only 2D arrays can be loaded from CSV
             if (ndim != 2) {
                 return error.DimensionMismatch;
             }
 
-            const file = try fs.cwd().openFile(path, .{});
-            defer file.close();
-
             // Read entire file into memory
             const max_size = 100 * 1024 * 1024; // 100 MB limit
-            const contents = try file.readToEndAlloc(allocator, max_size);
+            const contents = try stdlib.Io.Dir.cwd().readFileAlloc(
+                io,
+                path,
+                allocator,
+                .limited(max_size),
+            );
             defer allocator.free(contents);
 
             if (contents.len == 0) {
@@ -5871,7 +5872,6 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
             }
         }
 
-
         // -- Iterator Protocol --
 
         /// Iterator type for traversing NDArray elements
@@ -6067,7 +6067,6 @@ pub fn NDArray(comptime T: type, comptime ndim: usize) type {
                 .owned = false, // View shares data
             };
         }
-
 
         /// Add a dimension of size 1 at the specified axis
         ///
@@ -10372,10 +10371,6 @@ test "ndarray: iterator works in nested loop structure" {
 
 // -- reshape() Function Tests (15+ tests) --
 
-
-
-
-
 test "ndarray: reshape [3,4] → [2,6] changes layout composition" {
     const allocator = testing.allocator;
     var arr = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 4 }, .row_major);
@@ -10392,8 +10387,6 @@ test "ndarray: reshape [3,4] → [2,6] changes layout composition" {
     try testing.expectEqual(6, reshaped.shape[1]);
     try testing.expectEqual(12, reshaped.count());
 }
-
-
 
 test "ndarray: reshape uses zero-copy for contiguous arrays (memory safety)" {
     const allocator = testing.allocator;
@@ -10483,7 +10476,6 @@ test "ndarray: reshape after zeros() creation" {
     }
 }
 
-
 test "ndarray: reshape no memory leak with multiple allocations" {
     const allocator = testing.allocator;
 
@@ -10519,7 +10511,6 @@ test "ndarray: transpose 2D row-major [2,3] → [3,2] shape correct" {
     try testing.expectEqual(3, transposed.shape[0]);
     try testing.expectEqual(2, transposed.shape[1]);
 }
-
 
 test "ndarray: transpose 3D [2,3,4] → [4,3,2] shape correct" {
     const allocator = testing.allocator;
@@ -10563,7 +10554,6 @@ test "ndarray: transpose zero-copy (same data pointer)" {
     // Data pointer must be identical (zero-copy view)
     try testing.expectEqual(arr.data.ptr, transposed.data.ptr);
 }
-
 
 test "ndarray: transpose 2D row-major strides swap correctly" {
     const allocator = testing.allocator;
@@ -10702,29 +10692,9 @@ test "ndarray: transpose no memory leak with multiple transposes" {
 // flatten() Tests - Convert multi-dimensional array to 1D
 // ============================================================================
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // ============================================================================
 // TESTS FOR ravel() — Always-Copy Flatten Semantics
 // ============================================================================
-
-
-
-
-
-
 
 test "ndarray: ravel empty-dimension array [0,5] error handling" {
     const allocator = testing.allocator;
@@ -10735,37 +10705,9 @@ test "ndarray: ravel empty-dimension array [0,5] error handling" {
     try testing.expectError(error.ZeroDimension, result);
 }
 
-
-
-
-
 // -- permute() Function Tests (12+ tests) --
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 // -- contiguous() Tests --
-
-
-
-
-
-
-
-
-
-
-
 
 test "ndarray: contiguous distinguishes contiguous from non-contiguous views" {
     const allocator = stdlib.testing.allocator;
@@ -10929,7 +10871,7 @@ test "ndarray: sub 1D arrays element-wise" {
     defer result.deinit();
 
     // Verify subtraction: a - b
-    try testing.expectEqual(9.0, result.data[0]);  // 10-1
+    try testing.expectEqual(9.0, result.data[0]); // 10-1
     try testing.expectEqual(18.0, result.data[1]); // 20-2
     try testing.expectEqual(27.0, result.data[2]); // 30-3
     try testing.expectEqual(36.0, result.data[3]); // 40-4
@@ -10955,10 +10897,10 @@ test "ndarray: sub 2D arrays element-wise" {
     var result = try a.sub(&b);
     defer result.deinit();
 
-    try testing.expectEqual(90, result.data[0]);   // 100-10
-    try testing.expectEqual(180, result.data[1]);  // 200-20
-    try testing.expectEqual(270, result.data[2]);  // 300-30
-    try testing.expectEqual(360, result.data[3]);  // 400-40
+    try testing.expectEqual(90, result.data[0]); // 100-10
+    try testing.expectEqual(180, result.data[1]); // 200-20
+    try testing.expectEqual(270, result.data[2]); // 300-30
+    try testing.expectEqual(360, result.data[3]); // 400-40
 }
 
 test "ndarray: mul 1D arrays element-wise" {
@@ -11003,12 +10945,12 @@ test "ndarray: mul 2D arrays element-wise" {
     var result = try a.mul(&b);
     defer result.deinit();
 
-    try testing.expectEqual(2, result.data[0]);   // 1*2
-    try testing.expectEqual(4, result.data[1]);   // 2*2
-    try testing.expectEqual(6, result.data[2]);   // 3*2
-    try testing.expectEqual(8, result.data[3]);   // 4*2
-    try testing.expectEqual(10, result.data[4]);  // 5*2
-    try testing.expectEqual(12, result.data[5]);  // 6*2
+    try testing.expectEqual(2, result.data[0]); // 1*2
+    try testing.expectEqual(4, result.data[1]); // 2*2
+    try testing.expectEqual(6, result.data[2]); // 3*2
+    try testing.expectEqual(8, result.data[3]); // 4*2
+    try testing.expectEqual(10, result.data[4]); // 5*2
+    try testing.expectEqual(12, result.data[5]); // 6*2
 }
 
 test "ndarray: div 1D arrays element-wise" {
@@ -11057,10 +10999,10 @@ test "ndarray: div 2D arrays element-wise" {
     var result = try a.div(&b);
     defer result.deinit();
 
-    try testing.expectEqual(5.0, result.data[0]);   // 10/2
-    try testing.expectEqual(5.0, result.data[1]);   // 20/4
-    try testing.expectEqual(6.0, result.data[2]);   // 30/5
-    try testing.expectEqual(5.0, result.data[3]);   // 40/8
+    try testing.expectEqual(5.0, result.data[0]); // 10/2
+    try testing.expectEqual(5.0, result.data[1]); // 20/4
+    try testing.expectEqual(6.0, result.data[2]); // 30/5
+    try testing.expectEqual(5.0, result.data[3]); // 40/8
 }
 
 test "ndarray: mod 1D integer arrays element-wise" {
@@ -11079,11 +11021,11 @@ test "ndarray: mod 1D integer arrays element-wise" {
     var result = try a.mod(&b);
     defer result.deinit();
 
-    try testing.expectEqual(1, result.data[0]);  // 10 % 3
-    try testing.expectEqual(2, result.data[1]);  // 11 % 3
-    try testing.expectEqual(0, result.data[2]);  // 12 % 3
-    try testing.expectEqual(1, result.data[3]);  // 13 % 3
-    try testing.expectEqual(2, result.data[4]);  // 14 % 3
+    try testing.expectEqual(1, result.data[0]); // 10 % 3
+    try testing.expectEqual(2, result.data[1]); // 11 % 3
+    try testing.expectEqual(0, result.data[2]); // 12 % 3
+    try testing.expectEqual(1, result.data[3]); // 13 % 3
+    try testing.expectEqual(2, result.data[4]); // 14 % 3
 
     try testing.expect(result.data.ptr != a.data.ptr);
     try testing.expect(result.data.ptr != b.data.ptr);
@@ -11110,10 +11052,10 @@ test "ndarray: mod 2D integer arrays element-wise" {
     var result = try a.mod(&b);
     defer result.deinit();
 
-    try testing.expectEqual(2, result.data[0]);  // 5 % 3
-    try testing.expectEqual(2, result.data[1]);  // 10 % 4
-    try testing.expectEqual(1, result.data[2]);  // 15 % 7
-    try testing.expectEqual(2, result.data[3]);  // 20 % 6
+    try testing.expectEqual(2, result.data[0]); // 5 % 3
+    try testing.expectEqual(2, result.data[1]); // 10 % 4
+    try testing.expectEqual(1, result.data[2]); // 15 % 7
+    try testing.expectEqual(2, result.data[3]); // 20 % 6
 }
 
 test "ndarray: neg 1D array unary negation" {
@@ -11139,7 +11081,6 @@ test "ndarray: neg 1D array unary negation" {
 
     try testing.expect(result.data.ptr != a.data.ptr);
 }
-
 
 test "ndarray: abs 1D array absolute value" {
     const allocator = testing.allocator;
@@ -11319,10 +11260,10 @@ test "ndarray: pow 1D array power with exponent" {
     var result = try a.pow(3.0);
     defer result.deinit();
 
-    try testing.expectEqual(1.0, result.data[0]);   // 1^3 = 1
-    try testing.expectEqual(8.0, result.data[1]);   // 2^3 = 8
-    try testing.expectEqual(27.0, result.data[2]);  // 3^3 = 27
-    try testing.expectEqual(64.0, result.data[3]);  // 4^3 = 64
+    try testing.expectEqual(1.0, result.data[0]); // 1^3 = 1
+    try testing.expectEqual(8.0, result.data[1]); // 2^3 = 8
+    try testing.expectEqual(27.0, result.data[2]); // 3^3 = 27
+    try testing.expectEqual(64.0, result.data[3]); // 4^3 = 64
 
     try testing.expect(result.data.ptr != a.data.ptr);
 }
@@ -11340,10 +11281,10 @@ test "ndarray: pow 2D array power with exponent" {
     var result = try a.pow(2.0);
     defer result.deinit();
 
-    try testing.expectEqual(4.0, result.data[0]);   // 2^2 = 4
-    try testing.expectEqual(9.0, result.data[1]);   // 3^2 = 9
-    try testing.expectEqual(16.0, result.data[2]);  // 4^2 = 16
-    try testing.expectEqual(25.0, result.data[3]);  // 5^2 = 25
+    try testing.expectEqual(4.0, result.data[0]); // 2^2 = 4
+    try testing.expectEqual(9.0, result.data[1]); // 3^2 = 9
+    try testing.expectEqual(16.0, result.data[2]); // 4^2 = 16
+    try testing.expectEqual(25.0, result.data[3]); // 5^2 = 25
 }
 
 test "ndarray: pow with fractional exponent" {
@@ -11378,12 +11319,12 @@ test "ndarray: floor 1D array rounding down" {
     var result = try a.floor();
     defer result.deinit();
 
-    try testing.expectEqual(2.0, result.data[0]);  // floor(2.3) = 2
-    try testing.expectEqual(2.0, result.data[1]);  // floor(2.7) = 2
+    try testing.expectEqual(2.0, result.data[0]); // floor(2.3) = 2
+    try testing.expectEqual(2.0, result.data[1]); // floor(2.7) = 2
     try testing.expectEqual(-3.0, result.data[2]); // floor(-2.3) = -3
     try testing.expectEqual(-3.0, result.data[3]); // floor(-2.7) = -3
-    try testing.expectEqual(5.0, result.data[4]);  // floor(5.0) = 5
-    try testing.expectEqual(0.0, result.data[5]);  // floor(0.0) = 0
+    try testing.expectEqual(5.0, result.data[4]); // floor(5.0) = 5
+    try testing.expectEqual(0.0, result.data[5]); // floor(0.0) = 0
 }
 
 test "ndarray: ceil 1D array rounding up" {
@@ -11401,12 +11342,12 @@ test "ndarray: ceil 1D array rounding up" {
     var result = try a.ceil();
     defer result.deinit();
 
-    try testing.expectEqual(3.0, result.data[0]);  // ceil(2.3) = 3
-    try testing.expectEqual(3.0, result.data[1]);  // ceil(2.7) = 3
+    try testing.expectEqual(3.0, result.data[0]); // ceil(2.3) = 3
+    try testing.expectEqual(3.0, result.data[1]); // ceil(2.7) = 3
     try testing.expectEqual(-2.0, result.data[2]); // ceil(-2.3) = -2
     try testing.expectEqual(-2.0, result.data[3]); // ceil(-2.7) = -2
-    try testing.expectEqual(5.0, result.data[4]);  // ceil(5.0) = 5
-    try testing.expectEqual(0.0, result.data[5]);  // ceil(0.0) = 0
+    try testing.expectEqual(5.0, result.data[4]); // ceil(5.0) = 5
+    try testing.expectEqual(0.0, result.data[5]); // ceil(0.0) = 0
 }
 
 test "ndarray: round 1D array rounding to nearest" {
@@ -11418,22 +11359,22 @@ test "ndarray: round 1D array rounding to nearest" {
     a.data[1] = 2.7;
     a.data[2] = -2.3;
     a.data[3] = -2.7;
-    a.data[4] = 2.5;   // round half away from zero: rounds to 3
-    a.data[5] = 3.5;   // round half away from zero: rounds to 4
+    a.data[4] = 2.5; // round half away from zero: rounds to 3
+    a.data[5] = 3.5; // round half away from zero: rounds to 4
     a.data[6] = 5.0;
     a.data[7] = 0.0;
 
     var result = try a.round();
     defer result.deinit();
 
-    try testing.expectEqual(2.0, result.data[0]);  // round(2.3) = 2
-    try testing.expectEqual(3.0, result.data[1]);  // round(2.7) = 3
+    try testing.expectEqual(2.0, result.data[0]); // round(2.3) = 2
+    try testing.expectEqual(3.0, result.data[1]); // round(2.7) = 3
     try testing.expectEqual(-2.0, result.data[2]); // round(-2.3) = -2
     try testing.expectEqual(-3.0, result.data[3]); // round(-2.7) = -3
-    try testing.expectEqual(3.0, result.data[4]);  // round(2.5) = 3 (away from zero)
-    try testing.expectEqual(4.0, result.data[5]);  // round(3.5) = 4 (away from zero)
-    try testing.expectEqual(5.0, result.data[6]);  // round(5.0) = 5
-    try testing.expectEqual(0.0, result.data[7]);  // round(0.0) = 0
+    try testing.expectEqual(3.0, result.data[4]); // round(2.5) = 3 (away from zero)
+    try testing.expectEqual(4.0, result.data[5]); // round(3.5) = 4 (away from zero)
+    try testing.expectEqual(5.0, result.data[6]); // round(5.0) = 5
+    try testing.expectEqual(0.0, result.data[7]); // round(0.0) = 0
 }
 
 test "ndarray: trunc 1D array truncating toward zero" {
@@ -11451,12 +11392,12 @@ test "ndarray: trunc 1D array truncating toward zero" {
     var result = try a.trunc();
     defer result.deinit();
 
-    try testing.expectEqual(2.0, result.data[0]);  // trunc(2.3) = 2
-    try testing.expectEqual(2.0, result.data[1]);  // trunc(2.7) = 2
+    try testing.expectEqual(2.0, result.data[0]); // trunc(2.3) = 2
+    try testing.expectEqual(2.0, result.data[1]); // trunc(2.7) = 2
     try testing.expectEqual(-2.0, result.data[2]); // trunc(-2.3) = -2
     try testing.expectEqual(-2.0, result.data[3]); // trunc(-2.7) = -2
-    try testing.expectEqual(5.0, result.data[4]);  // trunc(5.0) = 5
-    try testing.expectEqual(0.0, result.data[5]);  // trunc(0.0) = 0
+    try testing.expectEqual(5.0, result.data[4]); // trunc(5.0) = 5
+    try testing.expectEqual(0.0, result.data[5]); // trunc(0.0) = 0
 }
 
 test "ndarray: floor 2D array with memory safety" {
@@ -11605,11 +11546,11 @@ test "ndarray: clip basic functionality" {
 
     try testing.expectEqual(@as(f64, -2.0), result.data[0]); // -5 clipped to -2
     try testing.expectEqual(@as(f64, -2.0), result.data[1]); // -2 stays -2
-    try testing.expectEqual(@as(f64, 0.0), result.data[2]);  // 0 stays 0
-    try testing.expectEqual(@as(f64, 1.5), result.data[3]);  // 1.5 stays 1.5
-    try testing.expectEqual(@as(f64, 3.0), result.data[4]);  // 3 stays 3
-    try testing.expectEqual(@as(f64, 3.0), result.data[5]);  // 5 clipped to 3
-    try testing.expectEqual(@as(f64, 3.0), result.data[6]);  // 10 clipped to 3
+    try testing.expectEqual(@as(f64, 0.0), result.data[2]); // 0 stays 0
+    try testing.expectEqual(@as(f64, 1.5), result.data[3]); // 1.5 stays 1.5
+    try testing.expectEqual(@as(f64, 3.0), result.data[4]); // 3 stays 3
+    try testing.expectEqual(@as(f64, 3.0), result.data[5]); // 5 clipped to 3
+    try testing.expectEqual(@as(f64, 3.0), result.data[6]); // 10 clipped to 3
 }
 
 test "ndarray: clip integer type" {
@@ -11687,11 +11628,11 @@ test "ndarray: where basic conditional selection" {
     var result = try NDArray(f64, 1).where(&cond, &x, &y);
     defer result.deinit();
 
-    try testing.expectEqual(@as(f64, 1.0), result.data[0]);  // true → x
+    try testing.expectEqual(@as(f64, 1.0), result.data[0]); // true → x
     try testing.expectEqual(@as(f64, 20.0), result.data[1]); // false → y
-    try testing.expectEqual(@as(f64, 3.0), result.data[2]);  // true → x
+    try testing.expectEqual(@as(f64, 3.0), result.data[2]); // true → x
     try testing.expectEqual(@as(f64, 40.0), result.data[3]); // false → y
-    try testing.expectEqual(@as(f64, 5.0), result.data[4]);  // true → x
+    try testing.expectEqual(@as(f64, 5.0), result.data[4]); // true → x
 }
 
 test "ndarray: where threshold masking" {
@@ -11724,10 +11665,10 @@ test "ndarray: where threshold masking" {
 
     try testing.expectEqual(@as(f64, -1.0), result.data[0]); // -3 < 0 → -1
     try testing.expectEqual(@as(f64, -1.0), result.data[1]); // -1 < 0 → -1
-    try testing.expectEqual(@as(f64, 1.0), result.data[2]);  // 0 >= 0 → 1
-    try testing.expectEqual(@as(f64, 1.0), result.data[3]);  // 1 >= 0 → 1
-    try testing.expectEqual(@as(f64, 1.0), result.data[4]);  // 3 >= 0 → 1
-    try testing.expectEqual(@as(f64, 1.0), result.data[5]);  // 5 >= 0 → 1
+    try testing.expectEqual(@as(f64, 1.0), result.data[2]); // 0 >= 0 → 1
+    try testing.expectEqual(@as(f64, 1.0), result.data[3]); // 1 >= 0 → 1
+    try testing.expectEqual(@as(f64, 1.0), result.data[4]); // 3 >= 0 → 1
+    try testing.expectEqual(@as(f64, 1.0), result.data[5]); // 5 >= 0 → 1
 }
 
 test "ndarray: where 2D array with memory safety" {
@@ -11759,9 +11700,9 @@ test "ndarray: where 2D array with memory safety" {
         var result = try NDArray(i32, 2).where(&cond, &x, &y);
         defer result.deinit();
 
-        try testing.expectEqual(@as(i32, 0), result.data[0]);  // true → 0
+        try testing.expectEqual(@as(i32, 0), result.data[0]); // true → 0
         try testing.expectEqual(@as(i32, 10), result.data[1]); // false → 10
-        try testing.expectEqual(@as(i32, 2), result.data[2]);  // true → 2
+        try testing.expectEqual(@as(i32, 2), result.data[2]); // true → 2
     }
 }
 
@@ -11861,11 +11802,11 @@ test "ndarray: sin 1D array sine" {
     var result = try a.sin();
     defer result.deinit();
 
-    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);     // sin(0) = 0
-    try testing.expectApproxEqAbs(0.5, result.data[1], 1e-10);     // sin(π/6) = 0.5
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10); // sin(0) = 0
+    try testing.expectApproxEqAbs(0.5, result.data[1], 1e-10); // sin(π/6) = 0.5
     try testing.expectApproxEqAbs(math.sin(pi / 4.0), result.data[2], 1e-10); // sin(π/4) ≈ 0.707
     try testing.expectApproxEqAbs(math.sin(pi / 3.0), result.data[3], 1e-10); // sin(π/3) ≈ 0.866
-    try testing.expectApproxEqAbs(1.0, result.data[4], 1e-10);     // sin(π/2) = 1
+    try testing.expectApproxEqAbs(1.0, result.data[4], 1e-10); // sin(π/2) = 1
 
     try testing.expect(result.data.ptr != a.data.ptr);
 }
@@ -11884,10 +11825,10 @@ test "ndarray: sin 2D array sine" {
     var result = try a.sin();
     defer result.deinit();
 
-    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);   // sin(0) = 0
-    try testing.expectApproxEqAbs(1.0, result.data[1], 1e-10);   // sin(π/2) = 1
-    try testing.expectApproxEqAbs(0.0, result.data[2], 1e-10);   // sin(π) ≈ 0
-    try testing.expectApproxEqAbs(-1.0, result.data[3], 1e-10);  // sin(3π/2) = -1
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10); // sin(0) = 0
+    try testing.expectApproxEqAbs(1.0, result.data[1], 1e-10); // sin(π/2) = 1
+    try testing.expectApproxEqAbs(0.0, result.data[2], 1e-10); // sin(π) ≈ 0
+    try testing.expectApproxEqAbs(-1.0, result.data[3], 1e-10); // sin(3π/2) = -1
 }
 
 test "ndarray: cos 1D array cosine" {
@@ -11905,11 +11846,11 @@ test "ndarray: cos 1D array cosine" {
     var result = try a.cos();
     defer result.deinit();
 
-    try testing.expectApproxEqAbs(1.0, result.data[0], 1e-10);                    // cos(0) = 1
-    try testing.expectApproxEqAbs(0.5, result.data[1], 1e-10);                    // cos(π/3) = 0.5
+    try testing.expectApproxEqAbs(1.0, result.data[0], 1e-10); // cos(0) = 1
+    try testing.expectApproxEqAbs(0.5, result.data[1], 1e-10); // cos(π/3) = 0.5
     try testing.expectApproxEqAbs(math.cos(pi / 4.0), result.data[2], 1e-10); // cos(π/4) ≈ 0.707
-    try testing.expectApproxEqAbs(0.0, result.data[3], 1e-10);                    // cos(π/2) = 0
-    try testing.expectApproxEqAbs(-1.0, result.data[4], 1e-10);                   // cos(π) = -1
+    try testing.expectApproxEqAbs(0.0, result.data[3], 1e-10); // cos(π/2) = 0
+    try testing.expectApproxEqAbs(-1.0, result.data[4], 1e-10); // cos(π) = -1
 
     try testing.expect(result.data.ptr != a.data.ptr);
 }
@@ -11928,10 +11869,10 @@ test "ndarray: cos 2D array cosine" {
     var result = try a.cos();
     defer result.deinit();
 
-    try testing.expectApproxEqAbs(1.0, result.data[0], 1e-10);   // cos(0) = 1
-    try testing.expectApproxEqAbs(0.0, result.data[1], 1e-10);   // cos(π/2) = 0
-    try testing.expectApproxEqAbs(-1.0, result.data[2], 1e-10);  // cos(π) = -1
-    try testing.expectApproxEqAbs(0.0, result.data[3], 1e-10);   // cos(3π/2) ≈ 0
+    try testing.expectApproxEqAbs(1.0, result.data[0], 1e-10); // cos(0) = 1
+    try testing.expectApproxEqAbs(0.0, result.data[1], 1e-10); // cos(π/2) = 0
+    try testing.expectApproxEqAbs(-1.0, result.data[2], 1e-10); // cos(π) = -1
+    try testing.expectApproxEqAbs(0.0, result.data[3], 1e-10); // cos(3π/2) ≈ 0
 }
 
 test "ndarray: tan 1D array tangent" {
@@ -11948,9 +11889,9 @@ test "ndarray: tan 1D array tangent" {
     var result = try a.tan();
     defer result.deinit();
 
-    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);                    // tan(0) = 0
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10); // tan(0) = 0
     try testing.expectApproxEqAbs(math.tan(pi / 6.0), result.data[1], 1e-10); // tan(π/6) ≈ 0.577
-    try testing.expectApproxEqAbs(1.0, result.data[2], 1e-10);                    // tan(π/4) = 1
+    try testing.expectApproxEqAbs(1.0, result.data[2], 1e-10); // tan(π/4) = 1
     try testing.expectApproxEqAbs(math.tan(pi / 3.0), result.data[3], 1e-10); // tan(π/3) ≈ 1.732
 
     try testing.expect(result.data.ptr != a.data.ptr);
@@ -11970,10 +11911,10 @@ test "ndarray: tan 2D array tangent" {
     var result = try a.tan();
     defer result.deinit();
 
-    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);                     // tan(0) = 0
-    try testing.expectApproxEqAbs(1.0, result.data[1], 1e-10);                     // tan(π/4) = 1
-    try testing.expectApproxEqAbs(-1.0, result.data[2], 1e-10);                    // tan(-π/4) = -1
-    try testing.expectApproxEqAbs(math.tan(pi / 6.0), result.data[3], 1e-10);  // tan(π/6) ≈ 0.577
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10); // tan(0) = 0
+    try testing.expectApproxEqAbs(1.0, result.data[1], 1e-10); // tan(π/4) = 1
+    try testing.expectApproxEqAbs(-1.0, result.data[2], 1e-10); // tan(-π/4) = -1
+    try testing.expectApproxEqAbs(math.tan(pi / 6.0), result.data[3], 1e-10); // tan(π/6) ≈ 0.577
 }
 
 test "ndarray: asin 1D array arcsine" {
@@ -11990,10 +11931,10 @@ test "ndarray: asin 1D array arcsine" {
     defer result.deinit();
 
     const pi = math.pi;
-    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);           // asin(0) = 0
-    try testing.expectApproxEqAbs(pi / 6.0, result.data[1], 1e-10);      // asin(0.5) = π/6
-    try testing.expectApproxEqAbs(-pi / 6.0, result.data[2], 1e-10);     // asin(-0.5) = -π/6
-    try testing.expectApproxEqAbs(pi / 2.0, result.data[3], 1e-10);      // asin(1) = π/2
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10); // asin(0) = 0
+    try testing.expectApproxEqAbs(pi / 6.0, result.data[1], 1e-10); // asin(0.5) = π/6
+    try testing.expectApproxEqAbs(-pi / 6.0, result.data[2], 1e-10); // asin(-0.5) = -π/6
+    try testing.expectApproxEqAbs(pi / 2.0, result.data[3], 1e-10); // asin(1) = π/2
 }
 
 test "ndarray: acos 1D array arccosine" {
@@ -12010,10 +11951,10 @@ test "ndarray: acos 1D array arccosine" {
     defer result.deinit();
 
     const pi = math.pi;
-    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);           // acos(1) = 0
-    try testing.expectApproxEqAbs(pi / 3.0, result.data[1], 1e-10);      // acos(0.5) = π/3
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10); // acos(1) = 0
+    try testing.expectApproxEqAbs(pi / 3.0, result.data[1], 1e-10); // acos(0.5) = π/3
     try testing.expectApproxEqAbs(2.0 * pi / 3.0, result.data[2], 1e-10); // acos(-0.5) = 2π/3
-    try testing.expectApproxEqAbs(pi / 2.0, result.data[3], 1e-10);      // acos(0) = π/2
+    try testing.expectApproxEqAbs(pi / 2.0, result.data[3], 1e-10); // acos(0) = π/2
 }
 
 test "ndarray: atan 1D array arctangent" {
@@ -12030,10 +11971,10 @@ test "ndarray: atan 1D array arctangent" {
     defer result.deinit();
 
     const pi = math.pi;
-    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);           // atan(0) = 0
-    try testing.expectApproxEqAbs(pi / 4.0, result.data[1], 1e-10);      // atan(1) = π/4
-    try testing.expectApproxEqAbs(-pi / 4.0, result.data[2], 1e-10);     // atan(-1) = -π/4
-    try testing.expectApproxEqAbs(pi / 3.0, result.data[3], 1e-10);      // atan(√3) = π/3
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10); // atan(0) = 0
+    try testing.expectApproxEqAbs(pi / 4.0, result.data[1], 1e-10); // atan(1) = π/4
+    try testing.expectApproxEqAbs(-pi / 4.0, result.data[2], 1e-10); // atan(-1) = -π/4
+    try testing.expectApproxEqAbs(pi / 3.0, result.data[3], 1e-10); // atan(√3) = π/3
 }
 
 test "ndarray: atan2 2D array two-argument arctangent" {
@@ -12044,19 +11985,23 @@ test "ndarray: atan2 2D array two-argument arctangent" {
     defer x.deinit();
 
     // Set up coordinates for quadrants
-    y.data[0] = 1.0;  x.data[0] = 1.0;    // Q1: (1, 1)
-    y.data[1] = 1.0;  x.data[1] = -1.0;   // Q2: (-1, 1)
-    y.data[2] = -1.0; x.data[2] = -1.0;   // Q3: (-1, -1)
-    y.data[3] = -1.0; x.data[3] = 1.0;    // Q4: (1, -1)
+    y.data[0] = 1.0;
+    x.data[0] = 1.0; // Q1: (1, 1)
+    y.data[1] = 1.0;
+    x.data[1] = -1.0; // Q2: (-1, 1)
+    y.data[2] = -1.0;
+    x.data[2] = -1.0; // Q3: (-1, -1)
+    y.data[3] = -1.0;
+    x.data[3] = 1.0; // Q4: (1, -1)
 
     var result = try y.atan2(&x);
     defer result.deinit();
 
     const pi = math.pi;
-    try testing.expectApproxEqAbs(pi / 4.0, result.data[0], 1e-10);        // atan2(1, 1) = π/4
-    try testing.expectApproxEqAbs(3.0 * pi / 4.0, result.data[1], 1e-10);  // atan2(1, -1) = 3π/4
+    try testing.expectApproxEqAbs(pi / 4.0, result.data[0], 1e-10); // atan2(1, 1) = π/4
+    try testing.expectApproxEqAbs(3.0 * pi / 4.0, result.data[1], 1e-10); // atan2(1, -1) = 3π/4
     try testing.expectApproxEqAbs(-3.0 * pi / 4.0, result.data[2], 1e-10); // atan2(-1, -1) = -3π/4
-    try testing.expectApproxEqAbs(-pi / 4.0, result.data[3], 1e-10);       // atan2(-1, 1) = -π/4
+    try testing.expectApproxEqAbs(-pi / 4.0, result.data[3], 1e-10); // atan2(-1, 1) = -π/4
 }
 
 test "ndarray: sinh 1D array hyperbolic sine" {
@@ -12099,9 +12044,9 @@ test "ndarray: cosh 1D array hyperbolic cosine" {
     // cosh(0) = 1, cosh(±1) ≈ 1.5431, cosh(±2) ≈ 3.7622
     try testing.expectApproxEqAbs(1.0, result.data[0], 1e-10);
     try testing.expectApproxEqAbs(1.5430806348152437, result.data[1], 1e-10);
-    try testing.expectApproxEqAbs(1.5430806348152437, result.data[2], 1e-10);  // cosh is even
+    try testing.expectApproxEqAbs(1.5430806348152437, result.data[2], 1e-10); // cosh is even
     try testing.expectApproxEqAbs(3.7621956910836314, result.data[3], 1e-10);
-    try testing.expectApproxEqAbs(3.7621956910836314, result.data[4], 1e-10);  // cosh is even
+    try testing.expectApproxEqAbs(3.7621956910836314, result.data[4], 1e-10); // cosh is even
 }
 
 test "ndarray: tanh 1D array hyperbolic tangent" {
@@ -12179,7 +12124,7 @@ test "ndarray: tanh 2D array hyperbolic tangent with memory safety" {
         defer a.deinit();
 
         for (a.data, 0..) |*val, idx| {
-            val.* = @as(f64, @floatFromInt(idx)) * 0.5 - 1.5;  // Range -1.5 to 1.5
+            val.* = @as(f64, @floatFromInt(idx)) * 0.5 - 1.5; // Range -1.5 to 1.5
         }
 
         var result = try a.tanh();
@@ -12209,11 +12154,11 @@ test "ndarray: log2 1D array base-2 logarithm" {
     var result = try a.log2();
     defer result.deinit();
 
-    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);  // log2(1) = 0
-    try testing.expectApproxEqAbs(1.0, result.data[1], 1e-10);  // log2(2) = 1
-    try testing.expectApproxEqAbs(2.0, result.data[2], 1e-10);  // log2(4) = 2
-    try testing.expectApproxEqAbs(3.0, result.data[3], 1e-10);  // log2(8) = 3
-    try testing.expectApproxEqAbs(4.0, result.data[4], 1e-10);  // log2(16) = 4
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10); // log2(1) = 0
+    try testing.expectApproxEqAbs(1.0, result.data[1], 1e-10); // log2(2) = 1
+    try testing.expectApproxEqAbs(2.0, result.data[2], 1e-10); // log2(4) = 2
+    try testing.expectApproxEqAbs(3.0, result.data[3], 1e-10); // log2(8) = 3
+    try testing.expectApproxEqAbs(4.0, result.data[4], 1e-10); // log2(16) = 4
 }
 
 test "ndarray: log10 1D array base-10 logarithm" {
@@ -12230,10 +12175,10 @@ test "ndarray: log10 1D array base-10 logarithm" {
     var result = try a.log10();
     defer result.deinit();
 
-    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10);  // log10(1) = 0
-    try testing.expectApproxEqAbs(1.0, result.data[1], 1e-10);  // log10(10) = 1
-    try testing.expectApproxEqAbs(2.0, result.data[2], 1e-10);  // log10(100) = 2
-    try testing.expectApproxEqAbs(3.0, result.data[3], 1e-10);  // log10(1000) = 3
+    try testing.expectApproxEqAbs(0.0, result.data[0], 1e-10); // log10(1) = 0
+    try testing.expectApproxEqAbs(1.0, result.data[1], 1e-10); // log10(10) = 1
+    try testing.expectApproxEqAbs(2.0, result.data[2], 1e-10); // log10(100) = 2
+    try testing.expectApproxEqAbs(3.0, result.data[3], 1e-10); // log10(1000) = 3
     try testing.expectApproxEqAbs(-1.0, result.data[4], 1e-10); // log10(0.1) = -1
 }
 
@@ -12244,11 +12189,16 @@ test "ndarray: eq 1D equality comparison" {
     var b = try NDArray(i32, 1).init(allocator, &[_]usize{5}, .row_major);
     defer b.deinit();
 
-    a.data[0] = 1; b.data[0] = 1;
-    a.data[1] = 2; b.data[1] = 3;
-    a.data[2] = 4; b.data[2] = 4;
-    a.data[3] = 5; b.data[3] = 6;
-    a.data[4] = 7; b.data[4] = 7;
+    a.data[0] = 1;
+    b.data[0] = 1;
+    a.data[1] = 2;
+    b.data[1] = 3;
+    a.data[2] = 4;
+    b.data[2] = 4;
+    a.data[3] = 5;
+    b.data[3] = 6;
+    a.data[4] = 7;
+    b.data[4] = 7;
 
     var result = try a.eq(&b);
     defer result.deinit();
@@ -12267,10 +12217,14 @@ test "ndarray: ne 2D inequality comparison" {
     var b = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
     defer b.deinit();
 
-    a.data[0] = 1; b.data[0] = 1;
-    a.data[1] = 2; b.data[1] = 3;
-    a.data[2] = 4; b.data[2] = 4;
-    a.data[3] = 5; b.data[3] = 6;
+    a.data[0] = 1;
+    b.data[0] = 1;
+    a.data[1] = 2;
+    b.data[1] = 3;
+    a.data[2] = 4;
+    b.data[2] = 4;
+    a.data[3] = 5;
+    b.data[3] = 6;
 
     var result = try a.ne(&b);
     defer result.deinit();
@@ -12288,10 +12242,14 @@ test "ndarray: lt 1D less-than comparison" {
     var b = try NDArray(f64, 1).init(allocator, &[_]usize{4}, .row_major);
     defer b.deinit();
 
-    a.data[0] = 1.0; b.data[0] = 2.0;
-    a.data[1] = 3.0; b.data[1] = 3.0;
-    a.data[2] = 5.0; b.data[2] = 4.0;
-    a.data[3] = -1.0; b.data[3] = 0.0;
+    a.data[0] = 1.0;
+    b.data[0] = 2.0;
+    a.data[1] = 3.0;
+    b.data[1] = 3.0;
+    a.data[2] = 5.0;
+    b.data[2] = 4.0;
+    a.data[3] = -1.0;
+    b.data[3] = 0.0;
 
     var result = try a.lt(&b);
     defer result.deinit();
@@ -12309,10 +12267,14 @@ test "ndarray: le 1D less-than-or-equal comparison" {
     var b = try NDArray(i32, 1).init(allocator, &[_]usize{4}, .row_major);
     defer b.deinit();
 
-    a.data[0] = 1; b.data[0] = 2;
-    a.data[1] = 3; b.data[1] = 3;
-    a.data[2] = 5; b.data[2] = 4;
-    a.data[3] = -1; b.data[3] = 0;
+    a.data[0] = 1;
+    b.data[0] = 2;
+    a.data[1] = 3;
+    b.data[1] = 3;
+    a.data[2] = 5;
+    b.data[2] = 4;
+    a.data[3] = -1;
+    b.data[3] = 0;
 
     var result = try a.le(&b);
     defer result.deinit();
@@ -12330,10 +12292,14 @@ test "ndarray: gt 1D greater-than comparison" {
     var b = try NDArray(f64, 1).init(allocator, &[_]usize{4}, .row_major);
     defer b.deinit();
 
-    a.data[0] = 2.0; b.data[0] = 1.0;
-    a.data[1] = 3.0; b.data[1] = 3.0;
-    a.data[2] = 4.0; b.data[2] = 5.0;
-    a.data[3] = 0.0; b.data[3] = -1.0;
+    a.data[0] = 2.0;
+    b.data[0] = 1.0;
+    a.data[1] = 3.0;
+    b.data[1] = 3.0;
+    a.data[2] = 4.0;
+    b.data[2] = 5.0;
+    a.data[3] = 0.0;
+    b.data[3] = -1.0;
 
     var result = try a.gt(&b);
     defer result.deinit();
@@ -12351,10 +12317,14 @@ test "ndarray: ge 1D greater-than-or-equal comparison" {
     var b = try NDArray(i32, 1).init(allocator, &[_]usize{4}, .row_major);
     defer b.deinit();
 
-    a.data[0] = 2; b.data[0] = 1;
-    a.data[1] = 3; b.data[1] = 3;
-    a.data[2] = 4; b.data[2] = 5;
-    a.data[3] = 0; b.data[3] = -1;
+    a.data[0] = 2;
+    b.data[0] = 1;
+    a.data[1] = 3;
+    b.data[1] = 3;
+    a.data[2] = 4;
+    b.data[2] = 5;
+    a.data[3] = 0;
+    b.data[3] = -1;
 
     var result = try a.ge(&b);
     defer result.deinit();
@@ -12372,8 +12342,13 @@ test "ndarray: comparison shape mismatch error" {
     var b = try NDArray(i32, 1).init(allocator, &[_]usize{4}, .row_major);
     defer b.deinit();
 
-    a.data[0] = 1; a.data[1] = 2; a.data[2] = 3;
-    b.data[0] = 1; b.data[1] = 2; b.data[2] = 3; b.data[3] = 4;
+    a.data[0] = 1;
+    a.data[1] = 2;
+    a.data[2] = 3;
+    b.data[0] = 1;
+    b.data[1] = 2;
+    b.data[2] = 3;
+    b.data[3] = 4;
 
     // All comparison operations should return ShapeMismatch
     try testing.expectError(error.ShapeMismatch, a.eq(&b));
@@ -12505,7 +12480,7 @@ test "broadcast: 1D array + 2D array row broadcast fails without broadcasting su
     var arr_1d = try NDArray(f64, 1).ones(allocator, &[_]usize{4}, .row_major);
     defer arr_1d.deinit();
 
-    var arr_2d = try NDArray(f64, 2).ones(allocator, &[_]usize{3, 4}, .row_major);
+    var arr_2d = try NDArray(f64, 2).ones(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr_2d.deinit();
 
     // Current implementation requires same ndim and same shape
@@ -12516,10 +12491,10 @@ test "broadcast: 1D array + 2D array row broadcast fails without broadcasting su
 test "broadcast: 2D [3,1] + 2D [1,4] incompatible without broadcasting" {
     const allocator = testing.allocator;
 
-    var arr_a = try NDArray(i32, 2).ones(allocator, &[_]usize{3, 1}, .row_major);
+    var arr_a = try NDArray(i32, 2).ones(allocator, &[_]usize{ 3, 1 }, .row_major);
     defer arr_a.deinit();
 
-    var arr_b = try NDArray(i32, 2).ones(allocator, &[_]usize{1, 4}, .row_major);
+    var arr_b = try NDArray(i32, 2).ones(allocator, &[_]usize{ 1, 4 }, .row_major);
     defer arr_b.deinit();
 
     // Without broadcasting: shapes [3,1] and [1,4] are incompatible
@@ -12530,7 +12505,7 @@ test "broadcast: 2D [3,1] + 2D [1,4] incompatible without broadcasting" {
 test "broadcast: 3D + 1D broadcasting rule (shape mismatch without support)" {
     const allocator = testing.allocator;
 
-    var arr_3d = try NDArray(f64, 3).ones(allocator, &[_]usize{2, 3, 4}, .row_major);
+    var arr_3d = try NDArray(f64, 3).ones(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
     defer arr_3d.deinit();
 
     var arr_1d = try NDArray(f64, 1).ones(allocator, &[_]usize{4}, .row_major);
@@ -12544,7 +12519,7 @@ test "broadcast: 3D + 1D broadcasting rule (shape mismatch without support)" {
 test "broadcast: empty dimension with size 1 (shape broadcasting)" {
     const allocator = testing.allocator;
 
-    var arr = try NDArray(i32, 2).ones(allocator, &[_]usize{5, 1}, .row_major);
+    var arr = try NDArray(i32, 2).ones(allocator, &[_]usize{ 5, 1 }, .row_major);
     defer arr.deinit();
 
     // Dimension with size 1 should be broadcastable
@@ -12571,10 +12546,10 @@ test "broadcast error: incompatible shapes [3] + [4]" {
 test "broadcast error: multi-dim mismatch [3,2] + [4,3]" {
     const allocator = testing.allocator;
 
-    var arr_a = try NDArray(i32, 2).ones(allocator, &[_]usize{3, 2}, .row_major);
+    var arr_a = try NDArray(i32, 2).ones(allocator, &[_]usize{ 3, 2 }, .row_major);
     defer arr_a.deinit();
 
-    var arr_b = try NDArray(i32, 2).ones(allocator, &[_]usize{4, 3}, .row_major);
+    var arr_b = try NDArray(i32, 2).ones(allocator, &[_]usize{ 4, 3 }, .row_major);
     defer arr_b.deinit();
 
     // Shapes [3,2] and [4,3] are incompatible
@@ -12586,10 +12561,10 @@ test "broadcast error: multi-dim mismatch [3,2] + [4,3]" {
 test "broadcast: same shape requires no broadcasting" {
     const allocator = testing.allocator;
 
-    var arr_a = try NDArray(f64, 2).ones(allocator, &[_]usize{3, 4}, .row_major);
+    var arr_a = try NDArray(f64, 2).ones(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr_a.deinit();
 
-    var arr_b = try NDArray(f64, 2).ones(allocator, &[_]usize{3, 4}, .row_major);
+    var arr_b = try NDArray(f64, 2).ones(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr_b.deinit();
 
     // Same shape [3,4] + [3,4] should work (no broadcast needed)
@@ -12611,10 +12586,10 @@ test "broadcast add: result shape calculation for compatible dims" {
     // Test that when broadcasting is implemented, result shape is correct
     // For shapes [3,1] and [1,4]: max([3,1], [1,4]) = [3,4]
 
-    var arr_a = try NDArray(i32, 2).zeros(allocator, &[_]usize{3, 4}, .row_major);
+    var arr_a = try NDArray(i32, 2).zeros(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr_a.deinit();
 
-    var arr_b = try NDArray(i32, 2).zeros(allocator, &[_]usize{3, 4}, .row_major);
+    var arr_b = try NDArray(i32, 2).zeros(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr_b.deinit();
 
     var result = try arr_a.add(&arr_b);
@@ -12629,7 +12604,7 @@ test "broadcast add: result shape calculation for compatible dims" {
 test "broadcast sub: shape [5,1] with itself (no broadcast needed)" {
     const allocator = testing.allocator;
 
-    var arr = try NDArray(i32, 2).full(allocator, &[_]usize{5, 1}, 10, .row_major);
+    var arr = try NDArray(i32, 2).full(allocator, &[_]usize{ 5, 1 }, 10, .row_major);
     defer arr.deinit();
 
     var result = try arr.sub(&arr);
@@ -12647,7 +12622,7 @@ test "broadcast sub: shape [5,1] with itself (no broadcast needed)" {
 test "broadcast mul: result values for 2D row-major" {
     const allocator = testing.allocator;
 
-    var arr_a = try NDArray(f64, 2).ones(allocator, &[_]usize{2, 3}, .row_major);
+    var arr_a = try NDArray(f64, 2).ones(allocator, &[_]usize{ 2, 3 }, .row_major);
     defer arr_a.deinit();
 
     // Set arr_a to [1,2,3; 4,5,6]
@@ -12658,7 +12633,7 @@ test "broadcast mul: result values for 2D row-major" {
     arr_a.data[4] = 5.0;
     arr_a.data[5] = 6.0;
 
-    var arr_b = try NDArray(f64, 2).ones(allocator, &[_]usize{2, 3}, .row_major);
+    var arr_b = try NDArray(f64, 2).ones(allocator, &[_]usize{ 2, 3 }, .row_major);
     defer arr_b.deinit();
 
     // Set arr_b to [2,2,2; 3,3,3]
@@ -12681,7 +12656,7 @@ test "broadcast mul: result values for 2D row-major" {
 test "broadcast div: element-wise division preserves shape" {
     const allocator = testing.allocator;
 
-    var arr_a = try NDArray(f64, 2).init(allocator, &[_]usize{2, 2}, .row_major);
+    var arr_a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
     defer arr_a.deinit();
 
     // Set arr_a to [10, 20; 30, 40]
@@ -12690,7 +12665,7 @@ test "broadcast div: element-wise division preserves shape" {
     arr_a.data[2] = 30.0;
     arr_a.data[3] = 40.0;
 
-    var arr_b = try NDArray(f64, 2).init(allocator, &[_]usize{2, 2}, .row_major);
+    var arr_b = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
     defer arr_b.deinit();
 
     // Set arr_b to [2, 4; 5, 10]
@@ -12715,7 +12690,7 @@ test "broadcast div: element-wise division preserves shape" {
 test "broadcast: column-major layout with 2D [3,4]" {
     const allocator = testing.allocator;
 
-    var arr = try NDArray(f64, 2).ones(allocator, &[_]usize{3, 4}, .column_major);
+    var arr = try NDArray(f64, 2).ones(allocator, &[_]usize{ 3, 4 }, .column_major);
     defer arr.deinit();
 
     try testing.expectEqual(Layout.column_major, arr.layout);
@@ -12733,7 +12708,7 @@ test "broadcast: 1D [N] vs 2D [N,1] shape differentiation" {
     var arr_1d = try NDArray(f64, 1).ones(allocator, &[_]usize{5}, .row_major);
     defer arr_1d.deinit();
 
-    var arr_2d = try NDArray(f64, 2).ones(allocator, &[_]usize{5, 1}, .row_major);
+    var arr_2d = try NDArray(f64, 2).ones(allocator, &[_]usize{ 5, 1 }, .row_major);
     defer arr_2d.deinit();
 
     // Different ndim, should not work without dimension padding
@@ -12748,7 +12723,7 @@ test "broadcast: 3D + 1D broadcasting semantics" {
     const allocator = testing.allocator;
 
     // Test setup for 3D [2,3,4] + 1D [4] → should be [2,3,4]
-    var arr_3d = try NDArray(i32, 3).ones(allocator, &[_]usize{2, 3, 4}, .row_major);
+    var arr_3d = try NDArray(i32, 3).ones(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
     defer arr_3d.deinit();
 
     var arr_1d = try NDArray(i32, 1).ones(allocator, &[_]usize{4}, .row_major);
@@ -12761,7 +12736,7 @@ test "broadcast: 3D + 1D broadcasting semantics" {
 test "broadcast: multiple dimension-1 axes [1,5,1,3]" {
     const allocator = testing.allocator;
 
-    var arr = try NDArray(f64, 4).ones(allocator, &[_]usize{1, 5, 1, 3}, .row_major);
+    var arr = try NDArray(f64, 4).ones(allocator, &[_]usize{ 1, 5, 1, 3 }, .row_major);
     defer arr.deinit();
 
     try testing.expectEqual(@as(usize, 1), arr.shape[0]);
@@ -12800,10 +12775,10 @@ test "broadcast: stress test various dimension combinations" {
     const allocator = testing.allocator;
 
     // Test [2,3,4,5] addition with same shape
-    var arr_a = try NDArray(i32, 4).ones(allocator, &[_]usize{2, 3, 4, 5}, .row_major);
+    var arr_a = try NDArray(i32, 4).ones(allocator, &[_]usize{ 2, 3, 4, 5 }, .row_major);
     defer arr_a.deinit();
 
-    var arr_b = try NDArray(i32, 4).ones(allocator, &[_]usize{2, 3, 4, 5}, .row_major);
+    var arr_b = try NDArray(i32, 4).ones(allocator, &[_]usize{ 2, 3, 4, 5 }, .row_major);
     defer arr_b.deinit();
 
     var result = try arr_a.add(&arr_b);
@@ -12818,10 +12793,10 @@ test "broadcast: stress test various dimension combinations" {
 test "broadcast: add with identical 3D arrays [2,3,4]" {
     const allocator = testing.allocator;
 
-    var arr_a = try NDArray(i32, 3).full(allocator, &[_]usize{2, 3, 4}, 7, .row_major);
+    var arr_a = try NDArray(i32, 3).full(allocator, &[_]usize{ 2, 3, 4 }, 7, .row_major);
     defer arr_a.deinit();
 
-    var arr_b = try NDArray(i32, 3).full(allocator, &[_]usize{2, 3, 4}, 3, .row_major);
+    var arr_b = try NDArray(i32, 3).full(allocator, &[_]usize{ 2, 3, 4 }, 3, .row_major);
     defer arr_b.deinit();
 
     var result = try arr_a.add(&arr_b);
@@ -12840,10 +12815,10 @@ test "broadcast: add with identical 3D arrays [2,3,4]" {
 test "broadcast: sub with identical shapes [4,5]" {
     const allocator = testing.allocator;
 
-    var arr_a = try NDArray(i32, 2).full(allocator, &[_]usize{4, 5}, 100, .row_major);
+    var arr_a = try NDArray(i32, 2).full(allocator, &[_]usize{ 4, 5 }, 100, .row_major);
     defer arr_a.deinit();
 
-    var arr_b = try NDArray(i32, 2).full(allocator, &[_]usize{4, 5}, 30, .row_major);
+    var arr_b = try NDArray(i32, 2).full(allocator, &[_]usize{ 4, 5 }, 30, .row_major);
     defer arr_b.deinit();
 
     var result = try arr_a.sub(&arr_b);
@@ -12861,10 +12836,10 @@ test "broadcast: sub with identical shapes [4,5]" {
 test "broadcast error: shapes with incompatible middle dimension" {
     const allocator = testing.allocator;
 
-    var arr_a = try NDArray(i32, 3).ones(allocator, &[_]usize{2, 3, 4}, .row_major);
+    var arr_a = try NDArray(i32, 3).ones(allocator, &[_]usize{ 2, 3, 4 }, .row_major);
     defer arr_a.deinit();
 
-    var arr_b = try NDArray(i32, 3).ones(allocator, &[_]usize{2, 5, 4}, .row_major);
+    var arr_b = try NDArray(i32, 3).ones(allocator, &[_]usize{ 2, 5, 4 }, .row_major);
     defer arr_b.deinit();
 
     // Shapes [2,3,4] and [2,5,4] incompatible (3 ≠ 5, neither is 1)
@@ -12878,10 +12853,10 @@ test "broadcast: 2D row-major [3,1] add with row-major [3,4] (planned broadcast)
     // This test documents the expected behavior when broadcasting is fully implemented
     // [3,1] should broadcast to [3,4] to match [3,4] + [3,1] → [3,4]
 
-    var arr_broadcast = try NDArray(i32, 2).ones(allocator, &[_]usize{3, 4}, .row_major);
+    var arr_broadcast = try NDArray(i32, 2).ones(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr_broadcast.deinit();
 
-    var arr_col = try NDArray(i32, 2).ones(allocator, &[_]usize{3, 4}, .row_major);
+    var arr_col = try NDArray(i32, 2).ones(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr_col.deinit();
 
     // Currently can only test with same shapes
@@ -12895,10 +12870,10 @@ test "broadcast: 2D row-major [3,1] add with row-major [3,4] (planned broadcast)
 test "broadcast: column-major add with same 2D shape [5,3]" {
     const allocator = testing.allocator;
 
-    var arr_a = try NDArray(f64, 2).full(allocator, &[_]usize{5, 3}, 2.5, .column_major);
+    var arr_a = try NDArray(f64, 2).full(allocator, &[_]usize{ 5, 3 }, 2.5, .column_major);
     defer arr_a.deinit();
 
-    var arr_b = try NDArray(f64, 2).full(allocator, &[_]usize{5, 3}, 1.5, .column_major);
+    var arr_b = try NDArray(f64, 2).full(allocator, &[_]usize{ 5, 3 }, 1.5, .column_major);
     defer arr_b.deinit();
 
     var result = try arr_a.add(&arr_b);
@@ -12916,10 +12891,10 @@ test "broadcast: column-major add with same 2D shape [5,3]" {
 test "broadcast: mixed layout add column-major + row-major same shape" {
     const allocator = testing.allocator;
 
-    var arr_col = try NDArray(i32, 2).full(allocator, &[_]usize{2, 3}, 5, .column_major);
+    var arr_col = try NDArray(i32, 2).full(allocator, &[_]usize{ 2, 3 }, 5, .column_major);
     defer arr_col.deinit();
 
-    var arr_row = try NDArray(i32, 2).full(allocator, &[_]usize{2, 3}, 7, .row_major);
+    var arr_row = try NDArray(i32, 2).full(allocator, &[_]usize{ 2, 3 }, 7, .row_major);
     defer arr_row.deinit();
 
     // Same shape should work regardless of layout
@@ -12938,10 +12913,10 @@ test "broadcast: mixed layout add column-major + row-major same shape" {
 test "broadcast: single element dimension [1,1,1,5]" {
     const allocator = testing.allocator;
 
-    var arr_a = try NDArray(f64, 4).ones(allocator, &[_]usize{1, 1, 1, 5}, .row_major);
+    var arr_a = try NDArray(f64, 4).ones(allocator, &[_]usize{ 1, 1, 1, 5 }, .row_major);
     defer arr_a.deinit();
 
-    var arr_b = try NDArray(f64, 4).ones(allocator, &[_]usize{1, 1, 1, 5}, .row_major);
+    var arr_b = try NDArray(f64, 4).ones(allocator, &[_]usize{ 1, 1, 1, 5 }, .row_major);
     defer arr_b.deinit();
 
     var result = try arr_a.add(&arr_b);
@@ -12974,10 +12949,10 @@ test "broadcast error: 1D [5] + 1D [3] incompatible" {
 test "broadcast: 4D row-major [1,2,3,4] mul with itself" {
     const allocator = testing.allocator;
 
-    var arr_a = try NDArray(i32, 4).full(allocator, &[_]usize{1, 2, 3, 4}, 6, .row_major);
+    var arr_a = try NDArray(i32, 4).full(allocator, &[_]usize{ 1, 2, 3, 4 }, 6, .row_major);
     defer arr_a.deinit();
 
-    var arr_b = try NDArray(i32, 4).full(allocator, &[_]usize{1, 2, 3, 4}, 7, .row_major);
+    var arr_b = try NDArray(i32, 4).full(allocator, &[_]usize{ 1, 2, 3, 4 }, 7, .row_major);
     defer arr_b.deinit();
 
     var result = try arr_a.mul(&arr_b);
@@ -13025,10 +13000,10 @@ test "broadcast: negative values sub [3] - [3] = 0" {
 test "broadcast: float precision mul [2,2]" {
     const allocator = testing.allocator;
 
-    var arr_a = try NDArray(f64, 2).init(allocator, &[_]usize{2, 2}, .row_major);
+    var arr_a = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
     defer arr_a.deinit();
 
-    var arr_b = try NDArray(f64, 2).init(allocator, &[_]usize{2, 2}, .row_major);
+    var arr_b = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
     defer arr_b.deinit();
 
     // Set arr_a to [0.1, 0.2; 0.3, 0.4]
@@ -13075,10 +13050,10 @@ test "broadcast: scalar-like [1] + [1] operation" {
 test "broadcast: all-ones tensor [5,4,3] add" {
     const allocator = testing.allocator;
 
-    var arr_a = try NDArray(i32, 3).ones(allocator, &[_]usize{5, 4, 3}, .row_major);
+    var arr_a = try NDArray(i32, 3).ones(allocator, &[_]usize{ 5, 4, 3 }, .row_major);
     defer arr_a.deinit();
 
-    var arr_b = try NDArray(i32, 3).full(allocator, &[_]usize{5, 4, 3}, 2, .row_major);
+    var arr_b = try NDArray(i32, 3).full(allocator, &[_]usize{ 5, 4, 3 }, 2, .row_major);
     defer arr_b.deinit();
 
     var result = try arr_a.add(&arr_b);
@@ -13097,7 +13072,7 @@ test "broadcast: all-ones tensor [5,4,3] add" {
 test "broadcast: div by same array gives all ones [3,2]" {
     const allocator = testing.allocator;
 
-    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{3, 2}, .row_major);
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 3, 2 }, .row_major);
     defer arr.deinit();
 
     // Set to [2, 4, 6, 8, 10, 12]
@@ -13140,7 +13115,7 @@ test "reduction: sum() full 1D array i32" {
 test "reduction: sum() full 2D array i32 [3,4]" {
     const allocator = testing.allocator;
 
-    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{3, 4}, .row_major);
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 3, 4 }, .row_major);
     defer arr.deinit();
 
     // Set to [[1,2,3,4], [5,6,7,8], [9,10,11,12]]
@@ -13152,10 +13127,6 @@ test "reduction: sum() full 2D array i32 [3,4]" {
     const result = arr.sum();
     try testing.expectEqual(@as(i32, 78), result);
 }
-
-
-
-
 
 test "reduction: prod() full 1D array i32" {
     const allocator = testing.allocator;
@@ -13174,9 +13145,6 @@ test "reduction: prod() full 1D array i32" {
     try testing.expectEqual(@as(i32, 120), result);
 }
 
-
-
-
 test "reduction: mean() full 1D array f64" {
     const allocator = testing.allocator;
 
@@ -13192,9 +13160,6 @@ test "reduction: mean() full 1D array f64" {
     const result = arr.mean();
     try testing.expectApproxEqAbs(@as(f64, 3.0), result, 1e-10);
 }
-
-
-
 
 test "reduction: min() full 1D array i32" {
     const allocator = testing.allocator;
@@ -13214,9 +13179,6 @@ test "reduction: min() full 1D array i32" {
     try testing.expectEqual(@as(i32, 1), result);
 }
 
-
-
-
 test "reduction: max() full 1D array i32" {
     const allocator = testing.allocator;
 
@@ -13234,9 +13196,6 @@ test "reduction: max() full 1D array i32" {
     const result = arr.max();
     try testing.expectEqual(@as(i32, 9), result);
 }
-
-
-
 
 test "reduction: negative values in min/max operations" {
     const allocator = testing.allocator;
@@ -13261,7 +13220,7 @@ test "reduction: negative values in min/max operations" {
 test "reduction: mean() with integer array converts to f64" {
     const allocator = testing.allocator;
 
-    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{2, 2}, .row_major);
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 2 }, .row_major);
     defer arr.deinit();
 
     // Set to [[1, 2], [3, 4]]
@@ -13275,16 +13234,15 @@ test "reduction: mean() with integer array converts to f64" {
     try testing.expectApproxEqAbs(@as(f64, 2.5), result, 1e-10);
 }
 
-
 test "reduction: column-major layout reduction consistency" {
     const allocator = testing.allocator;
 
     // Create row-major version
-    var arr_row = try NDArray(i32, 2).init(allocator, &[_]usize{2, 3}, .row_major);
+    var arr_row = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
     defer arr_row.deinit();
 
     // Create column-major version with same data
-    var arr_col = try NDArray(i32, 2).init(allocator, &[_]usize{2, 3}, .column_major);
+    var arr_col = try NDArray(i32, 2).init(allocator, &[_]usize{ 2, 3 }, .column_major);
     defer arr_col.deinit();
 
     // Fill both with same values (note: storage order differs)
@@ -13302,7 +13260,7 @@ test "reduction: column-major layout reduction consistency" {
 test "reduction: single element array reductions" {
     const allocator = testing.allocator;
 
-    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{1, 1}, .row_major);
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 1, 1 }, .row_major);
     defer arr.deinit();
 
     arr.data[0] = 42;
@@ -13321,7 +13279,7 @@ test "reduction: single element array reductions" {
 test "reduction: large array sum() performance" {
     const allocator = testing.allocator;
 
-    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{100, 100}, .row_major);
+    var arr = try NDArray(i32, 2).init(allocator, &[_]usize{ 100, 100 }, .row_major);
     defer arr.deinit();
 
     // Fill with value 1 (sum should be 10000)
@@ -13332,7 +13290,6 @@ test "reduction: large array sum() performance" {
     const result = arr.sum();
     try testing.expectEqual(@as(i32, 10000), result);
 }
-
 
 test "reduction: prod() with zero element returns zero" {
     const allocator = testing.allocator;
@@ -13376,7 +13333,7 @@ test "advanced reduction: argmin() full 1D array i32" {
 test "advanced reduction: argmin() full 2D array f64" {
     const allocator = testing.allocator;
 
-    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{2, 3}, .row_major);
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
     defer arr.deinit();
 
     // Set to [[4.5, 1.2, 9.8], [2.1, 3.3, 0.5]]
@@ -13432,7 +13389,7 @@ test "advanced reduction: argmax() full 1D array i32" {
 test "advanced reduction: argmax() full 2D array f64" {
     const allocator = testing.allocator;
 
-    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{2, 3}, .row_major);
+    var arr = try NDArray(f64, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
     defer arr.deinit();
 
     // Set to [[1.5, 2.2, 3.9], [4.1, 0.8, 5.5]]
@@ -13493,12 +13450,6 @@ test "advanced reduction: argmax() single element" {
     try testing.expectEqual(@as(usize, 0), result);
 }
 
-
-
-
-
-
-
 test "advanced reduction: all() on bool array all true" {
     const allocator = testing.allocator;
 
@@ -13534,7 +13485,7 @@ test "advanced reduction: all() on bool array with false" {
 test "advanced reduction: all() on bool 2D array all true" {
     const allocator = testing.allocator;
 
-    var arr = try NDArray(bool, 2).init(allocator, &[_]usize{2, 3}, .row_major);
+    var arr = try NDArray(bool, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
     defer arr.deinit();
 
     // Set all to true
@@ -13581,7 +13532,7 @@ test "advanced reduction: any() on bool array all false" {
 test "advanced reduction: any() on bool 2D array mixed" {
     const allocator = testing.allocator;
 
-    var arr = try NDArray(bool, 2).init(allocator, &[_]usize{2, 3}, .row_major);
+    var arr = try NDArray(bool, 2).init(allocator, &[_]usize{ 2, 3 }, .row_major);
     defer arr.deinit();
 
     // Set to [[false, false, false], [false, true, false]]
@@ -13623,11 +13574,6 @@ test "advanced reduction: single element bool any() returns that element" {
     try testing.expectEqual(true, arr_true.any());
     try testing.expectEqual(false, arr_false.any());
 }
-
-
-
-
-
 
 test "advanced reduction: argmin() with negative values i32" {
     const allocator = testing.allocator;
@@ -13713,10 +13659,10 @@ test "ndarray: save and load 1D i32 array" {
     arr.data[4] = 5;
 
     // Save to file
-    try arr.save("/tmp/test_ndarray_1d.bin");
+    try arr.save(testing.io, "/tmp/test_ndarray_1d.bin");
 
     // Load back
-    var loaded = try NDArray(i32, 1).load(allocator, "/tmp/test_ndarray_1d.bin");
+    var loaded = try NDArray(i32, 1).load(testing.io, allocator, "/tmp/test_ndarray_1d.bin");
     defer loaded.deinit();
 
     // Verify shape
@@ -13733,7 +13679,7 @@ test "ndarray: save and load 1D i32 array" {
     try testing.expectEqual(Layout.row_major, loaded.layout);
 
     // Clean up
-    try fs.cwd().deleteFile("/tmp/test_ndarray_1d.bin");
+    try stdlib.Io.Dir.cwd().deleteFile(testing.io, "/tmp/test_ndarray_1d.bin");
 }
 
 test "ndarray: save and load 2D f64 array" {
@@ -13751,10 +13697,10 @@ test "ndarray: save and load 2D f64 array" {
     arr.data[5] = 6.6;
 
     // Save
-    try arr.save("/tmp/test_ndarray_2d.bin");
+    try arr.save(testing.io, "/tmp/test_ndarray_2d.bin");
 
     // Load
-    var loaded = try NDArray(f64, 2).load(allocator, "/tmp/test_ndarray_2d.bin");
+    var loaded = try NDArray(f64, 2).load(testing.io, allocator, "/tmp/test_ndarray_2d.bin");
     defer loaded.deinit();
 
     // Verify shape
@@ -13770,7 +13716,7 @@ test "ndarray: save and load 2D f64 array" {
     try testing.expectApproxEqAbs(6.6, loaded.data[5], 1e-10);
 
     // Clean up
-    try fs.cwd().deleteFile("/tmp/test_ndarray_2d.bin");
+    try stdlib.Io.Dir.cwd().deleteFile(testing.io, "/tmp/test_ndarray_2d.bin");
 }
 
 test "ndarray: save and load 3D u8 array column-major" {
@@ -13785,10 +13731,10 @@ test "ndarray: save and load 3D u8 array column-major" {
     }
 
     // Save
-    try arr.save("/tmp/test_ndarray_3d.bin");
+    try arr.save(testing.io, "/tmp/test_ndarray_3d.bin");
 
     // Load
-    var loaded = try NDArray(u8, 3).load(allocator, "/tmp/test_ndarray_3d.bin");
+    var loaded = try NDArray(u8, 3).load(testing.io, allocator, "/tmp/test_ndarray_3d.bin");
     defer loaded.deinit();
 
     // Verify shape
@@ -13805,7 +13751,7 @@ test "ndarray: save and load 3D u8 array column-major" {
     }
 
     // Clean up
-    try fs.cwd().deleteFile("/tmp/test_ndarray_3d.bin");
+    try stdlib.Io.Dir.cwd().deleteFile(testing.io, "/tmp/test_ndarray_3d.bin");
 }
 
 test "ndarray: save and load bool array" {
@@ -13819,9 +13765,9 @@ test "ndarray: save and load bool array" {
     arr.data[2] = true;
     arr.data[3] = false;
 
-    try arr.save("/tmp/test_ndarray_bool.bin");
+    try arr.save(testing.io, "/tmp/test_ndarray_bool.bin");
 
-    var loaded = try NDArray(bool, 1).load(allocator, "/tmp/test_ndarray_bool.bin");
+    var loaded = try NDArray(bool, 1).load(testing.io, allocator, "/tmp/test_ndarray_bool.bin");
     defer loaded.deinit();
 
     try testing.expect(loaded.data[0] == true);
@@ -13829,7 +13775,7 @@ test "ndarray: save and load bool array" {
     try testing.expect(loaded.data[2] == true);
     try testing.expect(loaded.data[3] == false);
 
-    try fs.cwd().deleteFile("/tmp/test_ndarray_bool.bin");
+    try stdlib.Io.Dir.cwd().deleteFile(testing.io, "/tmp/test_ndarray_bool.bin");
 }
 
 test "ndarray: load with wrong ndim fails" {
@@ -13843,13 +13789,13 @@ test "ndarray: load with wrong ndim fails" {
         arr.data[i] = @intCast(i);
     }
 
-    try arr.save("/tmp/test_ndarray_wrong_ndim.bin");
+    try arr.save(testing.io, "/tmp/test_ndarray_wrong_ndim.bin");
 
     // Try to load as 2D (should fail)
-    const result = NDArray(i32, 2).load(allocator, "/tmp/test_ndarray_wrong_ndim.bin");
+    const result = NDArray(i32, 2).load(testing.io, allocator, "/tmp/test_ndarray_wrong_ndim.bin");
     try testing.expectError(error.DimensionMismatch, result);
 
-    try fs.cwd().deleteFile("/tmp/test_ndarray_wrong_ndim.bin");
+    try stdlib.Io.Dir.cwd().deleteFile(testing.io, "/tmp/test_ndarray_wrong_ndim.bin");
 }
 
 test "ndarray: load with wrong type fails" {
@@ -13863,22 +13809,21 @@ test "ndarray: load with wrong type fails" {
         arr.data[i] = @intCast(i);
     }
 
-    try arr.save("/tmp/test_ndarray_wrong_type.bin");
+    try arr.save(testing.io, "/tmp/test_ndarray_wrong_type.bin");
 
     // Try to load as f64 (should fail)
-    const result = NDArray(f64, 1).load(allocator, "/tmp/test_ndarray_wrong_type.bin");
+    const result = NDArray(f64, 1).load(testing.io, allocator, "/tmp/test_ndarray_wrong_type.bin");
     try testing.expectError(error.TypeMismatch, result);
 
-    try fs.cwd().deleteFile("/tmp/test_ndarray_wrong_type.bin");
+    try stdlib.Io.Dir.cwd().deleteFile(testing.io, "/tmp/test_ndarray_wrong_type.bin");
 }
 
 test "ndarray: load nonexistent file fails" {
     const allocator = testing.allocator;
 
-    const result = NDArray(i32, 1).load(allocator, "/tmp/nonexistent_ndarray_file.bin");
+    const result = NDArray(i32, 1).load(testing.io, allocator, "/tmp/nonexistent_ndarray_file.bin");
     try testing.expectError(error.FileNotFound, result);
 }
-
 
 test "ndarray: save and load large array" {
     const allocator = testing.allocator;
@@ -13892,9 +13837,9 @@ test "ndarray: save and load large array" {
         arr.data[i] = @intCast(i);
     }
 
-    try arr.save("/tmp/test_ndarray_large.bin");
+    try arr.save(testing.io, "/tmp/test_ndarray_large.bin");
 
-    var loaded = try NDArray(i64, 2).load(allocator, "/tmp/test_ndarray_large.bin");
+    var loaded = try NDArray(i64, 2).load(testing.io, allocator, "/tmp/test_ndarray_large.bin");
     defer loaded.deinit();
 
     // Verify shape
@@ -13906,7 +13851,7 @@ test "ndarray: save and load large array" {
     try testing.expectEqual(@as(i64, 5000), loaded.data[5000]);
     try testing.expectEqual(@as(i64, 9999), loaded.data[9999]);
 
-    try fs.cwd().deleteFile("/tmp/test_ndarray_large.bin");
+    try stdlib.Io.Dir.cwd().deleteFile(testing.io, "/tmp/test_ndarray_large.bin");
 }
 
 // ============================================================================
@@ -14614,8 +14559,6 @@ test "broadcast: add with compatible shapes [3,1] + [1,4] produces [3,4]" {
     }
 }
 
-
-
 test "broadcast: div with [4,1,3] / [1,2,1] broadcasts to [4,2,3]" {
     const allocator = testing.allocator;
 
@@ -14739,8 +14682,6 @@ test "broadcast: error on incompatible sub [2,3,4] - [2,3,5]" {
     const result = arr_a.sub(&arr_b);
     try testing.expectError(error.ShapeMismatch, result);
 }
-
-
 
 test "broadcast: layout preservation row-major [3,1] + [1,4] broadcasts to row-major [3,4]" {
     const allocator = testing.allocator;
@@ -14899,10 +14840,7 @@ fn broadcastShapes(shape_a: []const usize, shape_b: []const usize, allocator: me
 
 /// Apply a binary operation with broadcasting support
 /// Operation function signature: fn(a: T, b: T) T
-fn applyBinaryOp(comptime T: type, comptime ndim: usize, self: *const NDArray(T, ndim),
-    other: *const NDArray(T, ndim), allocator: mem.Allocator,
-    comptime op: fn (T, T) T) !(NDArray(T, ndim)) {
-
+fn applyBinaryOp(comptime T: type, comptime ndim: usize, self: *const NDArray(T, ndim), other: *const NDArray(T, ndim), allocator: mem.Allocator, comptime op: fn (T, T) T) !(NDArray(T, ndim)) {
     const Self = NDArray(T, ndim);
 
     // Compute broadcasted shape
@@ -14990,16 +14928,14 @@ fn applyBinaryOp(comptime T: type, comptime ndim: usize, self: *const NDArray(T,
         .data = result_data,
         .allocator = allocator,
         .layout = self.layout,
-                    .owned = true,
-            };
+        .owned = true,
+    };
 }
 
 /// Apply a binary comparison operation with broadcasting support
 /// Operation function signature: fn(a: T, b: T) bool
 /// Returns an NDArray(bool, ndim) with the comparison result
-fn applyBinaryCompOp(comptime T: type, comptime ndim: usize, self: *const NDArray(T, ndim),
-    other: *const NDArray(T, ndim), allocator: mem.Allocator,
-    comptime op: fn (T, T) bool) !(NDArray(bool, ndim)) {
+fn applyBinaryCompOp(comptime T: type, comptime ndim: usize, self: *const NDArray(T, ndim), other: *const NDArray(T, ndim), allocator: mem.Allocator, comptime op: fn (T, T) bool) !(NDArray(bool, ndim)) {
 
     // Compute broadcasted shape
     const broadcast_shape = broadcastShapes(&self.shape, &other.shape, allocator) catch |err| {
@@ -15148,7 +15084,7 @@ test "ownership: double deinit safety - view then owner" {
 
 test "ownership: multiple views share same data" {
     const allocator = testing.allocator;
-    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{ 5 }, .row_major);
+    var arr = try NDArray(f64, 1).init(allocator, &[_]usize{5}, .row_major);
     defer arr.deinit();
 
     // Create multiple views from the same array
@@ -17848,10 +17784,10 @@ test "ndarray: toCSV() and fromCSV() basic roundtrip f64" {
     original.set(&[_]isize{ @intCast(2), @intCast(3) }, -12.7);
 
     // Save to CSV
-    try original.toCSV(path, ',');
+    try original.toCSV(testing.io, path, ',');
 
     // Load back
-    var loaded = try NDArray(f64, 2).fromCSV(allocator, path, ',');
+    var loaded = try NDArray(f64, 2).fromCSV(testing.io, allocator, path, ',');
     defer loaded.deinit();
 
     // Verify shape
@@ -17868,7 +17804,7 @@ test "ndarray: toCSV() and fromCSV() basic roundtrip f64" {
     }
 
     // Cleanup
-    fs.cwd().deleteFile(path) catch {};
+    stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
 }
 
 test "ndarray: toCSV() and fromCSV() integer types i32" {
@@ -17885,9 +17821,9 @@ test "ndarray: toCSV() and fromCSV() integer types i32" {
     original.set(&[_]isize{ @intCast(1), @intCast(1) }, -50);
     original.set(&[_]isize{ @intCast(1), @intCast(2) }, 123);
 
-    try original.toCSV(path, ',');
+    try original.toCSV(testing.io, path, ',');
 
-    var loaded = try NDArray(i32, 2).fromCSV(allocator, path, ',');
+    var loaded = try NDArray(i32, 2).fromCSV(testing.io, allocator, path, ',');
     defer loaded.deinit();
 
     try testing.expectEqual(@as(usize, 2), loaded.shape[0]);
@@ -17901,7 +17837,7 @@ test "ndarray: toCSV() and fromCSV() integer types i32" {
         }
     }
 
-    fs.cwd().deleteFile(path) catch {};
+    stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
 }
 
 test "ndarray: toCSV() and fromCSV() u8 type" {
@@ -17918,9 +17854,9 @@ test "ndarray: toCSV() and fromCSV() u8 type" {
     original.set(&[_]isize{ @intCast(2), @intCast(0) }, 50);
     original.set(&[_]isize{ @intCast(2), @intCast(1) }, 255);
 
-    try original.toCSV(path, ',');
+    try original.toCSV(testing.io, path, ',');
 
-    var loaded = try NDArray(u8, 2).fromCSV(allocator, path, ',');
+    var loaded = try NDArray(u8, 2).fromCSV(testing.io, allocator, path, ',');
     defer loaded.deinit();
 
     for (0..3) |r| {
@@ -17931,7 +17867,7 @@ test "ndarray: toCSV() and fromCSV() u8 type" {
         }
     }
 
-    fs.cwd().deleteFile(path) catch {};
+    stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
 }
 
 test "ndarray: toCSV() custom delimiter semicolon" {
@@ -17947,9 +17883,9 @@ test "ndarray: toCSV() custom delimiter semicolon" {
     original.set(&[_]isize{ @intCast(1), @intCast(1) }, 4.4);
 
     // Use semicolon as delimiter
-    try original.toCSV(path, ';');
+    try original.toCSV(testing.io, path, ';');
 
-    var loaded = try NDArray(f64, 2).fromCSV(allocator, path, ';');
+    var loaded = try NDArray(f64, 2).fromCSV(testing.io, allocator, path, ';');
     defer loaded.deinit();
 
     try testing.expectEqual(@as(usize, 2), loaded.shape[0]);
@@ -17963,7 +17899,7 @@ test "ndarray: toCSV() custom delimiter semicolon" {
         }
     }
 
-    fs.cwd().deleteFile(path) catch {};
+    stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
 }
 
 test "ndarray: toCSV() custom delimiter tab" {
@@ -17981,9 +17917,9 @@ test "ndarray: toCSV() custom delimiter tab" {
     original.set(&[_]isize{ @intCast(1), @intCast(2) }, 60);
 
     // Use tab as delimiter
-    try original.toCSV(path, '\t');
+    try original.toCSV(testing.io, path, '\t');
 
-    var loaded = try NDArray(i32, 2).fromCSV(allocator, path, '\t');
+    var loaded = try NDArray(i32, 2).fromCSV(testing.io, allocator, path, '\t');
     defer loaded.deinit();
 
     for (0..2) |r| {
@@ -17994,7 +17930,7 @@ test "ndarray: toCSV() custom delimiter tab" {
         }
     }
 
-    fs.cwd().deleteFile(path) catch {};
+    stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
 }
 
 test "ndarray: toCSV() single row" {
@@ -18010,9 +17946,9 @@ test "ndarray: toCSV() single row" {
     original.set(&[_]isize{ @intCast(0), @intCast(3) }, 4.0);
     original.set(&[_]isize{ @intCast(0), @intCast(4) }, 5.0);
 
-    try original.toCSV(path, ',');
+    try original.toCSV(testing.io, path, ',');
 
-    var loaded = try NDArray(f64, 2).fromCSV(allocator, path, ',');
+    var loaded = try NDArray(f64, 2).fromCSV(testing.io, allocator, path, ',');
     defer loaded.deinit();
 
     try testing.expectEqual(@as(usize, 1), loaded.shape[0]);
@@ -18024,7 +17960,7 @@ test "ndarray: toCSV() single row" {
         try testing.expectApproxEqAbs(orig_val, loaded_val, 1e-9);
     }
 
-    fs.cwd().deleteFile(path) catch {};
+    stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
 }
 
 test "ndarray: toCSV() single column" {
@@ -18039,9 +17975,9 @@ test "ndarray: toCSV() single column" {
     original.set(&[_]isize{ @intCast(2), @intCast(0) }, 30);
     original.set(&[_]isize{ @intCast(3), @intCast(0) }, 40);
 
-    try original.toCSV(path, ',');
+    try original.toCSV(testing.io, path, ',');
 
-    var loaded = try NDArray(i32, 2).fromCSV(allocator, path, ',');
+    var loaded = try NDArray(i32, 2).fromCSV(testing.io, allocator, path, ',');
     defer loaded.deinit();
 
     try testing.expectEqual(@as(usize, 4), loaded.shape[0]);
@@ -18053,7 +17989,7 @@ test "ndarray: toCSV() single column" {
         try testing.expectEqual(orig_val, loaded_val);
     }
 
-    fs.cwd().deleteFile(path) catch {};
+    stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
 }
 
 test "ndarray: toCSV() 1x1 matrix" {
@@ -18065,9 +18001,9 @@ test "ndarray: toCSV() 1x1 matrix" {
 
     original.set(&[_]isize{ @intCast(0), @intCast(0) }, 42.0);
 
-    try original.toCSV(path, ',');
+    try original.toCSV(testing.io, path, ',');
 
-    var loaded = try NDArray(f64, 2).fromCSV(allocator, path, ',');
+    var loaded = try NDArray(f64, 2).fromCSV(testing.io, allocator, path, ',');
     defer loaded.deinit();
 
     try testing.expectEqual(@as(usize, 1), loaded.shape[0]);
@@ -18077,7 +18013,7 @@ test "ndarray: toCSV() 1x1 matrix" {
     const loaded_val = try loaded.get(&[_]isize{ @intCast(0), @intCast(0) });
     try testing.expectApproxEqAbs(orig_val, loaded_val, 1e-9);
 
-    fs.cwd().deleteFile(path) catch {};
+    stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
 }
 
 test "ndarray: toCSV() large array (100 rows)" {
@@ -18095,9 +18031,9 @@ test "ndarray: toCSV() large array (100 rows)" {
         }
     }
 
-    try original.toCSV(path, ',');
+    try original.toCSV(testing.io, path, ',');
 
-    var loaded = try NDArray(f64, 2).fromCSV(allocator, path, ',');
+    var loaded = try NDArray(f64, 2).fromCSV(testing.io, allocator, path, ',');
     defer loaded.deinit();
 
     try testing.expectEqual(@as(usize, 100), loaded.shape[0]);
@@ -18108,7 +18044,7 @@ test "ndarray: toCSV() large array (100 rows)" {
     try testing.expectApproxEqAbs(99.0, try loaded.get(&[_]isize{ @intCast(9), @intCast(9) }), 1e-9);
     try testing.expectApproxEqAbs(505.0, try loaded.get(&[_]isize{ @intCast(50), @intCast(5) }), 1e-9);
 
-    fs.cwd().deleteFile(path) catch {};
+    stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
 }
 
 test "ndarray: fromCSV() handles whitespace trimming" {
@@ -18118,12 +18054,12 @@ test "ndarray: fromCSV() handles whitespace trimming" {
     // Create CSV with extra whitespace
     const csv_content = "  1.5  ,  2.7  ,  3.2  \n  4.1  ,  5.9  ,  6.3  \n";
     {
-        const file = try fs.cwd().createFile(path, .{});
-        defer file.close();
-        _ = try file.write(csv_content);
+        const file = try stdlib.Io.Dir.cwd().createFile(testing.io, path, .{});
+        defer file.close(testing.io);
+        try file.writeStreamingAll(testing.io, csv_content);
     }
 
-    var loaded = try NDArray(f64, 2).fromCSV(allocator, path, ',');
+    var loaded = try NDArray(f64, 2).fromCSV(testing.io, allocator, path, ',');
     defer loaded.deinit();
 
     try testing.expectEqual(@as(usize, 2), loaded.shape[0]);
@@ -18133,7 +18069,7 @@ test "ndarray: fromCSV() handles whitespace trimming" {
     try testing.expectApproxEqAbs(2.7, try loaded.get(&[_]isize{ @intCast(0), @intCast(1) }), 1e-9);
     try testing.expectApproxEqAbs(6.3, try loaded.get(&[_]isize{ @intCast(1), @intCast(2) }), 1e-9);
 
-    fs.cwd().deleteFile(path) catch {};
+    stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
 }
 
 test "ndarray: fromCSV() error on empty file" {
@@ -18141,15 +18077,15 @@ test "ndarray: fromCSV() error on empty file" {
     const path = "/tmp/test_ndarray_csv_empty.csv";
 
     {
-        const file = try fs.cwd().createFile(path, .{});
-        defer file.close();
+        const file = try stdlib.Io.Dir.cwd().createFile(testing.io, path, .{});
+        defer file.close(testing.io);
         // Write nothing
     }
 
-    const result = NDArray(f64, 2).fromCSV(allocator, path, ',');
+    const result = NDArray(f64, 2).fromCSV(testing.io, allocator, path, ',');
     try testing.expectError(error.EmptyArray, result);
 
-    fs.cwd().deleteFile(path) catch {};
+    stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
 }
 
 test "ndarray: fromCSV() error on ragged array (unequal columns)" {
@@ -18158,15 +18094,15 @@ test "ndarray: fromCSV() error on ragged array (unequal columns)" {
 
     const csv_content = "1,2,3\n4,5\n6,7,8\n";
     {
-        const file = try fs.cwd().createFile(path, .{});
-        defer file.close();
-        _ = try file.write(csv_content);
+        const file = try stdlib.Io.Dir.cwd().createFile(testing.io, path, .{});
+        defer file.close(testing.io);
+        try file.writeStreamingAll(testing.io, csv_content);
     }
 
-    const result = NDArray(f64, 2).fromCSV(allocator, path, ',');
+    const result = NDArray(f64, 2).fromCSV(testing.io, allocator, path, ',');
     try testing.expectError(error.InvalidFormat, result);
 
-    fs.cwd().deleteFile(path) catch {};
+    stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
 }
 
 test "ndarray: fromCSV() error on invalid number format" {
@@ -18175,15 +18111,15 @@ test "ndarray: fromCSV() error on invalid number format" {
 
     const csv_content = "1.5,abc,3.2\n4.1,5.9,6.3\n";
     {
-        const file = try fs.cwd().createFile(path, .{});
-        defer file.close();
-        _ = try file.write(csv_content);
+        const file = try stdlib.Io.Dir.cwd().createFile(testing.io, path, .{});
+        defer file.close(testing.io);
+        try file.writeStreamingAll(testing.io, csv_content);
     }
 
-    const result = NDArray(f64, 2).fromCSV(allocator, path, ',');
+    const result = NDArray(f64, 2).fromCSV(testing.io, allocator, path, ',');
     try testing.expectError(error.InvalidFormat, result);
 
-    fs.cwd().deleteFile(path) catch {};
+    stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
 }
 
 test "ndarray: toCSV() error on 1D array" {
@@ -18193,7 +18129,7 @@ test "ndarray: toCSV() error on 1D array" {
     var arr = try NDArray(f64, 1).arange(allocator, 0, 10, 1, .row_major);
     defer arr.deinit();
 
-    const result = arr.toCSV(path, ',');
+    const result = arr.toCSV(testing.io, path, ',');
     try testing.expectError(error.DimensionMismatch, result);
 }
 
@@ -18204,7 +18140,7 @@ test "ndarray: toCSV() error on 3D array" {
     var arr = try NDArray(f64, 3).init(allocator, &[_]usize{ 2, 2, 2 }, .row_major);
     defer arr.deinit();
 
-    const result = arr.toCSV(path, ',');
+    const result = arr.toCSV(testing.io, path, ',');
     try testing.expectError(error.DimensionMismatch, result);
 }
 
@@ -18214,15 +18150,15 @@ test "ndarray: fromCSV() error on 1D type" {
 
     const csv_content = "1,2,3\n4,5,6\n";
     {
-        const file = try fs.cwd().createFile(path, .{});
-        defer file.close();
-        _ = try file.write(csv_content);
+        const file = try stdlib.Io.Dir.cwd().createFile(testing.io, path, .{});
+        defer file.close(testing.io);
+        try file.writeStreamingAll(testing.io, csv_content);
     }
 
-    const result = NDArray(f64, 1).fromCSV(allocator, path, ',');
+    const result = NDArray(f64, 1).fromCSV(testing.io, allocator, path, ',');
     try testing.expectError(error.DimensionMismatch, result);
 
-    fs.cwd().deleteFile(path) catch {};
+    stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
 }
 
 test "ndarray: CSV roundtrip with negative values" {
@@ -18242,9 +18178,9 @@ test "ndarray: CSV roundtrip with negative values" {
     original.set(&[_]isize{ @intCast(2), @intCast(1) }, -8.0);
     original.set(&[_]isize{ @intCast(2), @intCast(2) }, 9.4);
 
-    try original.toCSV(path, ',');
+    try original.toCSV(testing.io, path, ',');
 
-    var loaded = try NDArray(f64, 2).fromCSV(allocator, path, ',');
+    var loaded = try NDArray(f64, 2).fromCSV(testing.io, allocator, path, ',');
     defer loaded.deinit();
 
     for (0..3) |r| {
@@ -18255,7 +18191,7 @@ test "ndarray: CSV roundtrip with negative values" {
         }
     }
 
-    fs.cwd().deleteFile(path) catch {};
+    stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
 }
 
 test "ndarray: CSV roundtrip with zeros" {
@@ -18272,9 +18208,9 @@ test "ndarray: CSV roundtrip with zeros" {
     original.set(&[_]isize{ @intCast(1), @intCast(1) }, 2);
     original.set(&[_]isize{ @intCast(1), @intCast(2) }, 0);
 
-    try original.toCSV(path, ',');
+    try original.toCSV(testing.io, path, ',');
 
-    var loaded = try NDArray(i32, 2).fromCSV(allocator, path, ',');
+    var loaded = try NDArray(i32, 2).fromCSV(testing.io, allocator, path, ',');
     defer loaded.deinit();
 
     for (0..2) |r| {
@@ -18285,7 +18221,7 @@ test "ndarray: CSV roundtrip with zeros" {
         }
     }
 
-    fs.cwd().deleteFile(path) catch {};
+    stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
 }
 
 test "ndarray: CSV roundtrip memory safety with allocator" {
@@ -18304,15 +18240,15 @@ test "ndarray: CSV roundtrip memory safety with allocator" {
             }
         }
 
-        try original.toCSV(path, ',');
+        try original.toCSV(testing.io, path, ',');
 
-        var loaded = try NDArray(f64, 2).fromCSV(allocator, path, ',');
+        var loaded = try NDArray(f64, 2).fromCSV(testing.io, allocator, path, ',');
         defer loaded.deinit();
 
         try testing.expectEqual(@as(usize, 5), loaded.shape[0]);
         try testing.expectEqual(@as(usize, 5), loaded.shape[1]);
 
-        fs.cwd().deleteFile(path) catch {};
+        stdlib.Io.Dir.cwd().deleteFile(testing.io, path) catch {};
     }
 }
 
@@ -19067,7 +19003,7 @@ test "searchsorted: right insertion" {
     var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
     defer arr.deinit();
 
-    const search_data = [_]i32{ 3 };
+    const search_data = [_]i32{3};
     var search = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{search_data.len}, &search_data, .row_major);
     defer search.deinit();
 
@@ -19127,7 +19063,7 @@ test "searchsorted: exact matches" {
 test "searchsorted: single element array" {
     const allocator = testing.allocator;
 
-    const data = [_]i32{ 5 };
+    const data = [_]i32{5};
     var arr = try NDArray(i32, 1).fromSlice(allocator, &[_]usize{data.len}, &data, .row_major);
     defer arr.deinit();
 
@@ -22994,7 +22930,7 @@ test "mode: 2D array flattened mode [1,2; 2,3; 3,3]" {
 
     const data = [_]i32{ 1, 2, 2, 3, 3, 3 };
     for (0..6) |i| {
-        arr.set(&[_]isize{@intCast(i/2), @intCast(i%2)}, data[i]);
+        arr.set(&[_]isize{ @intCast(i / 2), @intCast(i % 2) }, data[i]);
     }
 
     const mode_val = try arr.mode(allocator);
@@ -23155,7 +23091,7 @@ test "skewness: 2D array flattened" {
 
     const data = [_]f64{ 1.0, 1.0, 1.0, 2.0, 5.0, 6.0 };
     for (0..6) |i| {
-        arr.set(&[_]isize{@intCast(i/2), @intCast(i%2)}, data[i]);
+        arr.set(&[_]isize{ @intCast(i / 2), @intCast(i % 2) }, data[i]);
     }
 
     const skew = try arr.skewness(allocator);
@@ -23289,7 +23225,7 @@ test "kurtosis: 2D array flattened" {
 
     const data = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 };
     for (0..6) |i| {
-        arr.set(&[_]isize{@intCast(i/2), @intCast(i%2)}, data[i]);
+        arr.set(&[_]isize{ @intCast(i / 2), @intCast(i % 2) }, data[i]);
     }
 
     const kurt_fisher = try arr.kurtosis(allocator, true);

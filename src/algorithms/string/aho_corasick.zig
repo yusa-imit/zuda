@@ -49,7 +49,7 @@ pub fn AhoCorasick(comptime T: type) type {
                     .children = std.AutoHashMap(T, *Node).init(allocator),
                     .failure = null,
                     .output = null,
-                    .pattern_indices = .{},
+                    .pattern_indices = .empty,
                     .depth = 0,
                 };
                 return node;
@@ -587,7 +587,7 @@ pub const AhoCorasickASCII = struct {
                 .real_children = [_]bool{false} ** 256,
                 .failure = null,
                 .output = null,
-                .pattern_indices = .{},
+                .pattern_indices = .empty,
                 .depth = 0,
             };
             return node;
@@ -1174,7 +1174,7 @@ test "AhoCorasickASCII - large random patterns (benchmark simulation)" {
 
     // Generate 100 random patterns (smaller than benchmark's 1000)
     const pattern_count = 100;
-    var patterns = std.ArrayList([]const u8){};
+    var patterns = std.ArrayList([]const u8).empty;
     defer {
         for (patterns.items) |pattern| {
             std.testing.allocator.free(pattern);

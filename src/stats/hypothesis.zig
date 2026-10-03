@@ -523,7 +523,7 @@ pub fn anova_oneway(
     const k = groups.len;
 
     // Collect all values for grand mean calculation
-    var all_values = std.ArrayList(T){};
+    var all_values = std.ArrayList(T).empty;
     defer all_values.deinit(alloc);
 
     try all_values.ensureTotalCapacity(alloc, N);

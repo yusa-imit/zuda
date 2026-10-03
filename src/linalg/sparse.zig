@@ -72,8 +72,8 @@ pub fn COO(comptime T: type) type {
             return Self{
                 .rows = rows,
                 .cols = cols,
-                .row_indices = ArrayListUsize{},
-                .col_indices = ArrayListUsize{},
+                .row_indices = ArrayListUsize.empty,
+                .col_indices = ArrayListUsize.empty,
                 .values = ArrayListT{},
                 .allocator = allocator,
             };
