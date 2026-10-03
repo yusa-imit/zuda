@@ -318,7 +318,7 @@ pub fn ScapegoatTree(
             const node = node_ptr.* orelse return;
 
             // Collect nodes in-order
-            var nodes = std.ArrayList(*Node){};
+            var nodes = std.ArrayList(*Node).empty;
             defer nodes.deinit(self.allocator);
 
             try self.collectInOrder(node, &nodes);

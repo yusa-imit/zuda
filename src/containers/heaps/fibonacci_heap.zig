@@ -359,7 +359,7 @@ pub fn FibonacciHeap(
             @memset(degree_table, null);
 
             // Collect root list nodes
-            var roots: std.ArrayList(*Node) = .{};
+            var roots: std.ArrayList(*Node) = .empty;
             defer roots.deinit(self.allocator);
 
             const min = self.min_node.?;
