@@ -307,7 +307,7 @@ test "Min-Cut: basic cut" {
 
     // Source side should contain at least the source vertex
     try testing.expect(cut.len > 0);
-    try testing.expect(std.mem.indexOfScalar(usize, cut, 0) != null);
+    try testing.expect(std.mem.findScalar(usize, cut, 0) != null);
 }
 
 test "Min-Cut: single edge cut" {
@@ -343,5 +343,5 @@ test "Min-Cut: no path results in source only" {
 
     // Only source and vertex 1 (reachable from source) should be in cut
     try testing.expect(cut.len >= 1);
-    try testing.expect(std.mem.indexOfScalar(usize, cut, 0) != null);
+    try testing.expect(std.mem.findScalar(usize, cut, 0) != null);
 }

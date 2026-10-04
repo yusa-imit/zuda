@@ -172,10 +172,10 @@ test "activity selection - basic case" {
 
     // Should select activities: 0 (1-3), 2 (4-6), 3 (6-7), 5 (8-9)
     try testing.expectEqual(@as(usize, 4), result.items.len);
-    try testing.expect(std.mem.indexOfScalar(usize, result.items, 0) != null);
-    try testing.expect(std.mem.indexOfScalar(usize, result.items, 2) != null);
-    try testing.expect(std.mem.indexOfScalar(usize, result.items, 3) != null);
-    try testing.expect(std.mem.indexOfScalar(usize, result.items, 5) != null);
+    try testing.expect(std.mem.findScalar(usize, result.items, 0) != null);
+    try testing.expect(std.mem.findScalar(usize, result.items, 2) != null);
+    try testing.expect(std.mem.findScalar(usize, result.items, 3) != null);
+    try testing.expect(std.mem.findScalar(usize, result.items, 5) != null);
 }
 
 test "activity selection - empty" {

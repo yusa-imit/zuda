@@ -570,7 +570,7 @@ test "metaphone: DGE/DGI/DGY -> J" {
 
     const edge = try metaphone(allocator, "edge", 4);
     defer allocator.free(edge);
-    try testing.expect(std.mem.indexOf(u8, edge, "J") != null);
+    try testing.expect(std.mem.find(u8, edge, "J") != null);
 }
 
 test "metaphone: type variants" {

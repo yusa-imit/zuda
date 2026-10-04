@@ -398,8 +398,8 @@ test "SubmaskIterator - basic iteration" {
     }
 
     try testing.expectEqual(8, masks.items.len); // 2^3
-    try testing.expect(std.mem.indexOfScalar(u64, masks.items, 0b1011) != null);
-    try testing.expect(std.mem.indexOfScalar(u64, masks.items, 0b0000) != null);
+    try testing.expect(std.mem.findScalar(u64, masks.items, 0b1011) != null);
+    try testing.expect(std.mem.findScalar(u64, masks.items, 0b0000) != null);
 }
 
 test "SubmaskIterator - single bit" {

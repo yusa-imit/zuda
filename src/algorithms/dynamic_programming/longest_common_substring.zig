@@ -108,7 +108,7 @@ pub fn longestCommonSubstring(allocator: Allocator, s1: []const u8, s2: []const 
 
     // Find start2 by searching for the substring in s2
     const substr = s1[start1..endIndex1];
-    const start2 = std.mem.indexOf(u8, s2, substr) orelse 0;
+    const start2 = std.mem.find(u8, s2, substr) orelse 0;
 
     return SubstringResult{
         .length = maxLen,
@@ -181,7 +181,7 @@ pub fn longestCommonSubstringOptimized(allocator: Allocator, s1: []const u8, s2:
 
     const start1 = endIndex1 - maxLen;
     const substr = s1[start1..endIndex1];
-    const start2 = std.mem.indexOf(u8, s2, substr) orelse 0;
+    const start2 = std.mem.find(u8, s2, substr) orelse 0;
 
     return SubstringResult{
         .length = maxLen,
@@ -256,7 +256,7 @@ pub fn allCommonSubstrings(allocator: Allocator, s1: []const u8, s2: []const u8,
                     // Deduplicate by substring content
                     const gop = try seen.getOrPut(substr);
                     if (!gop.found_existing) {
-                        const start2 = std.mem.indexOf(u8, s2, substr) orelse continue;
+                        const start2 = std.mem.find(u8, s2, substr) orelse continue;
                         try results.append(SubstringResult{
                             .length = len,
                             .start1 = start1,

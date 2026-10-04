@@ -382,8 +382,8 @@ test "AllocTracker report writes to a writer" {
     try tracker.report(&writer);
     const output = writer.buffered();
 
-    try testing.expect(std.mem.indexOf(u8, output, "AllocTracker Report") != null);
-    try testing.expect(std.mem.indexOf(u8, output, "Allocations: 1") != null);
+    try testing.expect(std.mem.find(u8, output, "AllocTracker Report") != null);
+    try testing.expect(std.mem.find(u8, output, "Allocations: 1") != null);
 }
 
 test "AllocTracker stats snapshot" {

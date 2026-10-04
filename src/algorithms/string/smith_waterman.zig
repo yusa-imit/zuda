@@ -9,7 +9,6 @@ const Allocator = std.mem.Allocator;
 ///
 /// Time: O(n*m) where n = len(seq1), m = len(seq2)
 /// Space: O(n*m) for scoring matrix
-
 /// Alignment scoring parameters
 pub const ScoringMatrix = struct {
     match: i32 = 2,
@@ -323,8 +322,8 @@ test "Smith-Waterman: with gaps" {
 
     try std.testing.expect(alignment.score > 0);
     // Alignment should have a gap
-    const has_gap = std.mem.indexOfScalar(u8, alignment.aligned_seq1, '-') != null or
-        std.mem.indexOfScalar(u8, alignment.aligned_seq2, '-') != null;
+    const has_gap = std.mem.findScalar(u8, alignment.aligned_seq1, '-') != null or
+        std.mem.findScalar(u8, alignment.aligned_seq2, '-') != null;
     try std.testing.expect(has_gap);
 }
 
