@@ -69,7 +69,7 @@ fn profileDoubleArrayTrie(allocator: std.mem.Allocator, patterns: []const []cons
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -83,7 +83,7 @@ pub fn main() !void {
     const random = prng.random();
 
     const pattern_count = 1000;
-    var patterns: std.ArrayList([]const u8) = .{};
+    var patterns: std.ArrayList([]const u8) = .empty;
     defer {
         for (patterns.items) |pattern| {
             allocator.free(pattern);

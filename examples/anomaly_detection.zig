@@ -15,7 +15,7 @@ const distributions = zuda.stats.distributions;
 ///
 /// Use Case: Network traffic monitoring, sensor fault detection, fraud detection
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

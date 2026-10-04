@@ -10,7 +10,7 @@ const descriptive = zuda.stats.descriptive;
 /// - Value at Risk (VaR) calculation
 /// - Risk metrics and performance analysis
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

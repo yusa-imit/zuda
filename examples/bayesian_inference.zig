@@ -7,7 +7,7 @@ const Uniform = zuda.stats.distributions.Uniform;
 const descriptive = zuda.stats.descriptive;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -27,7 +27,7 @@ pub fn main() !void {
     var observations = try std.ArrayList(f64).initCapacity(allocator, n_obs);
     defer observations.deinit(allocator);
 
-    var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
+    var rng = std.Random.DefaultPrng.init(0x5eed);
     const random = rng.random();
 
     const data_dist = Normal(f64){ .mean = true_mu, .std = true_sigma };

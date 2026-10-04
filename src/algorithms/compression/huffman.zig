@@ -34,7 +34,6 @@ const PriorityQueue = std.PriorityQueue;
 /// Reference:
 ///   - Huffman, D. A. (1952). "A Method for the Construction of Minimum-Redundancy Codes"
 ///   - Used in ZIP, GZIP, PNG, JPEG, MP3
-
 /// Huffman tree node
 const Node = struct {
     freq: usize,
@@ -126,8 +125,8 @@ pub const HuffmanCoding = struct {
         }
 
         // Priority queue of nodes (min-heap by frequency)
-        var pq = PriorityQueue(*Node, void, Node.compare).init(self.allocator, {});
-        defer pq.deinit();
+        var pq = PriorityQueue(*Node, void, Node.compare).empty;
+        defer pq.deinit(self.allocator);
 
         // Create leaf nodes
         var iter = frequencies.iterator();
@@ -139,13 +138,13 @@ pub const HuffmanCoding = struct {
                 .left = null,
                 .right = null,
             };
-            try pq.add(node);
+            try pq.push(self.allocator, node);
         }
 
         // Build tree bottom-up
         while (pq.count() > 1) {
-            const left = pq.remove();
-            const right = pq.remove();
+            const left = pq.pop().?;
+            const right = pq.pop().?;
 
             const parent = try self.allocator.create(Node);
             parent.* = .{
@@ -154,10 +153,10 @@ pub const HuffmanCoding = struct {
                 .left = left,
                 .right = right,
             };
-            try pq.add(parent);
+            try pq.push(self.allocator, parent);
         }
 
-        self.root = pq.remove();
+        self.root = pq.pop().?;
 
         // Generate codebook
         try self.generateCodes(self.root.?, 0, 0);

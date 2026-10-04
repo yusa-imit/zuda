@@ -19,26 +19,26 @@ const WorkStealingDeque = zuda.containers.queues.WorkStealingDeque;
 /// - Resize: Protected by mutex, rare due to amortized growth
 ///
 /// Run: zig build example-work-stealing-deque
-
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     std.debug.print("\n=== Work-Stealing Deque API Demo ===\n\n", .{});
 
-    try demo1_basic_operations(allocator);
-    try demo2_lifo_fifo_behavior(allocator);
+    try demo1_basic_operations(io, allocator);
+    try demo2_lifo_fifo_behavior(io, allocator);
 
     // Skip parallel demo on single-threaded targets (e.g., wasm32-wasi)
     if (@import("builtin").single_threaded) {
         std.debug.print("--- Demo 3: Parallel Work Stealing ---\n", .{});
         std.debug.print("(Skipped — target does not support threading)\n\n", .{});
     } else {
-        try demo3_parallel_work_stealing(allocator);
+        try demo3_parallel_work_stealing(io, allocator);
     }
 
-    try demo4_task_queue_simulation(allocator);
+    try demo4_task_queue_simulation(io, allocator);
 
     std.debug.print("\n=== API Summary ===\n", .{});
     std.debug.print("• init(allocator) → !Self             — Create deque (O(1))\n", .{});
@@ -52,16 +52,16 @@ pub fn main() !void {
 }
 
 /// Demo 1: Basic push/pop operations (owner thread)
-fn demo1_basic_operations(allocator: std.mem.Allocator) !void {
+fn demo1_basic_operations(io: std.Io, allocator: std.mem.Allocator) !void {
     std.debug.print("--- Demo 1: Basic Operations ---\n", .{});
 
     var deque = try WorkStealingDeque(u32).init(allocator);
     defer deque.deinit();
 
     // Owner pushes tasks
-    try deque.push(100);
-    try deque.push(200);
-    try deque.push(300);
+    try deque.push(io, 100);
+    try deque.push(io, 200);
+    try deque.push(io, 300);
     std.debug.print("After push(100, 200, 300): size={d}\n", .{deque.size()});
 
     // Owner pops (LIFO: last in, first out for cache locality)
@@ -77,18 +77,18 @@ fn demo1_basic_operations(allocator: std.mem.Allocator) !void {
 }
 
 /// Demo 2: LIFO (owner) vs FIFO (stealer) behavior
-fn demo2_lifo_fifo_behavior(allocator: std.mem.Allocator) !void {
+fn demo2_lifo_fifo_behavior(io: std.Io, allocator: std.mem.Allocator) !void {
     std.debug.print("--- Demo 2: LIFO (Owner) vs FIFO (Stealer) ---\n", .{});
 
     var deque = try WorkStealingDeque(u32).init(allocator);
     defer deque.deinit();
 
     // Owner fills deque
-    try deque.push(1);
-    try deque.push(2);
-    try deque.push(3);
-    try deque.push(4);
-    try deque.push(5);
+    try deque.push(io, 1);
+    try deque.push(io, 2);
+    try deque.push(io, 3);
+    try deque.push(io, 4);
+    try deque.push(io, 5);
     std.debug.print("Deque: [1, 2, 3, 4, 5] (bottom→1, top→5)\n", .{});
 
     // Owner pops (LIFO from bottom)
@@ -111,13 +111,14 @@ fn demo2_lifo_fifo_behavior(allocator: std.mem.Allocator) !void {
 }
 
 /// Demo 3: Parallel work stealing with threads
-fn demo3_parallel_work_stealing(allocator: std.mem.Allocator) !void {
+fn demo3_parallel_work_stealing(io: std.Io, allocator: std.mem.Allocator) !void {
     std.debug.print("--- Demo 3: Parallel Work Stealing ---\n", .{});
 
     const Context = struct {
         deque: *WorkStealingDeque(u32),
         stolen: *std.ArrayList(u32),
-        mutex: *std.Thread.Mutex,
+        mutex: *std.Io.Mutex,
+        io: std.Io,
         allocator: std.mem.Allocator,
     };
 
@@ -127,7 +128,7 @@ fn demo3_parallel_work_stealing(allocator: std.mem.Allocator) !void {
     // Owner fills deque with tasks
     var i: u32 = 0;
     while (i < 20) : (i += 1) {
-        try deque.push(i);
+        try deque.push(io, i);
     }
     std.debug.print("Owner created 20 tasks [0..19]\n", .{});
 
@@ -137,20 +138,20 @@ fn demo3_parallel_work_stealing(allocator: std.mem.Allocator) !void {
             var count: u32 = 0;
             while (ctx.deque.steal()) |task| {
                 count += 1;
-                ctx.mutex.lock();
+                ctx.mutex.lockUncancelable(ctx.io);
                 ctx.stolen.append(ctx.allocator, task) catch {};
-                ctx.mutex.unlock();
+                ctx.mutex.unlock(ctx.io);
                 // Simulate work
-                std.Thread.sleep(100_000); // 100µs
+                ctx.io.sleep(.fromNanoseconds(100_000), .awake) catch {}; // 100µs
             }
         }
     }.run;
 
     var stolen = try std.ArrayList(u32).initCapacity(allocator, 20);
     defer stolen.deinit(allocator);
-    var mutex = std.Thread.Mutex{};
+    var mutex: std.Io.Mutex = .init;
 
-    const ctx = Context{ .deque = &deque, .stolen = &stolen, .mutex = &mutex, .allocator = allocator };
+    const ctx = Context{ .deque = &deque, .stolen = &stolen, .mutex = &mutex, .io = io, .allocator = allocator };
 
     // Spawn 2 stealer threads
     const thread1 = try std.Thread.spawn(.{}, stealer_fn, .{ctx});
@@ -164,7 +165,7 @@ fn demo3_parallel_work_stealing(allocator: std.mem.Allocator) !void {
     while (deque.pop()) |task| {
         owner_count += 1;
         try owner_tasks.append(allocator, task);
-        std.Thread.sleep(150_000); // 150µs (slower than stealers)
+        io.sleep(.fromNanoseconds(150_000), .awake) catch {}; // 150µs (slower than stealers)
     }
 
     // Wait for stealers to finish
@@ -192,7 +193,7 @@ fn demo3_parallel_work_stealing(allocator: std.mem.Allocator) !void {
 }
 
 /// Demo 4: Task queue simulation (zr use case)
-fn demo4_task_queue_simulation(allocator: std.mem.Allocator) !void {
+fn demo4_task_queue_simulation(io: std.Io, allocator: std.mem.Allocator) !void {
     std.debug.print("--- Demo 4: Task Queue Simulation (zr Use Case) ---\n", .{});
 
     const Task = struct {
@@ -204,10 +205,10 @@ fn demo4_task_queue_simulation(allocator: std.mem.Allocator) !void {
     defer deque.deinit();
 
     // Owner thread (main task scheduler) pushes tasks
-    try deque.push(.{ .id = 1, .name = "compile_main.zig" });
-    try deque.push(.{ .id = 2, .name = "compile_utils.zig" });
-    try deque.push(.{ .id = 3, .name = "link_binary" });
-    try deque.push(.{ .id = 4, .name = "run_tests" });
+    try deque.push(io, .{ .id = 1, .name = "compile_main.zig" });
+    try deque.push(io, .{ .id = 2, .name = "compile_utils.zig" });
+    try deque.push(io, .{ .id = 3, .name = "link_binary" });
+    try deque.push(io, .{ .id = 4, .name = "run_tests" });
     std.debug.print("Main scheduler: Pushed 4 tasks to deque\n", .{});
 
     // Worker 1 (owner) processes recent tasks (LIFO for cache locality)

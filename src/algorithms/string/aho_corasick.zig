@@ -49,7 +49,7 @@ pub fn AhoCorasick(comptime T: type) type {
                     .children = std.AutoHashMap(T, *Node).init(allocator),
                     .failure = null,
                     .output = null,
-                    .pattern_indices = .{},
+                    .pattern_indices = .empty,
                     .depth = 0,
                 };
                 return node;
@@ -227,7 +227,7 @@ pub fn AhoCorasick(comptime T: type) type {
         /// Returns ArrayList of matches (pattern_index, position)
         /// Time: O(n + z) where z = number of matches | Space: O(z)
         pub fn findAll(self: *const Self, text: []const T, allocator: Allocator) !std.ArrayList(Match) {
-            var matches: std.ArrayList(Match) = .{};
+            var matches: std.ArrayList(Match) = .empty;
             errdefer matches.deinit(allocator);
 
             if (text.len == 0) return matches;
@@ -587,7 +587,7 @@ pub const AhoCorasickASCII = struct {
                 .real_children = [_]bool{false} ** 256,
                 .failure = null,
                 .output = null,
-                .pattern_indices = .{},
+                .pattern_indices = .empty,
                 .depth = 0,
             };
             return node;
@@ -765,7 +765,7 @@ pub const AhoCorasickASCII = struct {
     /// Find all occurrences of all patterns in text
     /// Time: O(n + z) | Space: O(z)
     pub fn findAll(self: *const Self, text: []const u8, allocator: Allocator) !std.ArrayList(Match) {
-        var matches: std.ArrayList(Match) = .{};
+        var matches: std.ArrayList(Match) = .empty;
         errdefer matches.deinit(allocator);
 
         if (text.len == 0) return matches;
@@ -1174,7 +1174,7 @@ test "AhoCorasickASCII - large random patterns (benchmark simulation)" {
 
     // Generate 100 random patterns (smaller than benchmark's 1000)
     const pattern_count = 100;
-    var patterns = std.ArrayList([]const u8){};
+    var patterns = std.ArrayList([]const u8).empty;
     defer {
         for (patterns.items) |pattern| {
             std.testing.allocator.free(pattern);

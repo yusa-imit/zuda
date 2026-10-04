@@ -26,7 +26,7 @@ const PROJECTILE_MASS: f64 = 0.145; // kg (baseball)
 const PROJECTILE_RADIUS: f64 = 0.0366; // m
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

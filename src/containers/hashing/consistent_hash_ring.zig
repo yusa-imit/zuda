@@ -66,7 +66,7 @@ pub fn ConsistentHashRing(
             return Self{
                 .allocator = allocator,
                 .ctx = ctx,
-                .virtual_nodes = .{},
+                .virtual_nodes = .empty,
                 .replicas = replicas,
             };
         }

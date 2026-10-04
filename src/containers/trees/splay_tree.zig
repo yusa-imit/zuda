@@ -569,8 +569,8 @@ test "SplayTree: validate invariants after random operations" {
     var prng = std.Random.DefaultPrng.init(67890);
     const random = prng.random();
 
-    var inserted_keys = std.AutoArrayHashMap(i64, bool).init(testing.allocator);
-    defer inserted_keys.deinit();
+    var inserted_keys = std.AutoArrayHashMapUnmanaged(i64, bool).empty;
+    defer inserted_keys.deinit(testing.allocator);
 
     for (0..200) |_| {
         const op = random.intRangeAtMost(u8, 0, 2);
@@ -578,7 +578,7 @@ test "SplayTree: validate invariants after random operations" {
 
         if (op == 0) {
             _ = try tree.insert(key, key * 10);
-            try inserted_keys.put(key, true);
+            try inserted_keys.put(testing.allocator, key, true);
         } else if (op == 1) {
             _ = tree.remove(key);
             _ = inserted_keys.remove(key);

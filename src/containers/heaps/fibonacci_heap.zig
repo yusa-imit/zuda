@@ -78,11 +78,11 @@ pub fn FibonacciHeap(
             // Phase 1: Collect all nodes (reusing 'marked' field to track visited nodes)
             // Phase 2: Free all collected nodes
 
-            var nodes_to_free: std.ArrayList(*Node) = .{};
+            var nodes_to_free: std.ArrayList(*Node) = .empty;
             defer nodes_to_free.deinit(self.allocator);
 
             // Collect all nodes using DFS with explicit stack
-            var stack: std.ArrayList(*Node) = .{};
+            var stack: std.ArrayList(*Node) = .empty;
             defer stack.deinit(self.allocator);
 
             // Start with root list
@@ -359,7 +359,7 @@ pub fn FibonacciHeap(
             @memset(degree_table, null);
 
             // Collect root list nodes
-            var roots: std.ArrayList(*Node) = .{};
+            var roots: std.ArrayList(*Node) = .empty;
             defer roots.deinit(self.allocator);
 
             const min = self.min_node.?;

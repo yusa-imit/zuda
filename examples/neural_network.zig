@@ -10,7 +10,7 @@ const descriptive = zuda.stats.descriptive;
 /// This example shows the complete workflow: data generation → training loop → evaluation
 /// Focus is on API demonstration rather than perfect convergence
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

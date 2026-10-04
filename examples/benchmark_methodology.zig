@@ -16,6 +16,24 @@
 //! This example shows how to implement warmup-aware benchmarking.
 
 const std = @import("std");
+
+/// Stopwatch over the injected `io` clock (replaces the removed `std.time.Timer`).
+const Timer = struct {
+    io: std.Io,
+    start_ns: i96,
+
+    fn start(io: std.Io) Timer {
+        return .{ .io = io, .start_ns = std.Io.Clock.awake.now(io).nanoseconds };
+    }
+
+    fn read(timer: *const Timer) u64 {
+        return @intCast(std.Io.Clock.awake.now(timer.io).nanoseconds - timer.start_ns);
+    }
+
+    fn reset(timer: *Timer) void {
+        timer.start_ns = std.Io.Clock.awake.now(timer.io).nanoseconds;
+    }
+};
 const zuda = @import("zuda");
 
 const BenchResult = struct {
@@ -32,6 +50,7 @@ const BenchResult = struct {
 
 /// Run a benchmark with warmup iterations
 fn benchmarkWithWarmup(
+    io: std.Io,
     comptime name: []const u8,
     comptime func: anytype,
     args: anytype,
@@ -42,7 +61,7 @@ fn benchmarkWithWarmup(
     errdefer allocator.free(times);
 
     // Cold run (CPU at lower frequency)
-    var timer = try std.time.Timer.start();
+    var timer = Timer.start(io);
     _ = @call(.auto, func, args);
     const cold_ns = timer.read();
 
@@ -103,8 +122,9 @@ fn matrixMultiply(A: []const f64, B: []const f64, C: []f64, n: usize) void {
     }
 }
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -130,6 +150,7 @@ pub fn main() !void {
         }
 
         var result = try benchmarkWithWarmup(
+            io,
             "Dot Product (1M f64)",
             dotProduct,
             .{ x, y },
@@ -160,6 +181,7 @@ pub fn main() !void {
         }
 
         var result = try benchmarkWithWarmup(
+            io,
             "Matrix Multiply (256×256)",
             matrixMultiply,
             .{ A, B, C, n },

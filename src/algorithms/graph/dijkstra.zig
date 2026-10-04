@@ -124,14 +124,14 @@ pub fn Dijkstra(
             errdefer parents.deinit();
 
             // Priority queue (min-heap) for vertices
-            var pq = std.PriorityQueue(QueueEntry, void, compareDistance).init(allocator, {});
-            defer pq.deinit();
+            var pq = std.PriorityQueue(QueueEntry, void, compareDistance).empty;
+            defer pq.deinit(allocator);
 
             // Initialize start vertex
             try distances.put(start, zero_weight);
-            try pq.add(.{ .vertex = start, .distance = zero_weight });
+            try pq.push(allocator, .{ .vertex = start, .distance = zero_weight });
 
-            while (pq.removeOrNull()) |entry| {
+            while (pq.pop()) |entry| {
                 const u = entry.vertex;
                 const dist_u = entry.distance;
 
@@ -160,7 +160,7 @@ pub fn Dijkstra(
                     if (current_dist_v == null or std.math.order(alt, current_dist_v.?) == .lt) {
                         try distances.put(v, alt);
                         try parents.put(v, u);
-                        try pq.add(.{ .vertex = v, .distance = alt });
+                        try pq.push(allocator, .{ .vertex = v, .distance = alt });
                     }
                 }
             }
@@ -190,13 +190,13 @@ pub fn Dijkstra(
             var parents = std.HashMap(V, V, HashMapContext, std.hash_map.default_max_load_percentage).init(allocator);
             errdefer parents.deinit();
 
-            var pq = std.PriorityQueue(QueueEntry, void, compareDistance).init(allocator, {});
-            defer pq.deinit();
+            var pq = std.PriorityQueue(QueueEntry, void, compareDistance).empty;
+            defer pq.deinit(allocator);
 
             try distances.put(start, zero_weight);
-            try pq.add(.{ .vertex = start, .distance = zero_weight });
+            try pq.push(allocator, .{ .vertex = start, .distance = zero_weight });
 
-            while (pq.removeOrNull()) |entry| {
+            while (pq.pop()) |entry| {
                 const u = entry.vertex;
                 const dist_u = entry.distance;
 
@@ -225,7 +225,7 @@ pub fn Dijkstra(
                     if (current_dist_v == null or std.math.order(alt, current_dist_v.?) == .lt) {
                         try distances.put(v, alt);
                         try parents.put(v, u);
-                        try pq.add(.{ .vertex = v, .distance = alt });
+                        try pq.push(allocator, .{ .vertex = v, .distance = alt });
                     }
                 }
             }

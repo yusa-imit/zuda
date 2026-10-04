@@ -141,8 +141,8 @@ pub fn AStar(
             errdefer parents.deinit();
 
             // Priority queue ordered by f-score (g + h)
-            var pq = std.PriorityQueue(QueueEntry, void, compareFScore).init(allocator, {});
-            defer pq.deinit();
+            var pq = std.PriorityQueue(QueueEntry, void, compareFScore).empty;
+            defer pq.deinit(allocator);
 
             // Closed set (already processed vertices)
             var closed = std.HashMap(V, void, HashMapContext, std.hash_map.default_max_load_percentage).init(allocator);
@@ -151,12 +151,12 @@ pub fn AStar(
             // Initialize start vertex
             try g_scores.put(start, @as(W, 0));
             const h_start = heuristic_fn(heuristic_ctx, start, goal);
-            try pq.add(.{ .vertex = start, .f_score = h_start });
+            try pq.push(allocator, .{ .vertex = start, .f_score = h_start });
 
             var goal_reached = false;
 
             while (pq.count() > 0) {
-                const current_entry = pq.remove();
+                const current_entry = pq.pop().?;
                 const current = current_entry.vertex;
 
                 // Early exit if we reached the goal
@@ -199,7 +199,7 @@ pub fn AStar(
                         const h = heuristic_fn(heuristic_ctx, neighbor, goal);
                         const f = tentative_g + h;
 
-                        try pq.add(.{ .vertex = neighbor, .f_score = f });
+                        try pq.push(allocator, .{ .vertex = neighbor, .f_score = f });
                     }
                 }
             }
@@ -273,10 +273,10 @@ const TestGrid = struct {
     // 4-directional movement (no diagonals)
     fn getNeighbors(self: *const TestGrid, current: Coord, out: anytype) !void {
         const directions = [_][2]i32{
-            .{ 0, 1 },   // down
-            .{ 0, -1 },  // up
-            .{ 1, 0 },   // right
-            .{ -1, 0 },  // left
+            .{ 0, 1 }, // down
+            .{ 0, -1 }, // up
+            .{ 1, 0 }, // right
+            .{ -1, 0 }, // left
         };
 
         for (directions) |dir| {

@@ -647,9 +647,9 @@ pub fn BTree(
         /// Create an iterator over all entries in sorted order.
         /// Time: O(1) to create | Space: O(h) for iterator stack
         pub fn iterator(self: *const Self) !Iterator {
-            var stack = std.ArrayList(*const Node){};
+            var stack = std.ArrayList(*const Node).empty;
             errdefer stack.deinit(self.allocator);
-            var indices = std.ArrayList(usize){};
+            var indices = std.ArrayList(usize).empty;
             errdefer indices.deinit(self.allocator);
 
             if (self.root) |root| {
