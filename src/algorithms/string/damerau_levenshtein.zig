@@ -27,7 +27,6 @@ const Allocator = std.mem.Allocator;
 ///
 /// Reference: Damerau (1964) "A technique for computer detection and correction of spelling errors"
 ///            Lowrance & Wagner (1975) "An Extension of the String-to-String Correction Problem"
-
 /// Compute Damerau-Levenshtein distance (OSA variant)
 /// Allows insertions, deletions, substitutions, and transpositions
 /// Time: O(m*n) | Space: O(m*n)
@@ -278,10 +277,10 @@ test "damerau_levenshtein: find all similar" {
 
     // "hello" (exact), "helo" (del), "help" (sub), "helo" (del)
     try std.testing.expectEqual(4, result.items.len);
-    try std.testing.expect(std.mem.indexOfScalar(usize, result.items, 0) != null); // hello
-    try std.testing.expect(std.mem.indexOfScalar(usize, result.items, 1) != null); // helo
-    try std.testing.expect(std.mem.indexOfScalar(usize, result.items, 2) != null); // help
-    try std.testing.expect(std.mem.indexOfScalar(usize, result.items, 4) != null); // helo
+    try std.testing.expect(std.mem.findScalar(usize, result.items, 0) != null); // hello
+    try std.testing.expect(std.mem.findScalar(usize, result.items, 1) != null); // helo
+    try std.testing.expect(std.mem.findScalar(usize, result.items, 2) != null); // help
+    try std.testing.expect(std.mem.findScalar(usize, result.items, 4) != null); // helo
 }
 
 test "damerau_levenshtein: spell checking use case" {

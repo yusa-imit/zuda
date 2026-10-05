@@ -356,7 +356,7 @@ test "BKTree - spell checking use case" {
     }
 
     try testing.expect(suggestions.items.len >= 2);
-    try testing.expect(std.mem.indexOf(u8, suggestions.items[0], "ap") != null);
+    try testing.expect(std.mem.find(u8, suggestions.items[0], "ap") != null);
 }
 
 test "BKTree - empty tree" {
@@ -450,12 +450,12 @@ test "BKTree - stress test" {
     defer tree.deinit();
 
     const words = [_][]const u8{
-        "algorithm", "data",      "structure", "tree",   "graph",  "heap",   "queue",
-        "stack",     "array",     "list",      "map",    "set",    "hash",   "sort",
-        "search",    "insert",    "delete",    "update", "create", "remove", "find",
-        "get",       "put",       "add",       "clear",  "empty",  "size",   "count",
-        "contains",  "iterator",  "next",      "prev",   "first",  "last",   "begin",
-        "end",       "reverse",   "sort",      "filter", "reduce", "map",    "foreach",
+        "algorithm", "data",     "structure", "tree",   "graph",  "heap",   "queue",
+        "stack",     "array",    "list",      "map",    "set",    "hash",   "sort",
+        "search",    "insert",   "delete",    "update", "create", "remove", "find",
+        "get",       "put",      "add",       "clear",  "empty",  "size",   "count",
+        "contains",  "iterator", "next",      "prev",   "first",  "last",   "begin",
+        "end",       "reverse",  "sort",      "filter", "reduce", "map",    "foreach",
     };
 
     for (words) |word| {
@@ -482,8 +482,8 @@ test "BKTree - search with tolerance 0 (exact match only)" {
     defer tree.deinit();
 
     try tree.insert("apple");
-    try tree.insert("apply");  // distance 2 from apple
-    try tree.insert("ape");    // distance 2 from apple
+    try tree.insert("apply"); // distance 2 from apple
+    try tree.insert("ape"); // distance 2 from apple
     try tree.insert("append"); // distance 3 from apple
 
     // Search with tolerance 0 should only find exact matches
@@ -510,11 +510,11 @@ test "BKTree - multiple results at different distances" {
     defer tree.deinit();
 
     try tree.insert("cat");
-    try tree.insert("bat");    // distance 1 from cat (c->b)
-    try tree.insert("rat");    // distance 1 from cat (c->r)
-    try tree.insert("cats");   // distance 1 from cat (insert s)
-    try tree.insert("cast");   // distance 2 from cat (c->c, a->a, t->s, insert t)
-    try tree.insert("hat");    // distance 1 from cat (c->h)
+    try tree.insert("bat"); // distance 1 from cat (c->b)
+    try tree.insert("rat"); // distance 1 from cat (c->r)
+    try tree.insert("cats"); // distance 1 from cat (insert s)
+    try tree.insert("cast"); // distance 2 from cat (c->c, a->a, t->s, insert t)
+    try tree.insert("hat"); // distance 1 from cat (c->h)
 
     // Search with tolerance 1 should find exact match plus distance-1 items
     var iter = try tree.search("cat", 1);
@@ -617,9 +617,9 @@ test "BKTree - sequential similar words (unbalanced insertion)" {
     // Insert words in a pattern that creates unbalanced tree structure
     // Each word is close to the previous one
     try tree.insert("cat");
-    try tree.insert("cats");    // distance 1: append s
-    try tree.insert("catty");   // distance 2: append ty
-    try tree.insert("cattle");  // distance 3 from cat, but distance 3 from cats
+    try tree.insert("cats"); // distance 1: append s
+    try tree.insert("catty"); // distance 2: append ty
+    try tree.insert("cattle"); // distance 3 from cat, but distance 3 from cats
     try tree.insert("catfish"); // distance 4: append fish
 
     // Verify all insertions worked

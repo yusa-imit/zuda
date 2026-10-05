@@ -282,8 +282,8 @@ test "MatrixChain: parenthesization string" {
 
     // Should be "(A1A2)" for optimal (A₁A₂)
     try expect(paren.len > 0);
-    try expect(std.mem.indexOf(u8, paren, "A1") != null);
-    try expect(std.mem.indexOf(u8, paren, "A2") != null);
+    try expect(std.mem.find(u8, paren, "A1") != null);
+    try expect(std.mem.find(u8, paren, "A2") != null);
 }
 
 test "MatrixChain: 5 matrices" {

@@ -323,8 +323,8 @@ fn handleC(allocator: Allocator, word: []const u8, i: usize, primary: *std.Array
         // Greek CH -> K (e.g., "chorus", "chrome", "chemical")
         if (i + 4 < len and
             (std.mem.eql(u8, word[i .. i + 5], "CHORU") or
-            std.mem.eql(u8, word[i .. i + 5], "CHROM") or
-            std.mem.eql(u8, word[i .. i + 5], "CHEMI")))
+                std.mem.eql(u8, word[i .. i + 5], "CHROM") or
+                std.mem.eql(u8, word[i .. i + 5], "CHEMI")))
         {
             try primary.append(allocator, 'K');
             if (!alt_full) try alternative.append(allocator, 'K');
@@ -798,7 +798,7 @@ test "double_metaphone: double consonants" {
     var success = try doubleMetaphone(allocator, "success", 4);
     defer success.deinit(allocator);
     // CC before E -> KS
-    try testing.expect(std.mem.indexOf(u8, success.primary, "KS") != null);
+    try testing.expect(std.mem.find(u8, success.primary, "KS") != null);
 }
 
 test "double_metaphone: vowel handling" {

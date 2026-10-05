@@ -9684,8 +9684,8 @@ pub fn BivariatePoisson(comptime T: type) type {
             const x2_f = @as(T, @floatFromInt(x2));
 
             const log_base = -(self.theta0 + self.theta1 + self.theta2) +
-                             x1_f * @log(self.theta1) - logFactorial(T, x1) +
-                             x2_f * @log(self.theta2) - logFactorial(T, x2);
+                x1_f * @log(self.theta1) - logFactorial(T, x1) +
+                x2_f * @log(self.theta2) - logFactorial(T, x2);
             const base_factor = @exp(log_base);
 
             // Compute the sum: k=0..min(x1,x2)
@@ -9704,7 +9704,7 @@ pub fn BivariatePoisson(comptime T: type) type {
 
                     // Each term: exp(logBinomialCoeff(x1,k) + logBinomialCoeff(x2,k) + logFactorial(k) + k*log_ratio)
                     const log_term = logBinomialCoeff(T, x1, k) + logBinomialCoeff(T, x2, k) +
-                                     logFactorial(T, k) + k_f * log_ratio;
+                        logFactorial(T, k) + k_f * log_ratio;
                     sum += @exp(log_term);
                 }
             }
@@ -90325,7 +90325,7 @@ test "Meixner: format contains 'Meixner'" {
     var stream = std.Io.Writer.fixed(&buffer);
     try dist.format(&stream);
     const output = stream.buffered();
-    try expect(std.mem.indexOf(u8, output, "Meixner") != null);
+    try expect(std.mem.find(u8, output, "Meixner") != null);
 }
 
 pub fn MarshallOlkinExponential(comptime T: type) type {
@@ -91049,7 +91049,7 @@ test "MarshallOlkinExponential: format contains 'MarshallOlkinExponential'" {
     var stream = std.Io.Writer.fixed(&buffer);
     try dist.format(&stream);
     const output = stream.buffered();
-    try expect(std.mem.indexOf(u8, output, "MarshallOlkinExponential") != null);
+    try expect(std.mem.find(u8, output, "MarshallOlkinExponential") != null);
 }
 
 // ============================================================================
@@ -103626,7 +103626,7 @@ test "format - Normal" {
     const dist = try Normal(f64).init(0.0, 1.0);
     const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
     try expect(written.len > 0);
-    try expect(std.mem.indexOf(u8, written, "Normal") != null);
+    try expect(std.mem.find(u8, written, "Normal") != null);
 }
 
 test "format - Uniform" {
@@ -103634,7 +103634,7 @@ test "format - Uniform" {
     const dist = try Uniform(f64).init(0.0, 1.0);
     const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
     try expect(written.len > 0);
-    try expect(std.mem.indexOf(u8, written, "Uniform") != null);
+    try expect(std.mem.find(u8, written, "Uniform") != null);
 }
 
 test "format - Exponential" {
@@ -103642,7 +103642,7 @@ test "format - Exponential" {
     const dist = try Exponential(f64).init(1.0);
     const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
     try expect(written.len > 0);
-    try expect(std.mem.indexOf(u8, written, "Exponential") != null);
+    try expect(std.mem.find(u8, written, "Exponential") != null);
 }
 
 test "format - Gamma" {
@@ -103650,7 +103650,7 @@ test "format - Gamma" {
     const dist = try Gamma(f64).init(2.0, 1.0);
     const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
     try expect(written.len > 0);
-    try expect(std.mem.indexOf(u8, written, "Gamma") != null);
+    try expect(std.mem.find(u8, written, "Gamma") != null);
 }
 
 test "format - Beta" {
@@ -103658,7 +103658,7 @@ test "format - Beta" {
     const dist = try Beta(f64).init(2.0, 5.0);
     const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
     try expect(written.len > 0);
-    try expect(std.mem.indexOf(u8, written, "Beta") != null);
+    try expect(std.mem.find(u8, written, "Beta") != null);
 }
 
 test "format - ChiSquared" {
@@ -103666,7 +103666,7 @@ test "format - ChiSquared" {
     const dist = try ChiSquared(f64).init(5);
     const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
     try expect(written.len > 0);
-    try expect(std.mem.indexOf(u8, written, "ChiSquared") != null);
+    try expect(std.mem.find(u8, written, "ChiSquared") != null);
 }
 
 test "format - StudentT" {
@@ -103674,7 +103674,7 @@ test "format - StudentT" {
     const dist = try StudentT(f64).init(10.0);
     const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
     try expect(written.len > 0);
-    try expect(std.mem.indexOf(u8, written, "StudentT") != null);
+    try expect(std.mem.find(u8, written, "StudentT") != null);
 }
 
 test "format - FDistribution" {
@@ -103682,7 +103682,7 @@ test "format - FDistribution" {
     const dist = try FDistribution(f64).init(5.0, 10.0);
     const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
     try expect(written.len > 0);
-    try expect(std.mem.indexOf(u8, written, "FDistribution") != null);
+    try expect(std.mem.find(u8, written, "FDistribution") != null);
 }
 
 test "format - Bernoulli" {
@@ -103690,7 +103690,7 @@ test "format - Bernoulli" {
     const dist = try Bernoulli(f64).init(0.5);
     const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
     try expect(written.len > 0);
-    try expect(std.mem.indexOf(u8, written, "Bernoulli") != null);
+    try expect(std.mem.find(u8, written, "Bernoulli") != null);
 }
 
 test "format - Geometric" {
@@ -103698,7 +103698,7 @@ test "format - Geometric" {
     const dist = try Geometric(f64).init(0.3);
     const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
     try expect(written.len > 0);
-    try expect(std.mem.indexOf(u8, written, "Geometric") != null);
+    try expect(std.mem.find(u8, written, "Geometric") != null);
 }
 
 test "format - Poisson" {
@@ -103706,7 +103706,7 @@ test "format - Poisson" {
     const dist = try Poisson(f64).init(3.0);
     const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
     try expect(written.len > 0);
-    try expect(std.mem.indexOf(u8, written, "Poisson") != null);
+    try expect(std.mem.find(u8, written, "Poisson") != null);
 }
 
 test "format - Binomial" {
@@ -103714,7 +103714,7 @@ test "format - Binomial" {
     const dist = try Binomial(f64).init(10, 0.5);
     const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
     try expect(written.len > 0);
-    try expect(std.mem.indexOf(u8, written, "Binomial") != null);
+    try expect(std.mem.find(u8, written, "Binomial") != null);
 }
 
 test "format - Laplace" {
@@ -103722,7 +103722,7 @@ test "format - Laplace" {
     const dist = try Laplace(f64).init(0.0, 1.0);
     const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
     try expect(written.len > 0);
-    try expect(std.mem.indexOf(u8, written, "Laplace") != null);
+    try expect(std.mem.find(u8, written, "Laplace") != null);
 }
 
 test "format - Weibull" {
@@ -103730,7 +103730,7 @@ test "format - Weibull" {
     const dist = try Weibull(f64).init(2.0, 1.0);
     const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
     try expect(written.len > 0);
-    try expect(std.mem.indexOf(u8, written, "Weibull") != null);
+    try expect(std.mem.find(u8, written, "Weibull") != null);
 }
 
 test "format - Pareto" {
@@ -103738,7 +103738,7 @@ test "format - Pareto" {
     const dist = try Pareto(f64).init(1.0, 2.0);
     const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
     try expect(written.len > 0);
-    try expect(std.mem.indexOf(u8, written, "Pareto") != null);
+    try expect(std.mem.find(u8, written, "Pareto") != null);
 }
 
 // ============================================================================
@@ -115792,7 +115792,7 @@ test "format - BetaRectangular" {
     const dist = try BetaRectangular(f64).init(0.3, 2.0, 5.0);
     const written = try std.fmt.bufPrint(&buf, "{f}", .{dist});
     try expect(written.len > 0);
-    try expect(std.mem.indexOf(u8, written, "BetaRectangular") != null);
+    try expect(std.mem.find(u8, written, "BetaRectangular") != null);
 }
 
 // ============================================================================
@@ -122523,7 +122523,7 @@ pub fn DoubleGamma(comptime T: type) type {
             const abs_x = @abs(x);
             // log f(x) = ln(0.5) + α·ln(β) - ln(Γ(α)) + (α-1)·ln(|x|) - β·|x|
             const log_pdf = @log(0.5) + self.shape * @log(self.rate) - logGamma(self.shape) +
-                           (self.shape - 1.0) * @log(abs_x) - self.rate * abs_x;
+                (self.shape - 1.0) * @log(abs_x) - self.rate * abs_x;
             return @exp(log_pdf);
         }
 
@@ -122538,7 +122538,7 @@ pub fn DoubleGamma(comptime T: type) type {
 
             const abs_x = @abs(x);
             return @log(0.5) + self.shape * @log(self.rate) - logGamma(self.shape) +
-                   (self.shape - 1.0) * @log(abs_x) - self.rate * abs_x;
+                (self.shape - 1.0) * @log(abs_x) - self.rate * abs_x;
         }
 
         /// Cumulative distribution function at x
@@ -122631,7 +122631,7 @@ pub fn DoubleGamma(comptime T: type) type {
         pub fn entropy(self: Self) T {
             // [α − ln(β) + logGamma(α) + (1−α)·digamma(α)] + ln(2)
             return self.shape - @log(self.rate) + logGamma(self.shape) +
-                   (1.0 - self.shape) * digamma(T, self.shape) + @log(2.0);
+                (1.0 - self.shape) * digamma(T, self.shape) + @log(2.0);
         }
 
         /// Sample from the distribution
@@ -124912,9 +124912,9 @@ pub fn MultivariateHypergeometric(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        category_sizes: []u64,  // owned copy of category sizes
-        n: u64,                  // number of draws
-        N: u64,                  // total population size (cached sum)
+        category_sizes: []u64, // owned copy of category sizes
+        n: u64, // number of draws
+        N: u64, // total population size (cached sum)
         allocator: std.mem.Allocator,
 
         /// Initialize MultivariateHypergeometric distribution.
@@ -127962,7 +127962,7 @@ pub fn Sibuya(comptime T: type) type {
             if (k == 0) return -math.inf(T);
             const k_f: T = @floatFromInt(k);
             return @log(self.alpha) + logGamma(k_f - self.alpha) -
-                   logGamma(1.0 - self.alpha) - logGamma(k_f + 1.0);
+                logGamma(1.0 - self.alpha) - logGamma(k_f + 1.0);
         }
 
         /// Cumulative distribution function: P(X ≤ k) = 1 − sf(k)
@@ -127994,7 +127994,7 @@ pub fn Sibuya(comptime T: type) type {
         pub fn logsf(self: Self, k: T) T {
             const k_plus_1: T = k + 1.0;
             return logGamma(k_plus_1 - self.alpha) -
-                   logGamma(1.0 - self.alpha) - logGamma(k_plus_1);
+                logGamma(1.0 - self.alpha) - logGamma(k_plus_1);
         }
 
         /// Quantile function: smallest k such that P(X ≤ k) ≥ p.
