@@ -89,7 +89,7 @@ pub fn hamiltonianPath(
     var visited = std.AutoHashMap(T, bool).init(allocator);
     defer visited.deinit();
 
-    var path = std.ArrayList(T){};
+    var path: std.ArrayList(T) = .empty;
     defer path.deinit(allocator);
 
     // Initialize visited map
@@ -135,7 +135,7 @@ pub fn hamiltonianCycle(
     var visited = std.AutoHashMap(T, bool).init(allocator);
     defer visited.deinit();
 
-    var path = std.ArrayList(T){};
+    var path: std.ArrayList(T) = .empty;
     defer path.deinit(allocator);
 
     // Initialize visited map
@@ -334,19 +334,19 @@ test "hamiltonianPath - simple path" {
         graph.deinit();
     }
 
-    var neighbors0 = std.ArrayList(u32){};
+    var neighbors0: std.ArrayList(u32) = .empty;
     try neighbors0.append(allocator, 1);
     try graph.put(0, neighbors0);
 
-    var neighbors1 = std.ArrayList(u32){};
+    var neighbors1: std.ArrayList(u32) = .empty;
     try neighbors1.append(allocator, 2);
     try graph.put(1, neighbors1);
 
-    var neighbors2 = std.ArrayList(u32){};
+    var neighbors2: std.ArrayList(u32) = .empty;
     try neighbors2.append(allocator, 3);
     try graph.put(2, neighbors2);
 
-    const neighbors3 = std.ArrayList(u32){};
+    const neighbors3: std.ArrayList(u32) = .empty;
     try graph.put(3, neighbors3);
 
     var result = try hamiltonianPath(u32, allocator, &graph, 0);
@@ -374,7 +374,7 @@ test "hamiltonianPath - complete graph K4" {
     }
 
     for (0..4) |i| {
-        var neighbors = std.ArrayList(u32){};
+        var neighbors: std.ArrayList(u32) = .empty;
         for (0..4) |j| {
             if (i != j) {
                 try neighbors.append(allocator, @intCast(j));
@@ -406,19 +406,19 @@ test "hamiltonianPath - no path exists" {
         graph.deinit();
     }
 
-    var neighbors0 = std.ArrayList(u32){};
+    var neighbors0: std.ArrayList(u32) = .empty;
     try neighbors0.append(allocator, 1);
     try graph.put(0, neighbors0);
 
-    var neighbors1 = std.ArrayList(u32){};
+    var neighbors1: std.ArrayList(u32) = .empty;
     try neighbors1.append(allocator, 0);
     try graph.put(1, neighbors1);
 
-    var neighbors2 = std.ArrayList(u32){};
+    var neighbors2: std.ArrayList(u32) = .empty;
     try neighbors2.append(allocator, 3);
     try graph.put(2, neighbors2);
 
-    var neighbors3 = std.ArrayList(u32){};
+    var neighbors3: std.ArrayList(u32) = .empty;
     try neighbors3.append(allocator, 2);
     try graph.put(3, neighbors3);
 
@@ -441,17 +441,17 @@ test "hamiltonianCycle - simple cycle" {
         graph.deinit();
     }
 
-    var neighbors0 = std.ArrayList(u32){};
+    var neighbors0: std.ArrayList(u32) = .empty;
     try neighbors0.append(allocator, 1);
     try neighbors0.append(allocator, 2);
     try graph.put(0, neighbors0);
 
-    var neighbors1 = std.ArrayList(u32){};
+    var neighbors1: std.ArrayList(u32) = .empty;
     try neighbors1.append(allocator, 0);
     try neighbors1.append(allocator, 2);
     try graph.put(1, neighbors1);
 
-    var neighbors2 = std.ArrayList(u32){};
+    var neighbors2: std.ArrayList(u32) = .empty;
     try neighbors2.append(allocator, 1);
     try neighbors2.append(allocator, 0);
     try graph.put(2, neighbors2);
@@ -479,22 +479,22 @@ test "hamiltonianCycle - square graph" {
         graph.deinit();
     }
 
-    var neighbors0 = std.ArrayList(u32){};
+    var neighbors0: std.ArrayList(u32) = .empty;
     try neighbors0.append(allocator, 1);
     try neighbors0.append(allocator, 3);
     try graph.put(0, neighbors0);
 
-    var neighbors1 = std.ArrayList(u32){};
+    var neighbors1: std.ArrayList(u32) = .empty;
     try neighbors1.append(allocator, 0);
     try neighbors1.append(allocator, 2);
     try graph.put(1, neighbors1);
 
-    var neighbors2 = std.ArrayList(u32){};
+    var neighbors2: std.ArrayList(u32) = .empty;
     try neighbors2.append(allocator, 1);
     try neighbors2.append(allocator, 3);
     try graph.put(2, neighbors2);
 
-    var neighbors3 = std.ArrayList(u32){};
+    var neighbors3: std.ArrayList(u32) = .empty;
     try neighbors3.append(allocator, 2);
     try neighbors3.append(allocator, 0);
     try graph.put(3, neighbors3);
@@ -522,21 +522,21 @@ test "hamiltonianCycle - no cycle exists" {
         graph.deinit();
     }
 
-    var neighbors0 = std.ArrayList(u32){};
+    var neighbors0: std.ArrayList(u32) = .empty;
     try neighbors0.append(allocator, 1);
     try graph.put(0, neighbors0);
 
-    var neighbors1 = std.ArrayList(u32){};
+    var neighbors1: std.ArrayList(u32) = .empty;
     try neighbors1.append(allocator, 0);
     try neighbors1.append(allocator, 2);
     try graph.put(1, neighbors1);
 
-    var neighbors2 = std.ArrayList(u32){};
+    var neighbors2: std.ArrayList(u32) = .empty;
     try neighbors2.append(allocator, 1);
     try neighbors2.append(allocator, 3);
     try graph.put(2, neighbors2);
 
-    var neighbors3 = std.ArrayList(u32){};
+    var neighbors3: std.ArrayList(u32) = .empty;
     try neighbors3.append(allocator, 2);
     try graph.put(3, neighbors3);
 
@@ -559,11 +559,11 @@ test "hamiltonianCycle - too few vertices" {
         graph.deinit();
     }
 
-    var neighbors0 = std.ArrayList(u32){};
+    var neighbors0: std.ArrayList(u32) = .empty;
     try neighbors0.append(allocator, 1);
     try graph.put(0, neighbors0);
 
-    var neighbors1 = std.ArrayList(u32){};
+    var neighbors1: std.ArrayList(u32) = .empty;
     try neighbors1.append(allocator, 0);
     try graph.put(1, neighbors1);
 
@@ -585,15 +585,15 @@ test "isValidPath - valid path" {
         graph.deinit();
     }
 
-    var neighbors0 = std.ArrayList(u32){};
+    var neighbors0: std.ArrayList(u32) = .empty;
     try neighbors0.append(allocator, 1);
     try graph.put(0, neighbors0);
 
-    var neighbors1 = std.ArrayList(u32){};
+    var neighbors1: std.ArrayList(u32) = .empty;
     try neighbors1.append(allocator, 2);
     try graph.put(1, neighbors1);
 
-    const neighbors2 = std.ArrayList(u32){};
+    const neighbors2: std.ArrayList(u32) = .empty;
     try graph.put(2, neighbors2);
 
     const path = [_]u32{ 0, 1, 2 };
@@ -612,10 +612,10 @@ test "isValidPath - wrong length" {
         graph.deinit();
     }
 
-    const neighbors0 = std.ArrayList(u32){};
+    const neighbors0: std.ArrayList(u32) = .empty;
     try graph.put(0, neighbors0);
 
-    const neighbors1 = std.ArrayList(u32){};
+    const neighbors1: std.ArrayList(u32) = .empty;
     try graph.put(1, neighbors1);
 
     const path = [_]u32{0}; // Too short
@@ -634,11 +634,11 @@ test "isValidPath - duplicate vertices" {
         graph.deinit();
     }
 
-    var neighbors0 = std.ArrayList(u32){};
+    var neighbors0: std.ArrayList(u32) = .empty;
     try neighbors0.append(allocator, 1);
     try graph.put(0, neighbors0);
 
-    var neighbors1 = std.ArrayList(u32){};
+    var neighbors1: std.ArrayList(u32) = .empty;
     try neighbors1.append(allocator, 0);
     try graph.put(1, neighbors1);
 
@@ -658,13 +658,13 @@ test "isValidPath - missing edge" {
         graph.deinit();
     }
 
-    const neighbors0 = std.ArrayList(u32){};
+    const neighbors0: std.ArrayList(u32) = .empty;
     try graph.put(0, neighbors0);
 
-    const neighbors1 = std.ArrayList(u32){};
+    const neighbors1: std.ArrayList(u32) = .empty;
     try graph.put(1, neighbors1);
 
-    const neighbors2 = std.ArrayList(u32){};
+    const neighbors2: std.ArrayList(u32) = .empty;
     try graph.put(2, neighbors2);
 
     const path = [_]u32{ 0, 1, 2 }; // No edges exist
@@ -684,16 +684,16 @@ test "isValidCycle - valid cycle" {
         graph.deinit();
     }
 
-    var neighbors0 = std.ArrayList(u32){};
+    var neighbors0: std.ArrayList(u32) = .empty;
     try neighbors0.append(allocator, 1);
     try neighbors0.append(allocator, 2);
     try graph.put(0, neighbors0);
 
-    var neighbors1 = std.ArrayList(u32){};
+    var neighbors1: std.ArrayList(u32) = .empty;
     try neighbors1.append(allocator, 2);
     try graph.put(1, neighbors1);
 
-    var neighbors2 = std.ArrayList(u32){};
+    var neighbors2: std.ArrayList(u32) = .empty;
     try neighbors2.append(allocator, 0);
     try graph.put(2, neighbors2);
 
@@ -713,15 +713,15 @@ test "isValidCycle - no return edge" {
         graph.deinit();
     }
 
-    var neighbors0 = std.ArrayList(u32){};
+    var neighbors0: std.ArrayList(u32) = .empty;
     try neighbors0.append(allocator, 1);
     try graph.put(0, neighbors0);
 
-    var neighbors1 = std.ArrayList(u32){};
+    var neighbors1: std.ArrayList(u32) = .empty;
     try neighbors1.append(allocator, 2);
     try graph.put(1, neighbors1);
 
-    const neighbors2 = std.ArrayList(u32){};
+    const neighbors2: std.ArrayList(u32) = .empty;
     // No edge back to 0
     try graph.put(2, neighbors2);
 
@@ -741,7 +741,7 @@ test "hamiltonianPath - invalid start vertex" {
         graph.deinit();
     }
 
-    const neighbors0 = std.ArrayList(u32){};
+    const neighbors0: std.ArrayList(u32) = .empty;
     try graph.put(0, neighbors0);
 
     const result = hamiltonianPath(u32, allocator, &graph, 99);
@@ -760,7 +760,7 @@ test "hamiltonianPath - single vertex" {
         graph.deinit();
     }
 
-    const neighbors0 = std.ArrayList(u32){};
+    const neighbors0: std.ArrayList(u32) = .empty;
     try graph.put(0, neighbors0);
 
     var result = try hamiltonianPath(u32, allocator, &graph, 0);
@@ -787,7 +787,7 @@ test "hamiltonianPath - Peterson graph" {
 
     // Outer pentagon (0-4)
     for (0..5) |i| {
-        var neighbors = std.ArrayList(u32){};
+        var neighbors: std.ArrayList(u32) = .empty;
         const next = @as(u32, @intCast((i + 1) % 5));
         const prev = @as(u32, @intCast((i + 4) % 5));
         const inner = @as(u32, @intCast(i + 5));
@@ -799,7 +799,7 @@ test "hamiltonianPath - Peterson graph" {
 
     // Inner pentagram (5-9)
     for (0..5) |i| {
-        var neighbors = std.ArrayList(u32){};
+        var neighbors: std.ArrayList(u32) = .empty;
         const next = @as(u32, @intCast(5 + ((i + 2) % 5)));
         const prev = @as(u32, @intCast(5 + ((i + 3) % 5)));
         const outer = @as(u32, @intCast(i));
@@ -832,7 +832,7 @@ test "hamiltonianPath - memory safety" {
         }
 
         for (0..4) |i| {
-            var neighbors = std.ArrayList(u32){};
+            var neighbors: std.ArrayList(u32) = .empty;
             if (i < 3) {
                 try neighbors.append(allocator, @intCast(i + 1));
             }

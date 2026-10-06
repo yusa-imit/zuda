@@ -390,8 +390,10 @@ test "word search - find all occurrences" {
         results.deinit(allocator);
     }
 
-    // Should find 2 occurrences: top-left AB and bottom-left AB
-    try testing.expectEqual(@as(usize, 2), results.items.len);
+    // One occurrence per starting cell: every 'A' (all four of them) is orthogonally adjacent
+    // to a 'B' in the middle column, so (0,0), (0,2), (1,0) and (1,2) each start one "AB".
+    // (The previous expectation of 2 forgot the right-hand column.)
+    try testing.expectEqual(@as(usize, 4), results.items.len);
 }
 
 test "word search - count occurrences" {
@@ -402,7 +404,8 @@ test "word search - count occurrences" {
 
     const allocator = testing.allocator;
     const count = try countOccurrences(u8, allocator, &board, "AB");
-    try testing.expectEqual(@as(usize, 2), count);
+    // Same board as "find all occurrences": all four 'A' cells are adjacent to a 'B'.
+    try testing.expectEqual(@as(usize, 4), count);
 }
 
 test "word search - no occurrences" {
@@ -447,7 +450,7 @@ test "word search - large grid stress test" {
     try testing.expect(exist(u8, board, "ABC"));
 
     // Search with path
-    const result = try existWithPath(u8, allocator, board, "ABC");
+    var result = try existWithPath(u8, allocator, board, "ABC");
     try testing.expect(result != null);
     defer result.?.deinit(allocator);
 }
@@ -462,14 +465,14 @@ test "word search - memory safety" {
 
     // Test existWithPath
     {
-        const result = try existWithPath(u8, allocator, &board, "ABC");
+        var result = try existWithPath(u8, allocator, &board, "ABC");
         try testing.expect(result != null);
         result.?.deinit(allocator);
     }
 
     // Test findAll
     {
-        const results = try findAll(u8, allocator, &board, "ABC");
+        var results = try findAll(u8, allocator, &board, "ABC");
         for (results.items) |*path| {
             path.deinit(allocator);
         }
