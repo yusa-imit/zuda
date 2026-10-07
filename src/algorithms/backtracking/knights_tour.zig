@@ -29,7 +29,6 @@
 ///
 /// - Warnsdorff's rule (1823) — heuristic that prioritizes moves to less-accessible squares
 /// - De Jaenisch (1862) — first complete analysis of the knight's tour
-
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -65,7 +64,7 @@ pub const TourResult = struct {
 /// Knight move offsets (L-shaped moves: 2 in one direction, 1 in perpendicular).
 const knight_moves = [_][2]isize{
     .{ -2, -1 }, .{ -2, 1 }, .{ -1, -2 }, .{ -1, 2 },
-    .{ 1, -2 }, .{ 1, 2 }, .{ 2, -1 }, .{ 2, 1 },
+    .{ 1, -2 },  .{ 1, 2 },  .{ 2, -1 },  .{ 2, 1 },
 };
 
 /// Find a knight's tour on an n×n board starting from (start_row, start_col).
@@ -417,9 +416,10 @@ test "knight's tour: path validation - invalid move" {
     const allocator = testing.allocator;
     const path = [_]Position{
         .{ .row = 0, .col = 0 }, .{ .row = 1, .col = 1 }, // Not a knight move!
-        .{ .row = 0, .col = 2 },
-        .{ .row = 1, .col = 0 }, .{ .row = 2, .col = 2 }, .{ .row = 0, .col = 1 },
-        .{ .row = 1, .col = 2 }, .{ .row = 2, .col = 0 }, .{ .row = 2, .col = 1 },
+        .{ .row = 0, .col = 2 }, .{ .row = 1, .col = 0 },
+        .{ .row = 2, .col = 2 }, .{ .row = 0, .col = 1 },
+        .{ .row = 1, .col = 2 }, .{ .row = 2, .col = 0 },
+        .{ .row = 2, .col = 1 },
     };
     try testing.expect(!isValidTour(allocator, 3, &path));
 }

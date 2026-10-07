@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored in a container, and lands on ~18 public functions instead of ~40.
 
 ### Fixed
+- `algorithms/backtracking/*`: all nine files now compile and pass on Zig 0.16 (managed
+  `ArrayList.init` -> `.empty` with explicit allocators) and are wired into `root.zig`'s test
+  block, where they were previously never run. `solveSudoku` now returns `false` for a starting
+  board that already breaks a rule (it used to search effectively forever), and
+  `isValidSudoku` returns `false` for a cell above 9 instead of indexing out of bounds. Two
+  `word_search` tests expected 2 occurrences on a board that has 4.
 - `src/compat/zoltraak_sortedset.zig`: `range()`/`rangeByScore()` called `ArrayList.append`
   with one argument, but this repo's pinned Zig 0.15.2 `std.ArrayList` requires
   `(self, gpa, item)` — fixed `append`, `deinit`, and `toOwnedSlice` call sites to pass the

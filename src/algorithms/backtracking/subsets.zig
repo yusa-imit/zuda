@@ -6,14 +6,14 @@ const ArrayList = std.ArrayList;
 /// Time: O(N * 2^N) - 2^N subsets, each takes O(N) to copy
 /// Space: O(N * 2^N) for storing all subsets
 pub fn subsets(comptime T: type, allocator: std.mem.Allocator, items: []const T) !ArrayList([]T) {
-    var results = ArrayList([]T).init(allocator);
+    var results: ArrayList([]T) = .empty;
     errdefer {
         for (results.items) |subset| allocator.free(subset);
-        results.deinit();
+        results.deinit(allocator);
     }
 
-    var current = ArrayList(T).init(allocator);
-    defer current.deinit();
+    var current: ArrayList(T) = .empty;
+    defer current.deinit(allocator);
 
     try backtrack(T, allocator, &results, items, &current, 0);
     return results;
@@ -30,11 +30,11 @@ fn backtrack(
     // Add current subset
     const subset = try allocator.alloc(T, current.items.len);
     @memcpy(subset, current.items);
-    try results.append(subset);
+    try results.append(allocator, subset);
 
     // Explore adding each remaining element
     for (start..items.len) |i| {
-        try current.append(items[i]);
+        try current.append(allocator, items[i]);
         try backtrack(T, allocator, results, items, current, i + 1);
         _ = current.pop(); // Backtrack
     }
@@ -45,16 +45,16 @@ fn backtrack(
 /// Time: O(N * C(N,K)) where C(N,K) is binomial coefficient
 /// Space: O(N * C(N,K))
 pub fn subsetsOfSize(comptime T: type, allocator: std.mem.Allocator, items: []const T, k: usize) !ArrayList([]T) {
-    var results = ArrayList([]T).init(allocator);
+    var results: ArrayList([]T) = .empty;
     errdefer {
         for (results.items) |subset| allocator.free(subset);
-        results.deinit();
+        results.deinit(allocator);
     }
 
     if (k > items.len) return results;
 
-    var current = ArrayList(T).init(allocator);
-    defer current.deinit();
+    var current: ArrayList(T) = .empty;
+    defer current.deinit(allocator);
 
     try backtrackSize(T, allocator, &results, items, &current, 0, k);
     return results;
@@ -72,7 +72,7 @@ fn backtrackSize(
     if (current.items.len == k) {
         const subset = try allocator.alloc(T, k);
         @memcpy(subset, current.items);
-        try results.append(subset);
+        try results.append(allocator, subset);
         return;
     }
 
@@ -82,7 +82,7 @@ fn backtrackSize(
     if (remaining < needed) return;
 
     for (start..items.len) |i| {
-        try current.append(items[i]);
+        try current.append(allocator, items[i]);
         try backtrackSize(T, allocator, results, items, current, i + 1, k);
         _ = current.pop();
     }
@@ -93,10 +93,10 @@ fn backtrackSize(
 /// Time: O(N * 2^N) worst case, pruning reduces for duplicates
 /// Space: O(N * 2^N)
 pub fn subsetsUnique(comptime T: type, allocator: std.mem.Allocator, items: []const T) !ArrayList([]T) {
-    var results = ArrayList([]T).init(allocator);
+    var results: ArrayList([]T) = .empty;
     errdefer {
         for (results.items) |subset| allocator.free(subset);
-        results.deinit();
+        results.deinit(allocator);
     }
 
     // Sort to group duplicates
@@ -105,8 +105,8 @@ pub fn subsetsUnique(comptime T: type, allocator: std.mem.Allocator, items: []co
     @memcpy(sorted, items);
     std.mem.sort(T, sorted, {}, std.sort.asc(T));
 
-    var current = ArrayList(T).init(allocator);
-    defer current.deinit();
+    var current: ArrayList(T) = .empty;
+    defer current.deinit(allocator);
 
     try backtrackUnique(T, allocator, &results, sorted, &current, 0);
     return results;
@@ -122,14 +122,14 @@ fn backtrackUnique(
 ) !void {
     const subset = try allocator.alloc(T, current.items.len);
     @memcpy(subset, current.items);
-    try results.append(subset);
+    try results.append(allocator, subset);
 
     for (start..items.len) |i| {
         // Skip duplicates: if items[i] == items[i-1] and i > start,
         // this would create duplicate subsets
         if (i > start and items[i] == items[i - 1]) continue;
 
-        try current.append(items[i]);
+        try current.append(allocator, items[i]);
         try backtrackUnique(T, allocator, results, items, current, i + 1);
         _ = current.pop();
     }
@@ -142,7 +142,7 @@ test "Subsets: basic 3 elements" {
     var subs = try subsets(i32, allocator, &items);
     defer {
         for (subs.items) |subset| allocator.free(subset);
-        subs.deinit();
+        subs.deinit(allocator);
     }
 
     // 2^3 = 8 subsets
@@ -166,7 +166,7 @@ test "Subsets: empty array" {
     var subs = try subsets(i32, allocator, &items);
     defer {
         for (subs.items) |subset| allocator.free(subset);
-        subs.deinit();
+        subs.deinit(allocator);
     }
 
     // Only empty subset
@@ -181,7 +181,7 @@ test "Subsets: single element" {
     var subs = try subsets(i32, allocator, &items);
     defer {
         for (subs.items) |subset| allocator.free(subset);
-        subs.deinit();
+        subs.deinit(allocator);
     }
 
     // [] and [42]
@@ -196,7 +196,7 @@ test "Subsets: of size K" {
     var subs = try subsetsOfSize(i32, allocator, &items, 2);
     defer {
         for (subs.items) |subset| allocator.free(subset);
-        subs.deinit();
+        subs.deinit(allocator);
     }
 
     try std.testing.expectEqual(@as(usize, 6), subs.items.len);
@@ -214,7 +214,7 @@ test "Subsets: of size 0" {
     var subs = try subsetsOfSize(i32, allocator, &items, 0);
     defer {
         for (subs.items) |subset| allocator.free(subset);
-        subs.deinit();
+        subs.deinit(allocator);
     }
 
     // Only empty subset
@@ -229,7 +229,7 @@ test "Subsets: of size larger than array" {
     var subs = try subsetsOfSize(i32, allocator, &items, 5);
     defer {
         for (subs.items) |subset| allocator.free(subset);
-        subs.deinit();
+        subs.deinit(allocator);
     }
 
     // Impossible, no subsets
@@ -243,7 +243,7 @@ test "Subsets: unique with duplicates" {
     var subs = try subsetsUnique(i32, allocator, &items);
     defer {
         for (subs.items) |subset| allocator.free(subset);
-        subs.deinit();
+        subs.deinit(allocator);
     }
 
     // Without duplicates: [], [1], [2], [1,2], [2,2], [1,2,2] = 6 unique
@@ -257,7 +257,7 @@ test "Subsets: unique with all same" {
     var subs = try subsetsUnique(i32, allocator, &items);
     defer {
         for (subs.items) |subset| allocator.free(subset);
-        subs.deinit();
+        subs.deinit(allocator);
     }
 
     // [], [3], [3,3], [3,3,3] = 4 unique
@@ -271,7 +271,7 @@ test "Subsets: stress test with 5 elements" {
     var subs = try subsets(i32, allocator, &items);
     defer {
         for (subs.items) |subset| allocator.free(subset);
-        subs.deinit();
+        subs.deinit(allocator);
     }
 
     // 2^5 = 32

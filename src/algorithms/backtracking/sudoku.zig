@@ -3,9 +3,18 @@ const std = @import("std");
 /// Sudoku solver using backtracking.
 /// Board is represented as [9][9]u8 where 0 represents empty cells.
 ///
+/// Returns false, leaving `board` unchanged, if the starting board breaks a rule (a repeated
+/// digit in a row, column or box, or a cell above 9) or has no solution. On true the board is
+/// completely filled. The search has no node budget: a valid but adversarial grid (for example
+/// one with an empty first row) can take effectively unbounded time, so callers handling
+/// untrusted grids must bound the call themselves.
+///
 /// Time: O(9^(n*n)) worst case where n=9, but heavy pruning in practice
 /// Space: O(n*n) for recursion stack
 pub fn solveSudoku(board: *[9][9]u8) bool {
+    // A starting board that already breaks a rule has no solution. `isValid` only vets new
+    // placements, so without this check the search would never refute such a board in practice.
+    if (!isValidSudoku(board)) return false;
     return backtrack(board, 0, 0);
 }
 
@@ -77,6 +86,7 @@ pub fn isValidSudoku(board: *const [9][9]u8) bool {
         var seen = [_]bool{false} ** 10;
         for (0..9) |col| {
             const digit = board[row][col];
+            if (digit > 9) return false;
             if (digit != 0) {
                 if (seen[digit]) return false;
                 seen[digit] = true;
@@ -89,6 +99,7 @@ pub fn isValidSudoku(board: *const [9][9]u8) bool {
         var seen = [_]bool{false} ** 10;
         for (0..9) |row| {
             const digit = board[row][col];
+            if (digit > 9) return false;
             if (digit != 0) {
                 if (seen[digit]) return false;
                 seen[digit] = true;
@@ -105,6 +116,7 @@ pub fn isValidSudoku(board: *const [9][9]u8) bool {
             for (0..3) |r| {
                 for (0..3) |c| {
                     const digit = board[box_row + r][box_col + c];
+                    if (digit > 9) return false;
                     if (digit != 0) {
                         if (seen[digit]) return false;
                         seen[digit] = true;
@@ -202,6 +214,15 @@ test "Sudoku: detect invalid 3x3 box" {
     };
 
     try std.testing.expect(!isValidSudoku(&board));
+}
+
+test "Sudoku: digit above 9 is invalid, not a crash" {
+    var board = [_][9]u8{[_]u8{0} ** 9} ** 9;
+    board[4][4] = 10;
+
+    try std.testing.expect(!isValidSudoku(&board));
+    try std.testing.expect(!solveSudoku(&board));
+    try std.testing.expectEqual(@as(u8, 10), board[4][4]);
 }
 
 test "Sudoku: unsolvable puzzle returns false" {
@@ -307,20 +328,28 @@ test "Sudoku: empty board (all zeros) is valid partial board" {
     try std.testing.expect(isValidSudoku(&board));
 }
 
-test "Sudoku: hard puzzle solves correctly" {
-    var board = [_][9]u8{
+test "Sudoku: sparse puzzle solves and keeps its givens" {
+    // Project Euler 96, grid 02: 30 givens, solved quickly by plain backtracking. (The former
+    // test used the empty-first-row grid built to defeat brute force; it never finished.)
+    const givens = [_][9]u8{
+        [_]u8{ 2, 0, 0, 0, 8, 0, 3, 0, 0 },
+        [_]u8{ 0, 6, 0, 0, 7, 0, 0, 8, 4 },
+        [_]u8{ 0, 3, 0, 5, 0, 0, 2, 0, 9 },
+        [_]u8{ 0, 0, 0, 1, 0, 5, 4, 0, 8 },
         [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-        [_]u8{ 0, 0, 0, 0, 0, 3, 0, 8, 5 },
-        [_]u8{ 0, 0, 1, 0, 2, 0, 0, 0, 0 },
-        [_]u8{ 0, 0, 0, 5, 0, 7, 0, 0, 0 },
-        [_]u8{ 0, 0, 4, 0, 0, 0, 1, 0, 0 },
-        [_]u8{ 0, 9, 0, 0, 0, 0, 0, 0, 0 },
-        [_]u8{ 5, 0, 0, 0, 0, 0, 0, 7, 3 },
-        [_]u8{ 0, 0, 2, 0, 1, 0, 0, 0, 0 },
-        [_]u8{ 0, 0, 0, 0, 4, 0, 0, 0, 9 },
+        [_]u8{ 4, 0, 2, 7, 0, 6, 0, 0, 0 },
+        [_]u8{ 3, 0, 1, 0, 0, 7, 0, 4, 0 },
+        [_]u8{ 7, 2, 0, 0, 4, 0, 0, 6, 0 },
+        [_]u8{ 0, 0, 4, 0, 1, 0, 0, 0, 3 },
     };
+    var board = givens;
 
-    const solved = solveSudoku(&board);
-    try std.testing.expect(solved);
+    try std.testing.expect(solveSudoku(&board));
     try std.testing.expect(isValidSudoku(&board));
+    for (board, 0..) |line, row| {
+        for (line, 0..) |digit, col| {
+            try std.testing.expect(digit != 0);
+            if (givens[row][col] != 0) try std.testing.expectEqual(givens[row][col], digit);
+        }
+    }
 }
