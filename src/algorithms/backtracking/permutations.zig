@@ -6,10 +6,10 @@ const ArrayList = std.ArrayList;
 /// Time: O(N! * N) - N! permutations, each takes O(N) to copy
 /// Space: O(N! * N) for storing all permutations
 pub fn permute(comptime T: type, allocator: std.mem.Allocator, items: []const T) !ArrayList([]T) {
-    var results = ArrayList([]T).init(allocator);
+    var results: ArrayList([]T) = .empty;
     errdefer {
         for (results.items) |perm| allocator.free(perm);
-        results.deinit();
+        results.deinit(allocator);
     }
 
     if (items.len == 0) return results;
@@ -39,7 +39,7 @@ fn backtrack(
         // Found a complete permutation
         const perm = try allocator.alloc(T, items.len);
         @memcpy(perm, current);
-        try results.append(perm);
+        try results.append(allocator, perm);
         return;
     }
 
@@ -58,10 +58,10 @@ fn backtrack(
 /// Time: O(N! * N) worst case, but pruning reduces it for duplicates
 /// Space: O(N! * N)
 pub fn permuteUnique(comptime T: type, allocator: std.mem.Allocator, items: []const T) !ArrayList([]T) {
-    var results = ArrayList([]T).init(allocator);
+    var results: ArrayList([]T) = .empty;
     errdefer {
         for (results.items) |perm| allocator.free(perm);
-        results.deinit();
+        results.deinit(allocator);
     }
 
     if (items.len == 0) return results;
@@ -95,7 +95,7 @@ fn backtrackUnique(
     if (pos == items.len) {
         const perm = try allocator.alloc(T, items.len);
         @memcpy(perm, current);
-        try results.append(perm);
+        try results.append(allocator, perm);
         return;
     }
 
@@ -121,7 +121,7 @@ test "Permutations: basic 3 elements" {
     var perms = try permute(i32, allocator, &items);
     defer {
         for (perms.items) |perm| allocator.free(perm);
-        perms.deinit();
+        perms.deinit(allocator);
     }
 
     // 3! = 6 permutations
@@ -143,7 +143,7 @@ test "Permutations: empty array" {
     const items = [_]i32{};
 
     var perms = try permute(i32, allocator, &items);
-    defer perms.deinit();
+    defer perms.deinit(allocator);
 
     try std.testing.expectEqual(@as(usize, 0), perms.items.len);
 }
@@ -155,7 +155,7 @@ test "Permutations: single element" {
     var perms = try permute(i32, allocator, &items);
     defer {
         for (perms.items) |perm| allocator.free(perm);
-        perms.deinit();
+        perms.deinit(allocator);
     }
 
     try std.testing.expectEqual(@as(usize, 1), perms.items.len);
@@ -169,7 +169,7 @@ test "Permutations: two elements" {
     var perms = try permute(i32, allocator, &items);
     defer {
         for (perms.items) |perm| allocator.free(perm);
-        perms.deinit();
+        perms.deinit(allocator);
     }
 
     // 2! = 2
@@ -183,7 +183,7 @@ test "Permutations: unique with duplicates" {
     var perms = try permuteUnique(i32, allocator, &items);
     defer {
         for (perms.items) |perm| allocator.free(perm);
-        perms.deinit();
+        perms.deinit(allocator);
     }
 
     // Should be 3!/2! = 3 unique permutations: [1,1,2], [1,2,1], [2,1,1]
@@ -197,7 +197,7 @@ test "Permutations: unique with all same" {
     var perms = try permuteUnique(i32, allocator, &items);
     defer {
         for (perms.items) |perm| allocator.free(perm);
-        perms.deinit();
+        perms.deinit(allocator);
     }
 
     // Only 1 unique permutation
@@ -214,7 +214,7 @@ test "Permutations: stress test with 4 elements" {
     var perms = try permute(i32, allocator, &items);
     defer {
         for (perms.items) |perm| allocator.free(perm);
-        perms.deinit();
+        perms.deinit(allocator);
     }
 
     // 4! = 24
@@ -236,7 +236,7 @@ test "Permutations: five elements gives 120 permutations" {
     var perms = try permute(i32, allocator, &items);
     defer {
         for (perms.items) |perm| allocator.free(perm);
-        perms.deinit();
+        perms.deinit(allocator);
     }
 
     try std.testing.expectEqual(@as(usize, 120), perms.items.len);
@@ -252,7 +252,7 @@ test "Permutations: reverse permutation present in results" {
     var perms = try permute(i32, allocator, &items);
     defer {
         for (perms.items) |perm| allocator.free(perm);
-        perms.deinit();
+        perms.deinit(allocator);
     }
 
     var found_reverse = false;
@@ -272,7 +272,7 @@ test "Permutations: unique with two pairs of duplicates" {
     var perms = try permuteUnique(i32, allocator, &items);
     defer {
         for (perms.items) |perm| allocator.free(perm);
-        perms.deinit();
+        perms.deinit(allocator);
     }
 
     // 4! / (2! * 2!) = 6 unique permutations
@@ -286,13 +286,13 @@ test "Permutations: unique with no duplicates matches permute count" {
     var all_perms = try permute(i32, allocator, &items);
     defer {
         for (all_perms.items) |perm| allocator.free(perm);
-        all_perms.deinit();
+        all_perms.deinit(allocator);
     }
 
     var unique_perms = try permuteUnique(i32, allocator, &items);
     defer {
         for (unique_perms.items) |perm| allocator.free(perm);
-        unique_perms.deinit();
+        unique_perms.deinit(allocator);
     }
 
     try std.testing.expectEqual(all_perms.items.len, unique_perms.items.len);
@@ -306,10 +306,10 @@ test "Permutations: memory safety loop" {
     for (0..10) |_| {
         var perms = try permute(i32, allocator, &items);
         for (perms.items) |perm| allocator.free(perm);
-        perms.deinit();
+        perms.deinit(allocator);
 
         var uniqs = try permuteUnique(i32, allocator, &dup_items);
         for (uniqs.items) |perm| allocator.free(perm);
-        uniqs.deinit();
+        uniqs.deinit(allocator);
     }
 }

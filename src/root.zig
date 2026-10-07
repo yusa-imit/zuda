@@ -839,4 +839,13 @@ test {
     _ = @import("linalg/sparse.zig");
     _ = @import("linalg/preconditioner.zig");
     _ = @import("linalg/iterative.zig");
+    _ = @import("algorithms/backtracking/combination_sum.zig");
+    _ = @import("algorithms/backtracking/hamiltonian.zig");
+    _ = @import("algorithms/backtracking/knights_tour.zig");
+    _ = @import("algorithms/backtracking/n_queens.zig");
+    _ = @import("algorithms/backtracking/palindrome_partition.zig");
+    _ = @import("algorithms/backtracking/permutations.zig");
+    _ = @import("algorithms/backtracking/subsets.zig");
+    _ = @import("algorithms/backtracking/sudoku.zig");
+    _ = @import("algorithms/backtracking/word_search.zig");
 }

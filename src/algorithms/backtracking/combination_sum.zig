@@ -7,14 +7,14 @@ const ArrayList = std.ArrayList;
 /// Time: O(N^(T/M)) where N=candidates.len, T=target, M=min(candidates)
 /// Space: O(T/M) for recursion depth + result storage
 pub fn combinationSum(allocator: std.mem.Allocator, candidates: []const i32, target: i32) !ArrayList([]i32) {
-    var results = ArrayList([]i32).init(allocator);
+    var results: ArrayList([]i32) = .empty;
     errdefer {
         for (results.items) |combo| allocator.free(combo);
-        results.deinit();
+        results.deinit(allocator);
     }
 
-    var current = ArrayList(i32).init(allocator);
-    defer current.deinit();
+    var current: ArrayList(i32) = .empty;
+    defer current.deinit(allocator);
 
     // Sort for better pruning
     const sorted = try allocator.alloc(i32, candidates.len);
@@ -38,7 +38,7 @@ fn backtrack(
         // Found valid combination
         const combo = try allocator.alloc(i32, current.items.len);
         @memcpy(combo, current.items);
-        try results.append(combo);
+        try results.append(allocator, combo);
         return;
     }
 
@@ -48,7 +48,7 @@ fn backtrack(
         const candidate = candidates[i];
         if (candidate > target) break; // Pruning: sorted array
 
-        try current.append(candidate);
+        try current.append(allocator, candidate);
         try backtrack(allocator, results, candidates, current, target - candidate, i); // i, not i+1, allows reuse
         _ = current.pop();
     }
@@ -59,14 +59,14 @@ fn backtrack(
 /// Time: O(2^N * N) - each element can be included or not
 /// Space: O(N) for recursion + result storage
 pub fn combinationSumUnique(allocator: std.mem.Allocator, candidates: []const i32, target: i32) !ArrayList([]i32) {
-    var results = ArrayList([]i32).init(allocator);
+    var results: ArrayList([]i32) = .empty;
     errdefer {
         for (results.items) |combo| allocator.free(combo);
-        results.deinit();
+        results.deinit(allocator);
     }
 
-    var current = ArrayList(i32).init(allocator);
-    defer current.deinit();
+    var current: ArrayList(i32) = .empty;
+    defer current.deinit(allocator);
 
     // Sort for pruning and duplicate handling
     const sorted = try allocator.alloc(i32, candidates.len);
@@ -89,7 +89,7 @@ fn backtrackUnique(
     if (target == 0) {
         const combo = try allocator.alloc(i32, current.items.len);
         @memcpy(combo, current.items);
-        try results.append(combo);
+        try results.append(allocator, combo);
         return;
     }
 
@@ -102,7 +102,7 @@ fn backtrackUnique(
         // Skip duplicates
         if (i > start and candidates[i] == candidates[i - 1]) continue;
 
-        try current.append(candidate);
+        try current.append(allocator, candidate);
         try backtrackUnique(allocator, results, candidates, current, target - candidate, i + 1); // i+1: each used once
         _ = current.pop();
     }
@@ -116,7 +116,7 @@ test "Combination Sum: basic with reuse" {
     var combos = try combinationSum(allocator, &candidates, target);
     defer {
         for (combos.items) |combo| allocator.free(combo);
-        combos.deinit();
+        combos.deinit(allocator);
     }
 
     // [2,2,3] and [7]
@@ -131,7 +131,7 @@ test "Combination Sum: multiple uses of same number" {
     var combos = try combinationSum(allocator, &candidates, target);
     defer {
         for (combos.items) |combo| allocator.free(combo);
-        combos.deinit();
+        combos.deinit(allocator);
     }
 
     // [2,2,2,2], [2,3,3], [3,5]
@@ -146,7 +146,7 @@ test "Combination Sum: no solution" {
     var combos = try combinationSum(allocator, &candidates, target);
     defer {
         for (combos.items) |combo| allocator.free(combo);
-        combos.deinit();
+        combos.deinit(allocator);
     }
 
     try std.testing.expectEqual(@as(usize, 0), combos.items.len);
@@ -160,7 +160,7 @@ test "Combination Sum: target zero" {
     var combos = try combinationSum(allocator, &candidates, target);
     defer {
         for (combos.items) |combo| allocator.free(combo);
-        combos.deinit();
+        combos.deinit(allocator);
     }
 
     // Empty combination sums to 0
@@ -176,7 +176,7 @@ test "Combination Sum Unique: each number used once" {
     var combos = try combinationSumUnique(allocator, &candidates, target);
     defer {
         for (combos.items) |combo| allocator.free(combo);
-        combos.deinit();
+        combos.deinit(allocator);
     }
 
     // [1,1,6], [1,2,5], [1,7], [2,6]
@@ -191,7 +191,7 @@ test "Combination Sum Unique: no solution" {
     var combos = try combinationSumUnique(allocator, &candidates, target);
     defer {
         for (combos.items) |combo| allocator.free(combo);
-        combos.deinit();
+        combos.deinit(allocator);
     }
 
     try std.testing.expectEqual(@as(usize, 0), combos.items.len);
@@ -205,7 +205,7 @@ test "Combination Sum Unique: single element target" {
     var combos = try combinationSumUnique(allocator, &candidates, target);
     defer {
         for (combos.items) |combo| allocator.free(combo);
-        combos.deinit();
+        combos.deinit(allocator);
     }
 
     // [1,2] and [3]
@@ -220,7 +220,7 @@ test "Combination Sum: stress test" {
     var combos = try combinationSum(allocator, &candidates, target);
     defer {
         for (combos.items) |combo| allocator.free(combo);
-        combos.deinit();
+        combos.deinit(allocator);
     }
 
     // Multiple combinations possible
@@ -242,7 +242,7 @@ test "Combination Sum: single candidate exactly matches target" {
     var combos = try combinationSum(allocator, &candidates, target);
     defer {
         for (combos.items) |combo| allocator.free(combo);
-        combos.deinit();
+        combos.deinit(allocator);
     }
 
     try std.testing.expectEqual(@as(usize, 1), combos.items.len);
@@ -258,7 +258,7 @@ test "Combination Sum: candidate larger than target gives no solution" {
     var combos = try combinationSum(allocator, &candidates, target);
     defer {
         for (combos.items) |combo| allocator.free(combo);
-        combos.deinit();
+        combos.deinit(allocator);
     }
 
     try std.testing.expectEqual(@as(usize, 0), combos.items.len);
@@ -272,7 +272,7 @@ test "Combination Sum Unique: single element matches target" {
     var combos = try combinationSumUnique(allocator, &candidates, target);
     defer {
         for (combos.items) |combo| allocator.free(combo);
-        combos.deinit();
+        combos.deinit(allocator);
     }
 
     try std.testing.expectEqual(@as(usize, 1), combos.items.len);
@@ -288,7 +288,7 @@ test "Combination Sum Unique: all combos sum to target" {
     var combos = try combinationSumUnique(allocator, &candidates, target);
     defer {
         for (combos.items) |combo| allocator.free(combo);
-        combos.deinit();
+        combos.deinit(allocator);
     }
 
     for (combos.items) |combo| {
@@ -305,10 +305,10 @@ test "Combination Sum: memory safety loop" {
     for (0..10) |_| {
         var combos = try combinationSum(allocator, &candidates, 6);
         for (combos.items) |combo| allocator.free(combo);
-        combos.deinit();
+        combos.deinit(allocator);
 
         var unique = try combinationSumUnique(allocator, &candidates, 5);
         for (unique.items) |combo| allocator.free(combo);
-        unique.deinit();
+        unique.deinit(allocator);
     }
 }
