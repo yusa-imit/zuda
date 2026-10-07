@@ -82,6 +82,8 @@ pub fn existWithPath(comptime T: type, allocator: Allocator, board: []const []co
 
     // Allocate visited matrix
     const visited = try allocator.alloc([]bool, rows);
+    // Empty rows make the cleanup below safe if a later row allocation fails.
+    @memset(visited, &.{});
     defer {
         for (visited) |row| {
             allocator.free(row);
@@ -128,6 +130,8 @@ pub fn findAll(comptime T: type, allocator: Allocator, board: []const []const T,
 
     // Allocate visited matrix
     const visited = try allocator.alloc([]bool, rows);
+    // Empty rows make the cleanup below safe if a later row allocation fails.
+    @memset(visited, &.{});
     defer {
         for (visited) |row| {
             allocator.free(row);
@@ -145,7 +149,11 @@ pub fn findAll(comptime T: type, allocator: Allocator, board: []const []const T,
         for (0..cols) |j| {
             var path = try ArrayList(Position).initCapacity(allocator, word.len);
             if (try dfsWithPath(T, allocator, board, word, 0, i, j, visited, &path)) {
-                try results.append(allocator, path);
+                // The path is not yet owned by `results` if the append fails.
+                results.append(allocator, path) catch |err| {
+                    path.deinit(allocator);
+                    return err;
+                };
             } else {
                 path.deinit(allocator);
             }
@@ -390,8 +398,8 @@ test "word search - find all occurrences" {
         results.deinit(allocator);
     }
 
-    // Should find 2 occurrences: top-left AB and bottom-left AB
-    try testing.expectEqual(@as(usize, 2), results.items.len);
+    // One path per starting cell: every 'A' (four of them) touches a 'B' in the middle column.
+    try testing.expectEqual(@as(usize, 4), results.items.len);
 }
 
 test "word search - count occurrences" {
@@ -402,7 +410,8 @@ test "word search - count occurrences" {
 
     const allocator = testing.allocator;
     const count = try countOccurrences(u8, allocator, &board, "AB");
-    try testing.expectEqual(@as(usize, 2), count);
+    // Same board as above: four starting cells, one "AB" path each.
+    try testing.expectEqual(@as(usize, 4), count);
 }
 
 test "word search - no occurrences" {
@@ -447,7 +456,7 @@ test "word search - large grid stress test" {
     try testing.expect(exist(u8, board, "ABC"));
 
     // Search with path
-    const result = try existWithPath(u8, allocator, board, "ABC");
+    var result = try existWithPath(u8, allocator, board, "ABC");
     try testing.expect(result != null);
     defer result.?.deinit(allocator);
 }
@@ -462,14 +471,14 @@ test "word search - memory safety" {
 
     // Test existWithPath
     {
-        const result = try existWithPath(u8, allocator, &board, "ABC");
+        var result = try existWithPath(u8, allocator, &board, "ABC");
         try testing.expect(result != null);
         result.?.deinit(allocator);
     }
 
     // Test findAll
     {
-        const results = try findAll(u8, allocator, &board, "ABC");
+        var results = try findAll(u8, allocator, &board, "ABC");
         for (results.items) |*path| {
             path.deinit(allocator);
         }
@@ -509,4 +518,35 @@ test "word search - vertical and horizontal paths" {
 
     // Diagonal not allowed (only horizontal/vertical)
     try testing.expect(!exist(u8, &board, "AEI"));
+}
+
+test "word search - existWithPath frees everything when an allocation fails" {
+    const board = [_][]const u8{
+        &.{ 'A', 'B' },
+        &.{ 'C', 'D' },
+    };
+    const Runner = struct {
+        fn run(gpa: Allocator, grid: []const []const u8) !void {
+            var found = try existWithPath(u8, gpa, grid, "ABD");
+            if (found) |*path| path.deinit(gpa);
+        }
+    };
+
+    try testing.checkAllAllocationFailures(testing.allocator, Runner.run, .{@as([]const []const u8, &board)});
+}
+
+test "word search - findAll frees everything when an allocation fails" {
+    const board = [_][]const u8{
+        &.{ 'A', 'B', 'A' },
+        &.{ 'A', 'B', 'A' },
+    };
+    const Runner = struct {
+        fn run(gpa: Allocator, grid: []const []const u8) !void {
+            var found = try findAll(u8, gpa, grid, "AB");
+            for (found.items) |*path| path.deinit(gpa);
+            found.deinit(gpa);
+        }
+    };
+
+    try testing.checkAllAllocationFailures(testing.allocator, Runner.run, .{@as([]const []const u8, &board)});
 }

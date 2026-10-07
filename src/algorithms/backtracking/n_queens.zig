@@ -7,10 +7,10 @@ const ArrayList = std.ArrayList;
 /// Time: O(N!) worst case - explores all permutations with pruning
 /// Space: O(N) for recursion stack + board state
 pub fn solveNQueens(allocator: std.mem.Allocator, n: usize) !ArrayList([]const u8) {
-    var solutions = ArrayList([]const u8).init(allocator);
+    var solutions: ArrayList([]const u8) = .empty;
     errdefer {
         for (solutions.items) |sol| allocator.free(sol);
-        solutions.deinit();
+        solutions.deinit(allocator);
     }
 
     if (n == 0) return solutions;
@@ -33,7 +33,7 @@ fn backtrack(
     if (row == n) {
         // Found a solution
         const solution = try boardToString(allocator, board, n);
-        try solutions.append(solution);
+        try solutions.append(allocator, solution);
         return;
     }
 
@@ -110,7 +110,7 @@ test "N-Queens: 4x4 board has 2 solutions" {
     var solutions = try solveNQueens(allocator, 4);
     defer {
         for (solutions.items) |sol| allocator.free(sol);
-        solutions.deinit();
+        solutions.deinit(allocator);
     }
 
     try std.testing.expectEqual(@as(usize, 2), solutions.items.len);
@@ -141,7 +141,7 @@ test "N-Queens: 1x1 board" {
     var solutions = try solveNQueens(allocator, 1);
     defer {
         for (solutions.items) |sol| allocator.free(sol);
-        solutions.deinit();
+        solutions.deinit(allocator);
     }
 
     try std.testing.expectEqual(@as(usize, 1), solutions.items.len);
@@ -152,11 +152,11 @@ test "N-Queens: 2x2 and 3x3 have no solutions" {
     const allocator = std.testing.allocator;
 
     var solutions2 = try solveNQueens(allocator, 2);
-    defer solutions2.deinit();
+    defer solutions2.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), solutions2.items.len);
 
     var solutions3 = try solveNQueens(allocator, 3);
-    defer solutions3.deinit();
+    defer solutions3.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), solutions3.items.len);
 }
 
@@ -169,7 +169,7 @@ test "N-Queens: 5x5 board has 10 solutions" {
     var solutions = try solveNQueens(allocator, 5);
     defer {
         for (solutions.items) |sol| allocator.free(sol);
-        solutions.deinit();
+        solutions.deinit(allocator);
     }
 
     try std.testing.expectEqual(@as(usize, 10), solutions.items.len);
@@ -180,7 +180,7 @@ test "N-Queens: each 4x4 solution has exactly one Q per row" {
     var solutions = try solveNQueens(allocator, 4);
     defer {
         for (solutions.items) |sol| allocator.free(sol);
-        solutions.deinit();
+        solutions.deinit(allocator);
     }
 
     for (solutions.items) |solution| {
@@ -207,7 +207,7 @@ test "N-Queens: no two queens share a column in 4x4 solutions" {
     var solutions = try solveNQueens(allocator, 4);
     defer {
         for (solutions.items) |sol| allocator.free(sol);
-        solutions.deinit();
+        solutions.deinit(allocator);
     }
 
     for (solutions.items) |solution| {
@@ -240,7 +240,7 @@ test "N-Queens: no two queens share a column in 4x4 solutions" {
 test "N-Queens: 0x0 board returns empty solution list" {
     const allocator = std.testing.allocator;
     var solutions = try solveNQueens(allocator, 0);
-    defer solutions.deinit();
+    defer solutions.deinit(allocator);
 
     try std.testing.expectEqual(@as(usize, 0), solutions.items.len);
 }
@@ -252,7 +252,7 @@ test "N-Queens: memory safety loop" {
         var solutions = try solveNQueens(allocator, 4);
         defer {
             for (solutions.items) |sol| allocator.free(sol);
-            solutions.deinit();
+            solutions.deinit(allocator);
         }
         try std.testing.expectEqual(@as(usize, 2), solutions.items.len);
     }
