@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored in a container, and lands on ~18 public functions instead of ~40.
 
 ### Fixed
+- `algorithms/backtracking`: allocation-failure leaks and an undefined free in
+  `palindrome_partition` (`minCut`, `partition`, `countPartitions`), `knights_tour`,
+  `combination_sum`, `permutations`, `subsets` and `n_queens`; each file gains a
+  `checkAllAllocationFailures` regression test.
 - `algorithms/backtracking/*`: all nine files now compile and pass on Zig 0.16 (managed
   `ArrayList.init` -> `.empty` with explicit allocators) and are wired into `root.zig`'s test
   block, where they were previously never run. `solveSudoku` now returns `false` for a starting

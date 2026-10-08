@@ -38,7 +38,10 @@ fn backtrack(
         // Found valid combination
         const combo = try allocator.alloc(i32, current.items.len);
         @memcpy(combo, current.items);
-        try results.append(allocator, combo);
+        results.append(allocator, combo) catch |err| {
+            allocator.free(combo);
+            return err;
+        };
         return;
     }
 
@@ -89,7 +92,10 @@ fn backtrackUnique(
     if (target == 0) {
         const combo = try allocator.alloc(i32, current.items.len);
         @memcpy(combo, current.items);
-        try results.append(allocator, combo);
+        results.append(allocator, combo) catch |err| {
+            allocator.free(combo);
+            return err;
+        };
         return;
     }
 
@@ -311,4 +317,21 @@ test "Combination Sum: memory safety loop" {
         for (unique.items) |combo| allocator.free(combo);
         unique.deinit(allocator);
     }
+}
+
+test "combination sum - frees everything when an allocation fails" {
+    const Runner = struct {
+        fn run(gpa: std.mem.Allocator, unique: bool) !void {
+            const candidates = [_]i32{ 2, 3, 6, 7 };
+            var results = if (unique)
+                try combinationSumUnique(gpa, &candidates, 7)
+            else
+                try combinationSum(gpa, &candidates, 7);
+            for (results.items) |combo| gpa.free(combo);
+            results.deinit(gpa);
+        }
+    };
+
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Runner.run, .{false});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Runner.run, .{true});
 }

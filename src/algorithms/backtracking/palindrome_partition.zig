@@ -118,6 +118,8 @@ pub fn minCut(allocator: Allocator, s: []const u8) !usize {
 
     // is_palindrome[i][j] = true if s[i..j+1] is palindrome
     var is_palindrome = try allocator.alloc([]bool, n);
+    // Empty rows make the cleanup below safe when a row allocation fails part-way.
+    @memset(is_palindrome, &.{});
     defer {
         for (is_palindrome) |row| allocator.free(row);
         allocator.free(is_palindrome);
@@ -193,6 +195,10 @@ fn backtrack(
     // Base case: reached end of string
     if (start == s.len) {
         var part = try ArrayList([]const u8).initCapacity(allocator, current.items.len);
+        errdefer {
+            for (part.items) |str| allocator.free(str);
+            part.deinit(allocator);
+        }
         for (current.items) |str| {
             const copy = try allocator.dupe(u8, str);
             part.appendAssumeCapacity(copy);
@@ -208,7 +214,10 @@ fn backtrack(
         if (isPalindrome(substr)) {
             // Make choice
             const copy = try allocator.dupe(u8, substr);
-            try current.append(allocator, copy);
+            current.append(allocator, copy) catch |err| {
+                allocator.free(copy);
+                return err;
+            };
 
             // Recurse
             try backtrack(allocator, s, end + 1, current, result);
@@ -238,7 +247,10 @@ fn backtrackCount(
         const substr = s[start .. end + 1];
         if (isPalindrome(substr)) {
             const copy = try allocator.dupe(u8, substr);
-            try current.append(allocator, copy);
+            current.append(allocator, copy) catch |err| {
+                allocator.free(copy);
+                return err;
+            };
             try backtrackCount(allocator, s, end + 1, current, count);
             const removed = current.pop().?;
             allocator.free(removed);
@@ -529,4 +541,32 @@ test "partition - memory safety" {
         }
         result.deinit(allocator);
     }
+}
+
+test "palindrome partition - every function frees everything when an allocation fails" {
+    const Runner = struct {
+        fn runPartition(gpa: Allocator, s: []const u8) !void {
+            var result = try partition(gpa, s);
+            for (result.items) |*part| {
+                for (part.items) |str| gpa.free(str);
+                part.deinit(gpa);
+            }
+            result.deinit(gpa);
+        }
+
+        fn runCount(gpa: Allocator, s: []const u8) !void {
+            const total = try countPartitions(gpa, s);
+            try std.testing.expectEqual(@as(usize, 4), total);
+        }
+
+        fn runMinCut(gpa: Allocator, s: []const u8) !void {
+            const cuts = try minCut(gpa, s);
+            try std.testing.expectEqual(@as(usize, 1), cuts);
+        }
+    };
+
+    const gpa = std.testing.allocator;
+    try std.testing.checkAllAllocationFailures(gpa, Runner.runPartition, .{"aab"});
+    try std.testing.checkAllAllocationFailures(gpa, Runner.runCount, .{"aaa"});
+    try std.testing.checkAllAllocationFailures(gpa, Runner.runMinCut, .{"aab"});
 }
