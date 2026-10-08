@@ -33,7 +33,10 @@ fn backtrack(
     if (row == n) {
         // Found a solution
         const solution = try boardToString(allocator, board, n);
-        try solutions.append(allocator, solution);
+        solutions.append(allocator, solution) catch |err| {
+            allocator.free(solution);
+            return err;
+        };
         return;
     }
 
@@ -256,4 +259,16 @@ test "N-Queens: memory safety loop" {
         }
         try std.testing.expectEqual(@as(usize, 2), solutions.items.len);
     }
+}
+
+test "n-queens - frees everything when an allocation fails" {
+    const Runner = struct {
+        fn run(gpa: std.mem.Allocator, n: usize) !void {
+            var solutions = try solveNQueens(gpa, n);
+            for (solutions.items) |solution| gpa.free(solution);
+            solutions.deinit(gpa);
+        }
+    };
+
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Runner.run, .{@as(usize, 4)});
 }

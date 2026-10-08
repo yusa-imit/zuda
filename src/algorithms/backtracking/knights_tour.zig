@@ -113,10 +113,12 @@ pub fn knightsTour(allocator: Allocator, n: usize, start_row: usize, start_col: 
     // Initialize board (all squares unvisited = -1).
     var board = try allocator.alloc([]isize, n);
     defer allocator.free(board);
+    // Empty rows make the row cleanup below safe when a row allocation fails part-way.
+    @memset(board, &.{});
+    defer for (board) |row| allocator.free(row);
     for (board) |*row| {
         row.* = try allocator.alloc(isize, n);
     }
-    defer for (board) |row| allocator.free(row);
     for (board) |row| {
         for (row) |*cell| cell.* = -1;
     }
@@ -234,10 +236,12 @@ pub fn countTours(allocator: Allocator, n: usize, start_row: usize, start_col: u
 
     var board = try allocator.alloc([]isize, n);
     defer allocator.free(board);
+    // Empty rows make the row cleanup below safe when a row allocation fails part-way.
+    @memset(board, &.{});
+    defer for (board) |row| allocator.free(row);
     for (board) |*row| {
         row.* = try allocator.alloc(isize, n);
     }
-    defer for (board) |row| allocator.free(row);
     for (board) |row| {
         for (row) |*cell| cell.* = -1;
     }
@@ -459,4 +463,21 @@ test "knight's tour: memory safety" {
         var result = try knightsTour(allocator, 5, 0, 0);
         result.deinit(allocator);
     }
+}
+
+test "knight's tour: frees everything when an allocation fails" {
+    const Runner = struct {
+        fn runTour(gpa: Allocator, n: usize) !void {
+            var result = try knightsTour(gpa, n, 0, 0);
+            result.deinit(gpa);
+        }
+
+        fn runCount(gpa: Allocator, n: usize) !void {
+            const total = try countTours(gpa, n, 0, 0);
+            try testing.expectEqual(@as(usize, 304), total);
+        }
+    };
+
+    try testing.checkAllAllocationFailures(testing.allocator, Runner.runTour, .{@as(usize, 5)});
+    try testing.checkAllAllocationFailures(testing.allocator, Runner.runCount, .{@as(usize, 5)});
 }

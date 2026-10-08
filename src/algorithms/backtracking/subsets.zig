@@ -30,7 +30,10 @@ fn backtrack(
     // Add current subset
     const subset = try allocator.alloc(T, current.items.len);
     @memcpy(subset, current.items);
-    try results.append(allocator, subset);
+    results.append(allocator, subset) catch |err| {
+        allocator.free(subset);
+        return err;
+    };
 
     // Explore adding each remaining element
     for (start..items.len) |i| {
@@ -72,7 +75,10 @@ fn backtrackSize(
     if (current.items.len == k) {
         const subset = try allocator.alloc(T, k);
         @memcpy(subset, current.items);
-        try results.append(allocator, subset);
+        results.append(allocator, subset) catch |err| {
+            allocator.free(subset);
+            return err;
+        };
         return;
     }
 
@@ -122,7 +128,10 @@ fn backtrackUnique(
 ) !void {
     const subset = try allocator.alloc(T, current.items.len);
     @memcpy(subset, current.items);
-    try results.append(allocator, subset);
+    results.append(allocator, subset) catch |err| {
+        allocator.free(subset);
+        return err;
+    };
 
     for (start..items.len) |i| {
         // Skip duplicates: if items[i] == items[i-1] and i > start,
@@ -276,4 +285,25 @@ test "Subsets: stress test with 5 elements" {
 
     // 2^5 = 32
     try std.testing.expectEqual(@as(usize, 32), subs.items.len);
+}
+
+test "subsets - frees everything when an allocation fails" {
+    const Runner = struct {
+        const Kind = enum { all, sized, unique };
+
+        fn run(gpa: std.mem.Allocator, kind: Kind) !void {
+            const items = [_]i32{ 1, 2, 2 };
+            var results = switch (kind) {
+                .all => try subsets(i32, gpa, &items),
+                .sized => try subsetsOfSize(i32, gpa, &items, 2),
+                .unique => try subsetsUnique(i32, gpa, &items),
+            };
+            for (results.items) |subset| gpa.free(subset);
+            results.deinit(gpa);
+        }
+    };
+
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Runner.run, .{.all});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Runner.run, .{.sized});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Runner.run, .{.unique});
 }

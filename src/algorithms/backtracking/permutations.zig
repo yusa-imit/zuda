@@ -39,7 +39,10 @@ fn backtrack(
         // Found a complete permutation
         const perm = try allocator.alloc(T, items.len);
         @memcpy(perm, current);
-        try results.append(allocator, perm);
+        results.append(allocator, perm) catch |err| {
+            allocator.free(perm);
+            return err;
+        };
         return;
     }
 
@@ -95,7 +98,10 @@ fn backtrackUnique(
     if (pos == items.len) {
         const perm = try allocator.alloc(T, items.len);
         @memcpy(perm, current);
-        try results.append(allocator, perm);
+        results.append(allocator, perm) catch |err| {
+            allocator.free(perm);
+            return err;
+        };
         return;
     }
 
@@ -312,4 +318,21 @@ test "Permutations: memory safety loop" {
         for (uniqs.items) |perm| allocator.free(perm);
         uniqs.deinit(allocator);
     }
+}
+
+test "permutations - frees everything when an allocation fails" {
+    const Runner = struct {
+        fn run(gpa: std.mem.Allocator, unique: bool) !void {
+            const items = [_]i32{ 1, 1, 2 };
+            var results = if (unique)
+                try permuteUnique(i32, gpa, &items)
+            else
+                try permute(i32, gpa, &items);
+            for (results.items) |perm| gpa.free(perm);
+            results.deinit(gpa);
+        }
+    };
+
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Runner.run, .{false});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Runner.run, .{true});
 }
