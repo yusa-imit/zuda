@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
 
 /// Ford-Fulkerson algorithm for computing maximum flow in a flow network.
 /// Uses DFS to find augmenting paths.
@@ -23,33 +24,67 @@ pub fn maxFlow(comptime T: type, allocator: Allocator, capacity: []const []const
     if (source >= n or sink >= n) return error.InvalidVertex;
     if (source == sink) return 0;
 
-    // Create residual graph (mutable copy of capacity)
-    var residual = try allocator.alloc([]T, n);
-    errdefer allocator.free(residual);
-    for (residual, 0..) |*row, i| {
-        row.* = try allocator.alloc(T, n);
-        @memcpy(row.*, capacity[i]);
-    }
-    defer {
-        for (residual) |row| allocator.free(row);
-        allocator.free(residual);
-    }
+    const residual = try residual_init(T, allocator, capacity);
+    defer residual_free(T, allocator, residual);
 
     const visited = try allocator.alloc(bool, n);
     defer allocator.free(visited);
+
     const parent = try allocator.alloc(?usize, n);
     defer allocator.free(parent);
 
+    return saturate(T, residual, visited, parent, source, sink);
+}
+
+/// Copy `capacity` into a freshly allocated residual matrix. Frees everything on failure.
+fn residual_init(comptime T: type, allocator: Allocator, capacity: []const []const T) ![][]T {
+    const residual = try allocator.alloc([]T, capacity.len);
+    var filled: usize = 0;
+    errdefer residual_free_rows(T, allocator, residual, filled);
+
+    while (filled < capacity.len) : (filled += 1) {
+        residual[filled] = try allocator.alloc(T, capacity.len);
+        @memcpy(residual[filled], capacity[filled]);
+    }
+    return residual;
+}
+
+fn residual_free(comptime T: type, allocator: Allocator, residual: [][]T) void {
+    residual_free_rows(T, allocator, residual, residual.len);
+}
+
+/// Free the first `filled` rows (the only initialized ones), then the row array.
+fn residual_free_rows(comptime T: type, allocator: Allocator, residual: [][]T, filled: usize) void {
+    for (residual[0..filled]) |row| allocator.free(row);
+    allocator.free(residual);
+}
+
+/// Augment along DFS paths until none remain; leaves `residual` saturated. Returns the flow.
+fn saturate(
+    comptime T: type,
+    residual: [][]T,
+    visited: []bool,
+    parent: []?usize,
+    source: usize,
+    sink: usize,
+) !T {
+    assert(source != sink);
+    assert(visited.len == residual.len);
+    assert(parent.len == residual.len);
+
+    // Floats have no maxInt; an infinite bottleneck is capped by the first edge taken.
+    const unbounded: T = switch (@typeInfo(T)) {
+        .float => std.math.inf(T),
+        else => std.math.maxInt(T),
+    };
     var total_flow: T = 0;
 
     // While there exists an augmenting path from source to sink
     while (true) {
-        // Reset visited and parent arrays
         @memset(visited, false);
         for (parent) |*p| p.* = null;
 
-        // Find augmenting path using DFS
-        const path_flow = try dfs(T, residual, source, sink, visited, parent, std.math.maxInt(T));
+        const path_flow = try dfs(T, residual, source, sink, visited, parent, unbounded);
         if (path_flow == 0) break; // No more augmenting paths
 
         // Update residual capacities along the path
@@ -95,63 +130,44 @@ pub fn minCut(comptime T: type, allocator: Allocator, capacity: []const []const 
     const n = capacity.len;
     if (source >= n or sink >= n) return error.InvalidVertex;
 
-    // First compute max flow to get residual graph
-    var residual = try allocator.alloc([]T, n);
-    errdefer allocator.free(residual);
-    for (residual, 0..) |*row, i| {
-        row.* = try allocator.alloc(T, n);
-        @memcpy(row.*, capacity[i]);
-    }
-    defer {
-        for (residual) |row| allocator.free(row);
-        allocator.free(residual);
-    }
+    const residual = try residual_init(T, allocator, capacity);
+    defer residual_free(T, allocator, residual);
 
     const visited = try allocator.alloc(bool, n);
     defer allocator.free(visited);
+
     const parent = try allocator.alloc(?usize, n);
     defer allocator.free(parent);
 
-    // Run Ford-Fulkerson to saturation
-    while (true) {
-        @memset(visited, false);
-        for (parent) |*p| p.* = null;
-        const path_flow = try dfs(T, residual, source, sink, visited, parent, std.math.maxInt(T));
-        if (path_flow == 0) break;
-
-        var v = sink;
-        while (parent[v]) |u| {
-            residual[u][v] -= path_flow;
-            residual[v][u] += path_flow;
-            v = u;
-        }
-    }
+    // Run Ford-Fulkerson to saturation; source == sink has no flow and cuts nothing.
+    if (source != sink) _ = try saturate(T, residual, visited, parent, source, sink);
 
     // Find all vertices reachable from source in residual graph
     @memset(visited, false);
-    var stack = std.ArrayList(usize).init(allocator);
-    defer stack.deinit();
-    try stack.append(source);
+    var stack: std.ArrayList(usize) = .empty;
+    defer stack.deinit(allocator);
+
+    try stack.append(allocator, source);
     visited[source] = true;
 
-    while (stack.items.len > 0) {
-        const u = stack.pop();
+    while (stack.pop()) |u| {
         for (residual[u], 0..) |cap, v| {
             if (!visited[v] and cap > 0) {
                 visited[v] = true;
-                try stack.append(v);
+                try stack.append(allocator, v);
             }
         }
     }
 
     // Collect vertices in source side of cut
-    var result = std.ArrayList(usize).init(allocator);
-    errdefer result.deinit();
+    var result: std.ArrayList(usize) = .empty;
+    errdefer result.deinit(allocator);
+
     for (visited, 0..) |vis, i| {
-        if (vis) try result.append(i);
+        if (vis) try result.append(allocator, i);
     }
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 // ============================================================================
@@ -344,4 +360,38 @@ test "Min-Cut: no path results in source only" {
     // Only source and vertex 1 (reachable from source) should be in cut
     try testing.expect(cut.len >= 1);
     try testing.expect(std.mem.findScalar(usize, cut, 0) != null);
+}
+
+test "Ford-Fulkerson: allocation failure at every step leaks nothing" {
+    try testing.checkAllAllocationFailures(testing.allocator, flow_and_cut_once, .{});
+}
+
+fn flow_and_cut_once(gpa: Allocator) !void {
+    const rows = [_][4]u32{
+        .{ 0, 10, 5, 0 },
+        .{ 0, 0, 0, 10 },
+        .{ 0, 0, 0, 5 },
+        .{ 0, 0, 0, 0 },
+    };
+    var capacity: [4][]const u32 = undefined;
+    for (&rows, 0..) |*row, i| capacity[i] = row;
+
+    try testing.expectEqual(@as(u32, 15), try maxFlow(u32, gpa, &capacity, 0, 3));
+
+    const cut = try minCut(u32, gpa, &capacity, 0, 3);
+    defer gpa.free(cut);
+
+    try testing.expectEqualSlices(usize, &[_]usize{0}, cut);
+}
+
+test "Ford-Fulkerson: f64 bottleneck is the smallest capacity on the path" {
+    const rows = [_][3]f64{
+        .{ 0, 2.5, 0 },
+        .{ 0, 0, 1.5 },
+        .{ 0, 0, 0 },
+    };
+    var capacity: [3][]const f64 = undefined;
+    for (&rows, 0..) |*row, i| capacity[i] = row;
+
+    try testing.expectEqual(@as(f64, 1.5), try maxFlow(f64, testing.allocator, &capacity, 0, 2));
 }
