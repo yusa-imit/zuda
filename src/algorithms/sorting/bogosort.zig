@@ -33,14 +33,13 @@ const Random = std.Random;
 /// - Used in complexity theory education
 /// - Demonstrates non-polynomial time algorithms
 /// - Example of Las Vegas algorithm (always correct when terminates)
-pub fn bogoSort(comptime T: type, arr: []T, compareFn: fn (T, T) Order) !void {
+///
+/// `seed` drives the shuffle PRNG: the same seed and input reproduce the same shuffle sequence
+/// (ADR 0001 D1). The caller picks the seed; there is no clock or OS-entropy default.
+pub fn bogoSort(comptime T: type, arr: []T, compareFn: fn (T, T) Order, seed: u64) void {
     if (arr.len <= 1) return;
 
-    var prng = std.Random.DefaultPrng.init(blk: {
-        var seed: u64 = undefined;
-        try std.posix.getrandom(std.mem.asBytes(&seed));
-        break :blk seed;
-    });
+    var prng = std.Random.DefaultPrng.init(seed);
     const random = prng.random();
 
     while (!isSorted(T, arr, compareFn)) {
@@ -53,13 +52,13 @@ pub fn bogoSort(comptime T: type, arr: []T, compareFn: fn (T, T) Order) !void {
 /// WARNING: Educational purposes only! O((n+1)!) average case.
 ///
 /// Time: O((n+1)!) average, Space: O(1)
-pub fn bogoSortAsc(comptime T: type, arr: []T) !void {
+pub fn bogoSortAsc(comptime T: type, arr: []T, seed: u64) void {
     const asc = struct {
         fn compare(a: T, b: T) Order {
             return std.math.order(a, b);
         }
     }.compare;
-    try bogoSort(T, arr, asc);
+    bogoSort(T, arr, asc, seed);
 }
 
 /// Bogo Sort for descending order (convenience wrapper)
@@ -67,13 +66,13 @@ pub fn bogoSortAsc(comptime T: type, arr: []T) !void {
 /// WARNING: Educational purposes only! O((n+1)!) average case.
 ///
 /// Time: O((n+1)!) average, Space: O(1)
-pub fn bogoSortDesc(comptime T: type, arr: []T) !void {
+pub fn bogoSortDesc(comptime T: type, arr: []T, seed: u64) void {
     const desc = struct {
         fn compare(a: T, b: T) Order {
             return std.math.order(b, a);
         }
     }.compare;
-    try bogoSort(T, arr, desc);
+    bogoSort(T, arr, desc, seed);
 }
 
 /// Bogo Sort with Order-based comparison
@@ -81,10 +80,10 @@ pub fn bogoSortDesc(comptime T: type, arr: []T) !void {
 /// WARNING: Educational purposes only! O((n+1)!) average case.
 ///
 /// Time: O((n+1)!) average, Space: O(1)
-pub fn bogoSortBy(comptime T: type, arr: []T, order: Order) !void {
+pub fn bogoSortBy(comptime T: type, arr: []T, order: Order, seed: u64) void {
     switch (order) {
-        .lt => try bogoSortAsc(T, arr),
-        .gt => try bogoSortDesc(T, arr),
+        .lt => bogoSortAsc(T, arr, seed),
+        .gt => bogoSortDesc(T, arr, seed),
         .eq => return, // all equal or empty
     }
 }
@@ -127,25 +126,27 @@ fn generatePermutations(comptime T: type, arr: []T, start: usize, compareFn: fn 
     }
 }
 
-/// Bounded Bogo Sort - stops after max iterations
+/// Bounded Bogo Sort - stops after `iterations_max` shuffles
 ///
 /// Returns error.MaxIterationsExceeded if not sorted within limit.
 /// Useful for testing/education without infinite loops.
 ///
-/// Time: O(n × max_iterations), Space: O(1)
-pub fn bogoSortBounded(comptime T: type, arr: []T, compareFn: fn (T, T) Order, max_iterations: usize) !void {
+/// Time: O(n × iterations_max), Space: O(1)
+pub fn bogoSortBounded(
+    comptime T: type,
+    arr: []T,
+    compareFn: fn (T, T) Order,
+    seed: u64,
+    iterations_max: u32,
+) error{MaxIterationsExceeded}!void {
     if (arr.len <= 1) return;
 
-    var prng = std.Random.DefaultPrng.init(blk: {
-        var seed: u64 = undefined;
-        try std.posix.getrandom(std.mem.asBytes(&seed));
-        break :blk seed;
-    });
+    var prng = std.Random.DefaultPrng.init(seed);
     const random = prng.random();
 
-    var iterations: usize = 0;
+    var iterations: u32 = 0;
     while (!isSorted(T, arr, compareFn)) {
-        if (iterations >= max_iterations) return error.MaxIterationsExceeded;
+        if (iterations >= iterations_max) return error.MaxIterationsExceeded;
         shuffle(T, arr, random);
         iterations += 1;
     }
@@ -201,7 +202,7 @@ fn shuffle(comptime T: type, arr: []T, random: Random) void {
 
 test "bogo sort - already sorted (best case)" {
     var arr = [_]i32{ 1, 2, 3 };
-    try bogoSortAsc(i32, &arr);
+    bogoSortAsc(i32, &arr, 1);
     try testing.expectEqual(@as(i32, 1), arr[0]);
     try testing.expectEqual(@as(i32, 2), arr[1]);
     try testing.expectEqual(@as(i32, 3), arr[2]);
@@ -214,7 +215,7 @@ test "bogo sort - small array ascending" {
             return std.math.order(a, b);
         }
     }.compare;
-    try bogoSortBounded(i32, &arr, asc, 10000); // bounded for safety
+    try bogoSortBounded(i32, &arr, asc, 1, 10000); // bounded for safety
     try testing.expectEqual(@as(i32, 1), arr[0]);
     try testing.expectEqual(@as(i32, 2), arr[1]);
     try testing.expectEqual(@as(i32, 3), arr[2]);
@@ -227,7 +228,7 @@ test "bogo sort - small array descending" {
             return std.math.order(b, a);
         }
     }.compare;
-    try bogoSortBounded(i32, &arr, desc, 10000);
+    try bogoSortBounded(i32, &arr, desc, 1, 10000);
     try testing.expectEqual(@as(i32, 3), arr[0]);
     try testing.expectEqual(@as(i32, 2), arr[1]);
     try testing.expectEqual(@as(i32, 1), arr[2]);
@@ -235,13 +236,13 @@ test "bogo sort - small array descending" {
 
 test "bogo sort - empty array" {
     var arr = [_]i32{};
-    try bogoSortAsc(i32, &arr);
+    bogoSortAsc(i32, &arr, 1);
     try testing.expectEqual(@as(usize, 0), arr.len);
 }
 
 test "bogo sort - single element" {
     var arr = [_]i32{42};
-    try bogoSortAsc(i32, &arr);
+    bogoSortAsc(i32, &arr, 1);
     try testing.expectEqual(@as(i32, 42), arr[0]);
 }
 
@@ -252,14 +253,14 @@ test "bogo sort - two elements" {
             return std.math.order(a, b);
         }
     }.compare;
-    try bogoSortBounded(i32, &arr, asc, 1000);
+    try bogoSortBounded(i32, &arr, asc, 1, 1000);
     try testing.expectEqual(@as(i32, 1), arr[0]);
     try testing.expectEqual(@as(i32, 2), arr[1]);
 }
 
 test "bogo sort - all equal" {
     var arr = [_]i32{ 5, 5, 5, 5 };
-    try bogoSortAsc(i32, &arr);
+    bogoSortAsc(i32, &arr, 1);
     for (arr) |val| {
         try testing.expectEqual(@as(i32, 5), val);
     }
@@ -272,7 +273,7 @@ test "bogo sort - duplicates" {
             return std.math.order(a, b);
         }
     }.compare;
-    try bogoSortBounded(i32, &arr, asc, 100000);
+    try bogoSortBounded(i32, &arr, asc, 1, 100000);
     try testing.expectEqual(@as(i32, 1), arr[0]);
     try testing.expectEqual(@as(i32, 1), arr[1]);
     try testing.expectEqual(@as(i32, 2), arr[2]);
@@ -287,7 +288,7 @@ test "bogo sort - negative numbers" {
             return std.math.order(a, b);
         }
     }.compare;
-    try bogoSortBounded(i32, &arr, asc, 100000);
+    try bogoSortBounded(i32, &arr, asc, 1, 100000);
     try testing.expectEqual(@as(i32, -5), arr[0]);
     try testing.expectEqual(@as(i32, -3), arr[1]);
     try testing.expectEqual(@as(i32, -1), arr[2]);
@@ -301,7 +302,7 @@ test "bogo sort - f64 support" {
             return std.math.order(a, b);
         }
     }.compare;
-    try bogoSortBounded(f64, &arr, asc, 10000);
+    try bogoSortBounded(f64, &arr, asc, 1, 10000);
     try testing.expectApproxEqAbs(@as(f64, 1.41), arr[0], 1e-9);
     try testing.expectApproxEqAbs(@as(f64, 2.71), arr[1], 1e-9);
     try testing.expectApproxEqAbs(@as(f64, 3.14), arr[2], 1e-9);
@@ -325,7 +326,7 @@ test "bogo sort - custom comparison" {
         }
     }.compare;
 
-    try bogoSortBounded(Person, &arr, compareByAge, 10000);
+    try bogoSortBounded(Person, &arr, compareByAge, 1, 10000);
     try testing.expectEqual(@as(u32, 20), arr[0].age);
     try testing.expectEqual(@as(u32, 25), arr[1].age);
     try testing.expectEqual(@as(u32, 30), arr[2].age);
@@ -333,7 +334,7 @@ test "bogo sort - custom comparison" {
 
 test "bogo sort - Order-based comparison" {
     var arr = [_]i32{ 3, 1, 2 };
-    try bogoSortBy(i32, &arr, .lt);
+    bogoSortBy(i32, &arr, .lt, 1);
     try testing.expectEqual(@as(i32, 1), arr[0]);
     try testing.expectEqual(@as(i32, 2), arr[1]);
     try testing.expectEqual(@as(i32, 3), arr[2]);
@@ -346,7 +347,7 @@ test "bogo sort - u8 type" {
             return std.math.order(a, b);
         }
     }.compare;
-    try bogoSortBounded(u8, &arr, asc, 100000);
+    try bogoSortBounded(u8, &arr, asc, 1, 100000);
     try testing.expectEqual(@as(u8, 50), arr[0]);
     try testing.expectEqual(@as(u8, 100), arr[1]);
     try testing.expectEqual(@as(u8, 150), arr[2]);
@@ -360,7 +361,7 @@ test "bogo sort - reverse sorted input" {
             return std.math.order(a, b);
         }
     }.compare;
-    try bogoSortBounded(i32, &arr, asc, 100000);
+    try bogoSortBounded(i32, &arr, asc, 1, 100000);
     try testing.expectEqual(@as(i32, 1), arr[0]);
     try testing.expectEqual(@as(i32, 2), arr[1]);
     try testing.expectEqual(@as(i32, 3), arr[2]);
@@ -398,7 +399,7 @@ test "bogo sort - bounded max iterations" {
         }
     }.compare;
     // Very low iteration count should fail
-    try testing.expectError(error.MaxIterationsExceeded, bogoSortBounded(i32, &arr, asc, 5));
+    try testing.expectError(error.MaxIterationsExceeded, bogoSortBounded(i32, &arr, asc, 1, 5));
 }
 
 test "bogo sort - iteration counting" {
@@ -440,4 +441,55 @@ test "bogo sort - isSorted helper" {
 
     const arr3 = [_]i32{ 1, 1, 1 };
     try testing.expect(isSorted(i32, &arr3, asc));
+}
+
+test "bogo sort - same seed reproduces the same shuffle count" {
+    const asc = struct {
+        fn compare(a: i32, b: i32) Order {
+            return std.math.order(a, b);
+        }
+    }.compare;
+
+    var first = [_]i32{ 5, 3, 1, 4, 2 };
+    var second = first;
+    const count_first = countBogoSortIterations(i32, &first, asc, 77);
+    const count_second = countBogoSortIterations(i32, &second, asc, 77);
+    try testing.expectEqual(count_first, count_second);
+    try testing.expectEqualSlices(i32, &first, &second);
+    try testing.expect(count_first > 0);
+}
+
+test "bogo sort - different seeds take different shuffle paths" {
+    const asc = struct {
+        fn compare(a: i32, b: i32) Order {
+            return std.math.order(a, b);
+        }
+    }.compare;
+
+    // Seeds 1..8 must not all need the same number of shuffles on a 5-element input;
+    // otherwise the seed is not reaching the PRNG.
+    var counts: [8]usize = undefined;
+    for (&counts, 0..) |*count, seed_index| {
+        var arr = [_]i32{ 5, 3, 1, 4, 2 };
+        count.* = countBogoSortIterations(i32, &arr, asc, seed_index + 1);
+    }
+    var distinct: usize = 0;
+    for (counts[1..]) |count| {
+        if (count != counts[0]) distinct += 1;
+    }
+    try testing.expect(distinct > 0);
+}
+
+test "bogo sort - seeded bounded sort reproduces the arrangement on failure" {
+    const asc = struct {
+        fn compare(a: i32, b: i32) Order {
+            return std.math.order(a, b);
+        }
+    }.compare;
+
+    var first = [_]i32{ 9, 8, 7, 6, 5, 4, 3, 2, 1 };
+    var second = first;
+    try testing.expectError(error.MaxIterationsExceeded, bogoSortBounded(i32, &first, asc, 5, 3));
+    try testing.expectError(error.MaxIterationsExceeded, bogoSortBounded(i32, &second, asc, 5, 3));
+    try testing.expectEqualSlices(i32, &first, &second);
 }
