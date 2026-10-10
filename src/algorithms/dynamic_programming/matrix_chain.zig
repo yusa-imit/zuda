@@ -60,7 +60,8 @@ pub fn MatrixChain(comptime T: type) type {
 
             fn printOptimal(self: *const Result, writer: *std.ArrayList(u8), allocator: Allocator, i: usize, j: usize) !void {
                 if (i == j) {
-                    try writer.writer(allocator).print("A{d}", .{i});
+                    var label: [24]u8 = undefined; // "A" plus a decimal usize always fits.
+                    try writer.appendSlice(allocator, try std.fmt.bufPrint(&label, "A{d}", .{i}));
                     return;
                 }
 
@@ -71,6 +72,29 @@ pub fn MatrixChain(comptime T: type) type {
                 try writer.append(allocator, ')');
             }
         };
+
+        /// Allocate an `n` x `n` zero-filled table; frees everything it allocated on failure.
+        fn alloc_table(allocator: Allocator, comptime E: type, n: usize) ![][]E {
+            const rows = try allocator.alloc([]E, n);
+            var filled: usize = 0;
+            errdefer free_rows(allocator, E, rows, filled);
+
+            while (filled < n) : (filled += 1) {
+                rows[filled] = try allocator.alloc(E, n);
+                @memset(rows[filled], 0);
+            }
+            return rows;
+        }
+
+        fn free_table(allocator: Allocator, comptime E: type, table: [][]E) void {
+            free_rows(allocator, E, table, table.len);
+        }
+
+        /// Free the first `filled` rows (the only initialized ones), then the row array.
+        fn free_rows(allocator: Allocator, comptime E: type, rows: [][]E, filled: usize) void {
+            for (rows[0..filled]) |row| allocator.free(row);
+            allocator.free(rows);
+        }
 
         /// Compute optimal matrix chain multiplication order
         /// `dims` contains matrix dimensions: matrix i has dimensions dims[i-1] × dims[i]
@@ -86,32 +110,12 @@ pub fn MatrixChain(comptime T: type) type {
             const n = dims.len - 1; // number of matrices
 
             // dp[i][j] = minimum cost to multiply matrices i..j (1-indexed)
-            var dp = try allocator.alloc([]T, n);
-            errdefer {
-                for (dp[0..]) |row| allocator.free(row);
-                allocator.free(dp);
-            }
-
-            for (0..n) |i| {
-                dp[i] = try allocator.alloc(T, n);
-                @memset(dp[i], 0);
-            }
-            defer {
-                for (dp) |row| allocator.free(row);
-                allocator.free(dp);
-            }
+            const dp = try alloc_table(allocator, T, n);
+            defer free_table(allocator, T, dp);
 
             // splits[i][j] = k means split at k for matrices i..j
-            var splits = try allocator.alloc([]usize, n);
-            errdefer {
-                for (splits[0..]) |row| allocator.free(row);
-                allocator.free(splits);
-            }
-
-            for (0..n) |i| {
-                splits[i] = try allocator.alloc(usize, n);
-                @memset(splits[i], 0);
-            }
+            const splits = try alloc_table(allocator, usize, n);
+            errdefer free_table(allocator, usize, splits);
 
             // Fill DP table bottom-up
             // len = chain length - 1
@@ -153,16 +157,8 @@ pub fn MatrixChain(comptime T: type) type {
 
             const n = dims.len - 1;
 
-            var dp = try allocator.alloc([]T, n);
-            defer {
-                for (dp) |row| allocator.free(row);
-                allocator.free(dp);
-            }
-
-            for (0..n) |i| {
-                dp[i] = try allocator.alloc(T, n);
-                @memset(dp[i], 0);
-            }
+            const dp = try alloc_table(allocator, T, n);
+            defer free_table(allocator, T, dp);
 
             for (2..n + 1) |len| {
                 var i: usize = 0;
@@ -375,4 +371,22 @@ test "MatrixChain: memory safety" {
     defer result.deinit();
 
     try expect(result.cost > 0);
+}
+
+test "MatrixChain: allocation failure at every step leaks nothing" {
+    try testing.checkAllAllocationFailures(testing.allocator, chain_once, .{});
+}
+
+fn chain_once(gpa: Allocator) !void {
+    const Chain = MatrixChain(u64);
+    const dims = [_]usize{ 10, 30, 5, 60 };
+
+    var result = try Chain.optimize(gpa, &dims);
+    defer result.deinit();
+
+    const text = try result.getParenthesization(gpa);
+    defer gpa.free(text);
+
+    try testing.expectEqual(@as(u64, 4500), result.cost);
+    try testing.expectEqual(@as(u64, 4500), try Chain.optimizeCost(gpa, &dims));
 }

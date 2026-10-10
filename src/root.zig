@@ -848,4 +848,7 @@ test {
     _ = @import("algorithms/backtracking/subsets.zig");
     _ = @import("algorithms/backtracking/sudoku.zig");
     _ = @import("algorithms/backtracking/word_search.zig");
+    _ = @import("algorithms/automata/nfa.zig");
+    _ = @import("algorithms/dynamic_programming/matrix_chain.zig");
+    _ = @import("algorithms/network_flow/ford_fulkerson.zig");
 }

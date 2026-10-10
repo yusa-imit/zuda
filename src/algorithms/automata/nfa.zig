@@ -16,6 +16,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
+const assert = std.debug.assert;
 
 /// NFA transition types
 pub const Transition = union(enum) {
@@ -43,12 +44,15 @@ pub const State = struct {
     is_accept: bool,
     /// Outgoing transitions
     transitions: ArrayList(Transition),
+    /// Allocator that owns `transitions` (the list is unmanaged on Zig 0.16).
+    gpa: Allocator,
 
     pub fn init(allocator: Allocator, id: usize, is_accept: bool) !State {
         return State{
             .id = id,
             .is_accept = is_accept,
-            .transitions = ArrayList(Transition).init(allocator),
+            .transitions = .empty,
+            .gpa = allocator,
         };
     }
 
@@ -59,32 +63,32 @@ pub const State = struct {
                 // and will be freed during NFA.deinit()
             }
         }
-        self.transitions.deinit();
+        self.transitions.deinit(self.gpa);
     }
 
     /// Add epsilon transition to target state
     /// Time: O(1) amortized
     pub fn addEpsilon(self: *State, to: usize) !void {
-        try self.transitions.append(.{ .epsilon = to });
+        try self.transitions.append(self.gpa, .{ .epsilon = to });
     }
 
     /// Add character transition to target state
     /// Time: O(1) amortized
     pub fn addChar(self: *State, c: u8, to: usize) !void {
-        try self.transitions.append(.{ .char = .{ .c = c, .to = to } });
+        try self.transitions.append(self.gpa, .{ .char = .{ .c = c, .to = to } });
     }
 
     /// Add wildcard (any character) transition
     /// Time: O(1) amortized
     pub fn addAny(self: *State, to: usize) !void {
-        try self.transitions.append(.{ .any = to });
+        try self.transitions.append(self.gpa, .{ .any = to });
     }
 
     /// Add character class transition [allowed_chars]
     /// Time: O(1) amortized
     /// Note: allowed slice must remain valid for NFA lifetime
     pub fn addClass(self: *State, allowed: []const u8, to: usize) !void {
-        try self.transitions.append(.{ .class = .{ .allowed = allowed, .to = to } });
+        try self.transitions.append(self.gpa, .{ .class = .{ .allowed = allowed, .to = to } });
     }
 };
 
@@ -105,9 +109,9 @@ pub const NFA = struct {
     pub fn init(allocator: Allocator) Self {
         return Self{
             .allocator = allocator,
-            .states = ArrayList(State).init(allocator),
+            .states = .empty,
             .start = 0,
-            .char_classes = ArrayList([]u8).init(allocator),
+            .char_classes = .empty,
         };
     }
 
@@ -115,12 +119,12 @@ pub const NFA = struct {
         for (self.states.items) |*state| {
             state.deinit();
         }
-        self.states.deinit();
+        self.states.deinit(self.allocator);
 
         for (self.char_classes.items) |class| {
             self.allocator.free(class);
         }
-        self.char_classes.deinit();
+        self.char_classes.deinit(self.allocator);
     }
 
     /// Add new state to NFA
@@ -128,7 +132,7 @@ pub const NFA = struct {
     pub fn addState(self: *Self, is_accept: bool) !usize {
         const id = self.states.items.len;
         const state = try State.init(self.allocator, id, is_accept);
-        try self.states.append(state);
+        try self.states.append(self.allocator, state);
         return id;
     }
 
@@ -165,43 +169,32 @@ pub const NFA = struct {
         var nfa = Self.init(allocator);
         errdefer nfa.deinit();
 
-        if (pattern.len == 0) {
-            _ = try nfa.addState(true);
-            return nfa;
-        }
-
-        nfa.start = try nfa.addState(false);
+        nfa.start = try nfa.addState(pattern.len == 0);
         var current = nfa.start;
         var i: usize = 0;
-
+        // A leading '*' has nothing to repeat and is a literal; a run of '*' after an atom
+        // collapses to a single star (a** == a*).
         while (i < pattern.len) : (i += 1) {
             const c = pattern[i];
-
-            if (c == '*' and i > 0) {
-                // Handle Kleene star: loop back to previous state
-                // Create new state for after the star
-                const next = try nfa.addState(i == pattern.len - 1);
-                try nfa.states.items[current].addEpsilon(next);
-                // Loop back to current for repetition
-                const loop_target = current;
-                try nfa.states.items[current].addEpsilon(loop_target);
-                current = next;
-            } else if (c == '.') {
-                // Wildcard: match any character
-                const is_last = (i == pattern.len - 1) or
-                    (i + 1 < pattern.len and pattern[i + 1] != '*');
-                const next = try nfa.addState(is_last);
+            var run_end = i + 1;
+            while (run_end < pattern.len and pattern[run_end] == '*') run_end += 1;
+            const starred = run_end > i + 1;
+            const next = try nfa.addState(run_end == pattern.len);
+            if (c == '.') {
                 try nfa.states.items[current].addAny(next);
-                current = next;
             } else {
-                // Literal character
-                const is_last = (i == pattern.len - 1) or
-                    (i + 1 < pattern.len and pattern[i + 1] != '*');
-                const next = try nfa.addState(is_last);
                 try nfa.states.items[current].addChar(c, next);
-                current = next;
             }
+            if (starred) {
+                // Zero repetitions skip the atom; further ones loop from `next` back.
+                try nfa.states.items[current].addEpsilon(next);
+                try nfa.states.items[next].addEpsilon(current);
+            }
+            current = next;
+            i = run_end - 1;
         }
+        assert(current < nfa.states.items.len);
+        assert(nfa.states.items[current].is_accept);
 
         return nfa;
     }
@@ -212,11 +205,11 @@ pub const NFA = struct {
     pub fn match(self: *const Self, text: []const u8) !bool {
         if (self.states.items.len == 0) return false;
 
-        var current_states = ArrayList(usize).init(self.allocator);
-        defer current_states.deinit();
+        var current_states: ArrayList(usize) = .empty;
+        defer current_states.deinit(self.allocator);
 
-        var next_states = ArrayList(usize).init(self.allocator);
-        defer next_states.deinit();
+        var next_states: ArrayList(usize) = .empty;
+        defer next_states.deinit(self.allocator);
 
         // Start with epsilon-closure of start state
         try self.epsilonClosure(self.start, &current_states);
@@ -271,15 +264,15 @@ pub const NFA = struct {
         defer self.allocator.free(visited);
         @memset(visited, false);
 
-        var stack = ArrayList(usize).init(self.allocator);
-        defer stack.deinit();
+        var stack: ArrayList(usize) = .empty;
+        defer stack.deinit(self.allocator);
 
-        try stack.append(start_state);
+        try stack.append(self.allocator, start_state);
         visited[start_state] = true;
-        try result.append(start_state);
+        try result.append(self.allocator, start_state);
 
         while (stack.items.len > 0) {
-            const state_id = stack.pop();
+            const state_id = stack.pop().?; // Loop guard: stack is non-empty.
             const state = &self.states.items[state_id];
 
             for (state.transitions.items) |transition| {
@@ -287,8 +280,8 @@ pub const NFA = struct {
                     const to = transition.epsilon;
                     if (!visited[to]) {
                         visited[to] = true;
-                        try stack.append(to);
-                        try result.append(to);
+                        try stack.append(self.allocator, to);
+                        try result.append(self.allocator, to);
                     }
                 }
             }
@@ -447,4 +440,51 @@ test "NFA: complex wildcard pattern" {
     try testing.expect(try nfa.match("a9c"));
     try testing.expect(!try nfa.match("ac"));
     try testing.expect(!try nfa.match("abbc"));
+}
+
+test "NFA: star only repeats the preceding atom" {
+    var nfa = try NFA.fromWildcard(testing.allocator, "ab*c");
+    defer nfa.deinit();
+
+    try testing.expect(try nfa.match("ac"));
+    try testing.expect(try nfa.match("abc"));
+    try testing.expect(try nfa.match("abbbc"));
+    try testing.expect(!try nfa.match("a"));
+    try testing.expect(!try nfa.match("abb"));
+    try testing.expect(!try nfa.match("bc"));
+}
+
+test "NFA: trailing star accepts only the prefix and its repeats" {
+    var nfa = try NFA.fromWildcard(testing.allocator, "ba*");
+    defer nfa.deinit();
+
+    try testing.expect(try nfa.match("b"));
+    try testing.expect(try nfa.match("baaa"));
+    try testing.expect(!try nfa.match(""));
+    try testing.expect(!try nfa.match("a"));
+    try testing.expect(!try nfa.match("bab"));
+}
+
+test "NFA: repeated star equals single star and leading star is literal" {
+    var doubled = try NFA.fromWildcard(testing.allocator, "a**");
+    defer doubled.deinit();
+    try testing.expect(try doubled.match(""));
+    try testing.expect(try doubled.match("aa"));
+    try testing.expect(!try doubled.match("b"));
+
+    var leading = try NFA.fromWildcard(testing.allocator, "*a");
+    defer leading.deinit();
+    try testing.expect(try leading.match("*a"));
+    try testing.expect(!try leading.match("a"));
+}
+
+test "NFA: allocation failure at every step leaks nothing" {
+    try testing.checkAllAllocationFailures(testing.allocator, wildcard_match_once, .{});
+}
+
+fn wildcard_match_once(gpa: Allocator) !void {
+    var nfa = try NFA.fromWildcard(gpa, "a.*b");
+    defer nfa.deinit();
+
+    try testing.expect(try nfa.match("axxb"));
 }
