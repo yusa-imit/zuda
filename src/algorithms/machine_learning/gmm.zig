@@ -48,7 +48,7 @@ const math = std.math;
 ///     &.{1.0, 1.0}, &.{1.5, 2.0}, &.{3.0, 4.0}, &.{5.0, 7.0},
 ///     &.{3.5, 5.0}, &.{4.5, 5.0}, &.{3.5, 4.5}
 /// };
-/// var result = try gmm(f64, allocator, &data, 2, .{});
+/// var result = try gmm(f64, allocator, &data, 2, .{ .seed = 1 });
 /// defer result.deinit();
 /// // result.means contains k Gaussian means
 /// // result.responsibilities[i][j] = P(component j | data[i])
@@ -128,7 +128,8 @@ pub fn GMMResult(comptime T: type) type {
 pub const GMMOptions = struct {
     max_iterations: usize = 100,
     tolerance: f64 = 1e-6, // convergence threshold for log-likelihood change
-    random_seed: ?u64 = null, // for reproducible initialization
+    /// Seeds the mean initialization PRNG. Required (ADR 0001 D1): no clock-derived default.
+    seed: u64,
     regularization: f64 = 1e-6, // added to diagonal covariance for numerical stability
 };
 
@@ -170,42 +171,28 @@ pub fn gmm(
     }
 
     // Initialize parameters using K-Means++
-    const means = try initializeMeans(T, allocator, data, k, options.random_seed);
-    errdefer {
-        for (means) |mean| allocator.free(mean);
-        allocator.free(means);
-    }
+    const means = try initializeMeans(T, allocator, data, k, options.seed);
+    errdefer free_rows(T, allocator, means);
 
     // Initialize covariances to identity (diagonal)
-    var covariances = try allocator.alloc([]T, k);
-    errdefer allocator.free(covariances);
-    for (covariances, 0..) |*cov, i| {
-        cov.* = try allocator.alloc(T, d);
-        errdefer {
-            for (covariances[0..i]) |c| allocator.free(c);
-            for (covariances) |c| allocator.free(c);
-            allocator.free(covariances);
-        }
-        @memset(cov.*, 1.0);
-    }
+    const covariances = try alloc_rows(T, allocator, k, d);
+    errdefer free_rows(T, allocator, covariances);
+
+    for (covariances) |cov| @memset(cov, 1.0);
 
     // Initialize weights uniformly
     const weights = try allocator.alloc(T, k);
     errdefer allocator.free(weights);
+
     const uniform_weight: T = 1.0 / @as(T, @floatFromInt(k));
     @memset(weights, uniform_weight);
 
     // Allocate responsibilities (n × k)
-    var responsibilities = try allocator.alloc([]T, n);
-    errdefer allocator.free(responsibilities);
-    for (responsibilities, 0..) |*resp, i| {
-        resp.* = try allocator.alloc(T, k);
-        errdefer {
-            for (responsibilities[0..i]) |r| allocator.free(r);
-            for (responsibilities) |r| allocator.free(r);
-            allocator.free(responsibilities);
-        }
-    }
+    const responsibilities = try alloc_rows(T, allocator, n, k);
+    errdefer free_rows(T, allocator, responsibilities);
+
+    // Zeroed so that max_iterations == 0 still returns defined responsibilities.
+    for (responsibilities) |row| @memset(row, 0);
 
     var prev_log_likelihood: T = -math.inf(T);
     var iterations: usize = 0;
@@ -243,7 +230,17 @@ pub fn gmm(
         prev_log_likelihood = log_likelihood;
 
         // M-step: Update parameters
-        try updateParameters(T, allocator, data, means, covariances, weights, responsibilities, options.regularization);
+        const regularization = options.regularization;
+        try updateParameters(
+            T,
+            allocator,
+            data,
+            means,
+            covariances,
+            weights,
+            responsibilities,
+            regularization,
+        );
     }
 
     return GMMResult(T){
@@ -263,20 +260,25 @@ fn initializeMeans(
     allocator: Allocator,
     data: []const []const T,
     k: usize,
-    seed: ?u64,
+    seed: u64,
 ) ![][]T {
     const n = data.len;
     const d = data[0].len;
 
     var means = try allocator.alloc([]T, k);
-    errdefer allocator.free(means);
+    var filled: usize = 0;
+    errdefer {
+        for (means[0..filled]) |mean| allocator.free(mean);
+        allocator.free(means);
+    }
 
-    var prng = std.Random.DefaultPrng.init(seed orelse @intCast(std.time.timestamp()));
+    var prng = std.Random.DefaultPrng.init(seed);
     const random = prng.random();
 
     // First centroid: random point
     const first_idx = random.intRangeLessThan(usize, 0, n);
     means[0] = try allocator.alloc(T, d);
+    filled = 1;
     @memcpy(means[0], data[first_idx]);
 
     var distances = try allocator.alloc(T, n);
@@ -309,10 +311,36 @@ fn initializeMeans(
         }
 
         means[c] = try allocator.alloc(T, d);
+        filled = c + 1;
         @memcpy(means[c], data[selected_idx]);
     }
 
+    std.debug.assert(filled == k);
     return means;
+}
+
+/// Allocates `rows` rows of `cols` elements each, contents undefined. On failure frees
+/// everything it allocated. Free with `free_rows`.
+fn alloc_rows(comptime T: type, allocator: Allocator, rows: usize, cols: usize) ![][]T {
+    const table = try allocator.alloc([]T, rows);
+    var filled: usize = 0;
+    errdefer {
+        for (table[0..filled]) |row| allocator.free(row);
+        allocator.free(table);
+    }
+
+    for (table) |*row| {
+        row.* = try allocator.alloc(T, cols);
+        filled += 1;
+    }
+
+    std.debug.assert(filled == rows);
+    return table;
+}
+
+fn free_rows(comptime T: type, allocator: Allocator, table: [][]T) void {
+    for (table) |row| allocator.free(row);
+    allocator.free(table);
 }
 
 /// Update parameters in M-step
@@ -425,7 +453,7 @@ test "GMM: basic 2D clustering" {
         &.{ 8.0, 8.0 }, &.{ 8.5, 9.0 }, &.{ 8.2, 8.8 }, // Cluster 2
     };
 
-    var result = try gmm(f64, allocator, &data, 2, .{ .random_seed = 42 });
+    var result = try gmm(f64, allocator, &data, 2, .{ .seed = 42 });
     defer result.deinit();
 
     try testing.expectEqual(@as(usize, 2), result.means.len);
@@ -466,7 +494,7 @@ test "GMM: single cluster" {
         &.{ 2.0, 2.0 },
     };
 
-    var result = try gmm(f64, allocator, &data, 1, .{});
+    var result = try gmm(f64, allocator, &data, 1, .{ .seed = 1 });
     defer result.deinit();
 
     try testing.expectEqual(@as(usize, 1), result.means.len);
@@ -487,7 +515,8 @@ test "GMM: convergence" {
         &.{ 8.0, 8.0 }, &.{ 8.5, 9.0 }, &.{ 9.0, 8.5 },
     };
 
-    var result = try gmm(f64, allocator, &data, 2, .{ .max_iterations = 100, .tolerance = 1e-6 });
+    const options: GMMOptions = .{ .seed = 1, .max_iterations = 100, .tolerance = 1e-6 };
+    var result = try gmm(f64, allocator, &data, 2, options);
     defer result.deinit();
 
     // Should converge in reasonable iterations
@@ -506,7 +535,7 @@ test "GMM: log-likelihood for new point" {
         &.{ 1.0, 1.0 }, &.{ 1.5, 2.0 }, &.{ 2.0, 1.5 },
     };
 
-    var result = try gmm(f64, allocator, &data, 1, .{});
+    var result = try gmm(f64, allocator, &data, 1, .{ .seed = 1 });
     defer result.deinit();
 
     // Point close to cluster should have high likelihood
@@ -529,7 +558,7 @@ test "GMM: f32 support" {
         &.{ 8.0, 8.0 }, &.{ 8.5, 9.0 },
     };
 
-    var result = try gmm(f32, allocator, &data, 2, .{});
+    var result = try gmm(f32, allocator, &data, 2, .{ .seed = 1 });
     defer result.deinit();
 
     try testing.expectEqual(@as(usize, 2), result.means.len);
@@ -540,7 +569,7 @@ test "GMM: empty data" {
     const allocator = testing.allocator;
     const data: []const []const f64 = &.{};
 
-    const result = gmm(f64, allocator, data, 2, .{});
+    const result = gmm(f64, allocator, data, 2, .{ .seed = 1 });
     try testing.expectError(error.EmptyData, result);
 }
 
@@ -548,7 +577,7 @@ test "GMM: invalid k (zero)" {
     const allocator = testing.allocator;
     const data = [_][]const f64{&.{ 1.0, 1.0 }};
 
-    const result = gmm(f64, allocator, &data, 0, .{});
+    const result = gmm(f64, allocator, &data, 0, .{ .seed = 1 });
     try testing.expectError(error.InvalidK, result);
 }
 
@@ -556,7 +585,7 @@ test "GMM: invalid k (exceeds n)" {
     const allocator = testing.allocator;
     const data = [_][]const f64{&.{ 1.0, 1.0 }};
 
-    const result = gmm(f64, allocator, &data, 2, .{});
+    const result = gmm(f64, allocator, &data, 2, .{ .seed = 1 });
     try testing.expectError(error.InvalidK, result);
 }
 
@@ -567,7 +596,7 @@ test "GMM: inconsistent dimensions" {
         &.{ 2.0, 2.0, 3.0 }, // Different dimension
     };
 
-    const result = gmm(f64, allocator, &data, 2, .{});
+    const result = gmm(f64, allocator, &data, 2, .{ .seed = 1 });
     try testing.expectError(error.InconsistentDimensions, result);
 }
 
@@ -581,7 +610,7 @@ test "GMM: overlapping clusters (soft assignment)" {
         &.{ 10.0, 10.0 }, // Clearly in cluster 2
     };
 
-    var result = try gmm(f64, allocator, &data, 2, .{ .random_seed = 42 });
+    var result = try gmm(f64, allocator, &data, 2, .{ .seed = 42 });
     defer result.deinit();
 
     // Boundary point should have split responsibility
@@ -611,7 +640,7 @@ test "GMM: covariance estimation" {
         &.{ 0.0, 0.1 }, &.{ 1.0, 0.1 }, &.{ 2.0, 0.1 }, // Narrow in y
     };
 
-    var result = try gmm(f64, allocator, &data, 1, .{});
+    var result = try gmm(f64, allocator, &data, 1, .{ .seed = 1 });
     defer result.deinit();
 
     // Variance in x should be larger than in y
@@ -629,7 +658,7 @@ test "GMM: regularization prevents singular covariance" {
         &.{ 5.0, 5.0 },
     };
 
-    var result = try gmm(f64, allocator, &data, 1, .{ .regularization = 1e-6 });
+    var result = try gmm(f64, allocator, &data, 1, .{ .seed = 1, .regularization = 1e-6 });
     defer result.deinit();
 
     // Covariance should be regularization value (not zero)
@@ -646,10 +675,10 @@ test "GMM: reproducibility with seed" {
         &.{ 8.0, 8.0 }, &.{ 8.5, 9.0 }, &.{ 9.0, 8.5 },
     };
 
-    var result1 = try gmm(f64, allocator, &data, 2, .{ .random_seed = 123 });
+    var result1 = try gmm(f64, allocator, &data, 2, .{ .seed = 123 });
     defer result1.deinit();
 
-    var result2 = try gmm(f64, allocator, &data, 2, .{ .random_seed = 123 });
+    var result2 = try gmm(f64, allocator, &data, 2, .{ .seed = 123 });
     defer result2.deinit();
 
     // Results should be identical
@@ -662,4 +691,17 @@ test "GMM: reproducibility with seed" {
             try testing.expectApproxEqAbs(v1, v2, 1e-9);
         }
     }
+}
+
+test "GMM: no leaks when any allocation fails" {
+    const data = [_][]const f64{
+        &.{ 1.0, 1.0 }, &.{ 1.5, 2.0 }, &.{ 2.0, 1.5 },
+        &.{ 8.0, 8.0 }, &.{ 8.5, 9.0 }, &.{ 9.0, 8.5 },
+    };
+    try testing.checkAllAllocationFailures(testing.allocator, gmm_oom_run, .{&data});
+}
+
+fn gmm_oom_run(allocator: Allocator, data: []const []const f64) !void {
+    var result = try gmm(f64, allocator, data, 2, .{ .seed = 5, .max_iterations = 20 });
+    defer result.deinit();
 }
