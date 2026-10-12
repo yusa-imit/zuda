@@ -21,8 +21,8 @@ pub const TSNEOptions = struct {
     initial_momentum: f64 = 0.5,
     /// Minimum gain value
     min_gain: f64 = 0.01,
-    /// Random seed (null = use random seed)
-    seed: ?u64 = null,
+    /// Seeds the embedding initialization. Required (ADR 0001 D1): no clock-derived default.
+    seed: u64,
 };
 
 /// t-distributed Stochastic Neighbor Embedding for dimensionality reduction
@@ -58,11 +58,10 @@ pub fn TSNE(comptime T: type) type {
         /// Time: O(1)
         /// Space: O(1)
         pub fn init(allocator: std.mem.Allocator, options: TSNEOptions) Self {
-            const seed = options.seed orelse @as(u64, @intCast(std.time.milliTimestamp()));
             return Self{
                 .allocator = allocator,
                 .options = options,
-                .rng = std.Random.DefaultPrng.init(seed),
+                .rng = std.Random.DefaultPrng.init(options.seed),
             };
         }
 
@@ -124,8 +123,9 @@ pub fn TSNE(comptime T: type) type {
 
                 // Update with momentum and adaptive gains
                 for (0..n_samples * self.options.n_components) |i| {
-                    // Adaptive gains: increase if gradient direction is consistent, decrease otherwise
-                    if ((dY[i] > 0) == (iY[i] > 0)) {
+                    // Adaptive gains: the step is -dY, so the gradient disagreeing in sign with the
+                    // accumulated update means the descent direction is consistent: grow the gain.
+                    if ((dY[i] > 0) != (iY[i] > 0)) {
                         gains[i] += 0.2;
                     } else {
                         gains[i] *= 0.8;
@@ -216,10 +216,15 @@ pub fn TSNE(comptime T: type) type {
             }
 
             // Symmetrize P matrix
+            // Both halves are read before either is written; symmetrizing in place element by
+            // element would fold the already-scaled value back into the transposed entry.
+            const scale: T = @floatFromInt(2 * n_samples);
             for (0..n_samples) |i| {
-                for (0..n_samples) |j| {
-                    const val = (P[i * n_samples + j] + P[j * n_samples + i]) / @as(T, @floatFromInt(2 * n_samples));
+                P[i * n_samples + i] = 0;
+                for (i + 1..n_samples) |j| {
+                    const val = (P[i * n_samples + j] + P[j * n_samples + i]) / scale;
                     P[i * n_samples + j] = val;
+                    P[j * n_samples + i] = val;
                 }
             }
 
@@ -343,10 +348,10 @@ test "t-SNE: 3D embedding" {
     });
     defer tsne.deinit();
 
-    const Y = try tsne.fitTransform(&X, 2, 6);
+    const Y = try tsne.fitTransform(&X, 6, 2);
     defer allocator.free(Y);
 
-    try testing.expectEqual(6, Y.len); // 2 samples × 3 components
+    try testing.expectEqual(18, Y.len); // 6 samples × 3 components
 }
 
 test "t-SNE: different perplexity values" {
@@ -361,9 +366,9 @@ test "t-SNE: different perplexity values" {
     {
         var tsne = TSNE(f64).init(allocator, .{ .perplexity = 2.0, .n_iter = 300, .seed = 42 });
         defer tsne.deinit();
-        const Y = try tsne.fitTransform(&X, 2, 8);
+        const Y = try tsne.fitTransform(&X, 8, 2);
         defer allocator.free(Y);
-        try testing.expectEqual(4, Y.len);
+        try testing.expectEqual(16, Y.len);
     }
 
     // High perplexity (global structure)
@@ -412,10 +417,10 @@ test "t-SNE: f32 support" {
     var tsne = TSNE(f32).init(allocator, .{ .perplexity = 2.0, .n_iter = 200, .seed = 42 });
     defer tsne.deinit();
 
-    const Y = try tsne.fitTransform(&X, 2, 4);
+    const Y = try tsne.fitTransform(&X, 4, 2);
     defer allocator.free(Y);
 
-    try testing.expectEqual(4, Y.len);
+    try testing.expectEqual(8, Y.len); // 4 samples × 2 components
 }
 
 test "t-SNE: error on insufficient samples" {
@@ -423,7 +428,7 @@ test "t-SNE: error on insufficient samples" {
 
     const X = [_]f64{ 0.0, 1.0 };
 
-    var tsne = TSNE(f64).init(allocator, .{});
+    var tsne = TSNE(f64).init(allocator, .{ .seed = 1 });
     defer tsne.deinit();
 
     const result = tsne.fitTransform(&X, 1, 2);
@@ -438,7 +443,7 @@ test "t-SNE: error on perplexity too large" {
         4.0, 5.0, 6.0, 7.0,
     };
 
-    var tsne = TSNE(f64).init(allocator, .{ .perplexity = 10.0 }); // > n_samples
+    var tsne = TSNE(f64).init(allocator, .{ .seed = 1, .perplexity = 10.0 }); // > n_samples
     defer tsne.deinit();
 
     const result = tsne.fitTransform(&X, 2, 4);
@@ -498,8 +503,8 @@ test "t-SNE: memory safety" {
     const allocator = testing.allocator;
 
     const X = [_]f64{
-        0.0, 1.0, 2.0, 3.0,
-        4.0, 5.0, 6.0, 7.0,
+        0.0, 1.0, 2.0,  3.0,
+        4.0, 5.0, 6.0,  7.0,
         8.0, 9.0, 10.0, 11.0,
     };
 
@@ -538,20 +543,30 @@ test "t-SNE: learning rate variations" {
 
     // Low learning rate
     {
-        var tsne = TSNE(f64).init(allocator, .{ .learning_rate = 50.0, .n_iter = 300, .seed = 42 });
+        var tsne = TSNE(f64).init(allocator, .{
+            .learning_rate = 50.0,
+            .perplexity = 2.0,
+            .n_iter = 300,
+            .seed = 42,
+        });
         defer tsne.deinit();
-        const Y = try tsne.fitTransform(&X, 2, 6);
+        const Y = try tsne.fitTransform(&X, 6, 2);
         defer allocator.free(Y);
-        try testing.expectEqual(4, Y.len);
+        try testing.expectEqual(12, Y.len);
     }
 
     // High learning rate
     {
-        var tsne = TSNE(f64).init(allocator, .{ .learning_rate = 500.0, .n_iter = 300, .seed = 42 });
+        var tsne = TSNE(f64).init(allocator, .{
+            .learning_rate = 500.0,
+            .perplexity = 2.0,
+            .n_iter = 300,
+            .seed = 42,
+        });
         defer tsne.deinit();
-        const Y = try tsne.fitTransform(&X, 2, 6);
+        const Y = try tsne.fitTransform(&X, 6, 2);
         defer allocator.free(Y);
-        try testing.expectEqual(4, Y.len);
+        try testing.expectEqual(12, Y.len);
     }
 }
 
@@ -634,4 +649,38 @@ fn distance2D(a: []const f64, b: []const f64) f64 {
     const dx = a[0] - b[0];
     const dy = a[1] - b[1];
     return @sqrt(dx * dx + dy * dy);
+}
+
+test "t-SNE: joint probabilities are symmetric and sum to one" {
+    const allocator = testing.allocator;
+
+    const X = [_]f64{ 0.0, 0.0, 1.0, 0.5, 4.0, 4.0, 4.5, 3.5, 9.0, 1.0 };
+    var tsne = TSNE(f64).init(allocator, .{ .perplexity = 2.0, .seed = 1 });
+    defer tsne.deinit();
+
+    const P = try tsne.computePairwiseAffinities(&X, 5, 2);
+    defer allocator.free(P);
+
+    var total: f64 = 0;
+    for (0..5) |i| {
+        try testing.expectEqual(@as(f64, 0.0), P[i * 5 + i]);
+        for (0..5) |j| {
+            try testing.expectEqual(P[i * 5 + j], P[j * 5 + i]);
+            total += P[i * 5 + j];
+        }
+    }
+    try testing.expectApproxEqAbs(@as(f64, 1.0), total, 1e-9);
+}
+
+test "t-SNE: no leaks when any allocation fails" {
+    const X = [_]f64{ 0.0, 0.0, 1.0, 0.5, 4.0, 4.0, 4.5, 3.5, 9.0, 1.0 };
+    try testing.checkAllAllocationFailures(testing.allocator, tsne_oom_run, .{&X});
+}
+
+fn tsne_oom_run(allocator: std.mem.Allocator, X: []const f64) !void {
+    var tsne = TSNE(f64).init(allocator, .{ .perplexity = 2.0, .n_iter = 5, .seed = 1 });
+    defer tsne.deinit();
+
+    const Y = try tsne.fitTransform(X, 5, 2);
+    defer allocator.free(Y);
 }

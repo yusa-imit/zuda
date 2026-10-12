@@ -43,6 +43,8 @@ pub fn DDPG(comptime T: type) type {
 
         /// Configuration for DDPG
         pub const Config = struct {
+            /// Seeds weight initialization and exploration. Required (ADR 0001 D1).
+            seed: u64,
             /// Learning rate for actor network updates
             actor_lr: T = 0.0001,
             /// Learning rate for critic network updates
@@ -395,7 +397,7 @@ pub fn DDPG(comptime T: type) type {
             if (state_dim == 0) return error.InvalidStateDim;
             if (action_dim == 0) return error.InvalidActionDim;
 
-            var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
+            var rng = std.Random.DefaultPrng.init(config.seed);
             const hidden_size = @max(64, (state_dim + action_dim) * 2); // Heuristic
 
             var actor = try ActorNetwork.init(allocator, state_dim, hidden_size, action_dim, rng.random());
@@ -550,7 +552,7 @@ pub fn DDPG(comptime T: type) type {
 const testing = std.testing;
 
 test "DDPG: initialization" {
-    const config = DDPG(f64).Config{};
+    const config = DDPG(f64).Config{ .seed = 1 };
     var agent = try DDPG(f64).init(testing.allocator, 4, 2, config);
     defer agent.deinit();
 
@@ -560,7 +562,7 @@ test "DDPG: initialization" {
 }
 
 test "DDPG: deterministic action selection" {
-    const config = DDPG(f64).Config{};
+    const config = DDPG(f64).Config{ .seed = 1 };
     var agent = try DDPG(f64).init(testing.allocator, 4, 2, config);
     defer agent.deinit();
 
@@ -581,7 +583,7 @@ test "DDPG: deterministic action selection" {
 }
 
 test "DDPG: noisy action selection" {
-    const config = DDPG(f64).Config{ .noise_stddev = 0.1 };
+    const config = DDPG(f64).Config{ .seed = 1, .noise_stddev = 0.1 };
     var agent = try DDPG(f64).init(testing.allocator, 4, 2, config);
     defer agent.deinit();
 
@@ -600,7 +602,7 @@ test "DDPG: noisy action selection" {
 }
 
 test "DDPG: replay buffer add and sample" {
-    const config = DDPG(f64).Config{ .buffer_size = 100 };
+    const config = DDPG(f64).Config{ .seed = 1, .buffer_size = 100 };
     var agent = try DDPG(f64).init(testing.allocator, 4, 2, config);
     defer agent.deinit();
 
@@ -620,7 +622,7 @@ test "DDPG: replay buffer add and sample" {
 }
 
 test "DDPG: replay buffer overflow" {
-    const config = DDPG(f64).Config{ .buffer_size = 5 };
+    const config = DDPG(f64).Config{ .seed = 1, .buffer_size = 5 };
     var agent = try DDPG(f64).init(testing.allocator, 2, 1, config);
     defer agent.deinit();
 
@@ -638,7 +640,7 @@ test "DDPG: replay buffer overflow" {
 }
 
 test "DDPG: critic Q-value computation" {
-    const config = DDPG(f64).Config{};
+    const config = DDPG(f64).Config{ .seed = 1 };
     var agent = try DDPG(f64).init(testing.allocator, 3, 2, config);
     defer agent.deinit();
 
@@ -651,7 +653,7 @@ test "DDPG: critic Q-value computation" {
 }
 
 test "DDPG: soft target update" {
-    const config = DDPG(f64).Config{ .tau = 0.1 };
+    const config = DDPG(f64).Config{ .seed = 1, .tau = 0.1 };
     var agent = try DDPG(f64).init(testing.allocator, 3, 2, config);
     defer agent.deinit();
 
@@ -670,7 +672,7 @@ test "DDPG: soft target update" {
 }
 
 test "DDPG: training with sufficient samples" {
-    const config = DDPG(f64).Config{ .batch_size = 4, .buffer_size = 100 };
+    const config = DDPG(f64).Config{ .seed = 1, .batch_size = 4, .buffer_size = 100 };
     var agent = try DDPG(f64).init(testing.allocator, 3, 2, config);
     defer agent.deinit();
 
@@ -689,7 +691,7 @@ test "DDPG: training with sufficient samples" {
 }
 
 test "DDPG: training with insufficient samples" {
-    const config = DDPG(f64).Config{ .batch_size = 32 };
+    const config = DDPG(f64).Config{ .seed = 1, .batch_size = 32 };
     var agent = try DDPG(f64).init(testing.allocator, 3, 2, config);
     defer agent.deinit();
 
@@ -698,7 +700,7 @@ test "DDPG: training with insufficient samples" {
 }
 
 test "DDPG: terminal state handling" {
-    const config = DDPG(f64).Config{ .batch_size = 2 };
+    const config = DDPG(f64).Config{ .seed = 1, .batch_size = 2 };
     var agent = try DDPG(f64).init(testing.allocator, 2, 1, config);
     defer agent.deinit();
 
@@ -715,7 +717,7 @@ test "DDPG: terminal state handling" {
 }
 
 test "DDPG: reset noise" {
-    const config = DDPG(f64).Config{};
+    const config = DDPG(f64).Config{ .seed = 1 };
     var agent = try DDPG(f64).init(testing.allocator, 3, 2, config);
     defer agent.deinit();
 
@@ -734,7 +736,7 @@ test "DDPG: reset noise" {
 }
 
 test "DDPG: f32 support" {
-    const config = DDPG(f32).Config{};
+    const config = DDPG(f32).Config{ .seed = 1 };
     var agent = try DDPG(f32).init(testing.allocator, 4, 2, config);
     defer agent.deinit();
 
@@ -748,7 +750,7 @@ test "DDPG: f32 support" {
 }
 
 test "DDPG: large state and action spaces" {
-    const config = DDPG(f64).Config{ .buffer_size = 100 };
+    const config = DDPG(f64).Config{ .seed = 1, .buffer_size = 100 };
     var agent = try DDPG(f64).init(testing.allocator, 50, 10, config);
     defer agent.deinit();
 
@@ -766,19 +768,19 @@ test "DDPG: large state and action spaces" {
 }
 
 test "DDPG: error handling - invalid state dim" {
-    const config = DDPG(f64).Config{};
+    const config = DDPG(f64).Config{ .seed = 1 };
     const result = DDPG(f64).init(testing.allocator, 0, 2, config);
     try testing.expectError(error.InvalidStateDim, result);
 }
 
 test "DDPG: error handling - invalid action dim" {
-    const config = DDPG(f64).Config{};
+    const config = DDPG(f64).Config{ .seed = 1 };
     const result = DDPG(f64).init(testing.allocator, 4, 0, config);
     try testing.expectError(error.InvalidActionDim, result);
 }
 
 test "DDPG: error handling - invalid state size" {
-    const config = DDPG(f64).Config{};
+    const config = DDPG(f64).Config{ .seed = 1 };
     var agent = try DDPG(f64).init(testing.allocator, 4, 2, config);
     defer agent.deinit();
 
@@ -788,7 +790,7 @@ test "DDPG: error handling - invalid state size" {
 }
 
 test "DDPG: memory safety - leak detection" {
-    const config = DDPG(f64).Config{ .buffer_size = 10 };
+    const config = DDPG(f64).Config{ .seed = 1, .buffer_size = 10 };
     var agent = try DDPG(f64).init(testing.allocator, 3, 2, config);
     defer agent.deinit();
 
@@ -806,4 +808,13 @@ test "DDPG: memory safety - leak detection" {
     try agent.train();
 
     // testing.allocator will detect leaks
+}
+
+test "DDPG: no leaks when any allocation fails" {
+    try testing.checkAllAllocationFailures(testing.allocator, ddpg_oom_run, .{});
+}
+
+fn ddpg_oom_run(allocator: Allocator) !void {
+    var agent = try DDPG(f64).init(allocator, 2, 2, .{ .seed = 3, .buffer_size = 4 });
+    defer agent.deinit();
 }

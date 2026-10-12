@@ -852,4 +852,9 @@ test {
     _ = @import("algorithms/automata/nfa.zig");
     _ = @import("algorithms/dynamic_programming/matrix_chain.zig");
     _ = @import("algorithms/network_flow/ford_fulkerson.zig");
+    _ = @import("algorithms/machine_learning/kmeans.zig");
+    _ = @import("algorithms/machine_learning/gmm.zig");
+    _ = @import("algorithms/machine_learning/dqn.zig");
+    _ = @import("algorithms/machine_learning/ddpg.zig");
+    _ = @import("algorithms/machine_learning/tsne.zig");
 }

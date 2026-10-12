@@ -36,7 +36,7 @@ const Allocator = std.mem.Allocator;
 ///     &.{1.0, 1.0}, &.{1.5, 2.0}, &.{3.0, 4.0}, &.{5.0, 7.0},
 ///     &.{3.5, 5.0}, &.{4.5, 5.0}, &.{3.5, 4.5}
 /// };
-/// var result = try kmeans(f64, allocator, &data, 2, .{});
+/// var result = try kmeans(f64, allocator, &data, 2, .{ .seed = 1 });
 /// defer result.deinit();
 /// // result.centroids contains 2 cluster centers
 /// // result.labels[i] indicates cluster for data[i]
@@ -67,7 +67,9 @@ pub fn KMeansResult(comptime T: type) type {
 pub const KMeansOptions = struct {
     max_iterations: usize = 300,
     tolerance: f64 = 1e-4, // convergence threshold for centroid movement
-    random_seed: ?u64 = null, // for reproducible initialization
+    /// Seeds the k-means++ PRNG. Required: a clock-derived default would be an undeclared
+    /// input (ADR 0001 D1).
+    seed: u64,
 };
 
 /// K-Means clustering
@@ -108,7 +110,7 @@ pub fn kmeans(
     }
 
     // Initialize centroids using k-means++
-    const centroids = try initializeCentroidsKMeansPlusPlus(T, allocator, data, k, options.random_seed);
+    const centroids = try initializeCentroidsKMeansPlusPlus(T, allocator, data, k, options.seed);
     errdefer {
         for (centroids) |c| allocator.free(c);
         allocator.free(centroids);
@@ -117,6 +119,9 @@ pub fn kmeans(
     // Allocate labels
     var labels = try allocator.alloc(usize, n);
     errdefer allocator.free(labels);
+
+    // Zeroed so that max_iterations == 0 still returns defined labels.
+    @memset(labels, 0);
 
     var iteration: usize = 0;
     var converged = false;
@@ -128,7 +133,7 @@ pub fn kmeans(
         }
 
         // Update step: recompute centroids as cluster means
-        const new_centroids = try computeClusterMeans(T, allocator, data, labels, k);
+        const new_centroids = try computeClusterMeans(T, allocator, data, labels, centroids);
         defer {
             for (new_centroids) |c| allocator.free(c);
             allocator.free(new_centroids);
@@ -171,22 +176,26 @@ fn initializeCentroidsKMeansPlusPlus(
     allocator: Allocator,
     data: []const []const T,
     k: usize,
-    seed: ?u64,
+    seed: u64,
 ) ![][]T {
     const n = data.len;
+    std.debug.assert(k >= 1);
+    std.debug.assert(k <= n);
 
-    var prng = std.Random.DefaultPrng.init(seed orelse @as(u64, @intCast(std.time.timestamp())));
+    var prng = std.Random.DefaultPrng.init(seed);
     var rand = prng.random();
 
     var centroids = try allocator.alloc([]T, k);
+    var filled: usize = 0;
     errdefer {
-        for (centroids[0..0]) |c| allocator.free(c);
+        for (centroids[0..filled]) |c| allocator.free(c);
         allocator.free(centroids);
     }
 
     // First centroid: random data point
     const first_idx = rand.intRangeLessThan(usize, 0, n);
     centroids[0] = try allocator.dupe(T, data[first_idx]);
+    filled = 1;
 
     // Remaining centroids: probability proportional to squared distance
     var distances = try allocator.alloc(T, n);
@@ -206,8 +215,10 @@ fn initializeCentroidsKMeansPlusPlus(
         // Select next centroid with probability ∝ distance²
         const idx = weightedRandomChoice(T, distances, rand);
         centroids[i] = try allocator.dupe(T, data[idx]);
+        filled = i + 1;
     }
 
+    std.debug.assert(filled == k);
     return centroids;
 }
 
@@ -237,20 +248,27 @@ fn computeClusterMeans(
     allocator: Allocator,
     data: []const []const T,
     labels: []const usize,
-    k: usize,
+    previous: []const []const T,
 ) ![][]T {
     const d = data[0].len;
+    const k = previous.len;
 
     var centroids = try allocator.alloc([]T, k);
-    errdefer allocator.free(centroids);
+    var filled: usize = 0;
+    errdefer {
+        for (centroids[0..filled]) |c| allocator.free(c);
+        allocator.free(centroids);
+    }
 
     var counts = try allocator.alloc(usize, k);
     defer allocator.free(counts);
+
     @memset(counts, 0);
 
     // Initialize centroids to zero
     for (0..k) |i| {
         centroids[i] = try allocator.alloc(T, d);
+        filled = i + 1;
         @memset(centroids[i], 0);
     }
 
@@ -269,6 +287,8 @@ fn computeClusterMeans(
             for (0..d) |dim| {
                 centroids[i][dim] /= count_f;
             }
+        } else {
+            @memcpy(centroids[i], previous[i]);
         }
     }
 
@@ -337,7 +357,7 @@ test "kmeans: basic 2D clustering (2 clusters)" {
         &.{ 5.5, 8.0 },
     };
 
-    var result = try kmeans(f64, allocator, &data, 2, .{ .random_seed = 42 });
+    var result = try kmeans(f64, allocator, &data, 2, .{ .seed = 42 });
     defer result.deinit();
 
     try testing.expectEqual(@as(usize, 2), result.centroids.len);
@@ -363,7 +383,7 @@ test "kmeans: 3 clusters in 2D" {
         &.{ 9.0, 9.0 }, &.{ 9.5, 9.5 }, // cluster 3
     };
 
-    var result = try kmeans(f64, allocator, &data, 3, .{ .random_seed = 123 });
+    var result = try kmeans(f64, allocator, &data, 3, .{ .seed = 123 });
     defer result.deinit();
 
     try testing.expectEqual(@as(usize, 3), result.centroids.len);
@@ -388,7 +408,7 @@ test "kmeans: single cluster (k=1)" {
         &.{ 5.0, 6.0 },
     };
 
-    var result = try kmeans(f64, allocator, &data, 1, .{});
+    var result = try kmeans(f64, allocator, &data, 1, .{ .seed = 1 });
     defer result.deinit();
 
     try testing.expectEqual(@as(usize, 1), result.centroids.len);
@@ -412,7 +432,7 @@ test "kmeans: k = n (each point its own cluster)" {
         &.{ 5.0, 6.0 },
     };
 
-    var result = try kmeans(f64, allocator, &data, 3, .{});
+    var result = try kmeans(f64, allocator, &data, 3, .{ .seed = 1 });
     defer result.deinit();
 
     try testing.expectEqual(@as(usize, 3), result.centroids.len);
@@ -438,7 +458,7 @@ test "kmeans: f32 support" {
         &.{ 11.0, 11.0 },
     };
 
-    var result = try kmeans(f32, allocator, &data, 2, .{ .random_seed = 999 });
+    var result = try kmeans(f32, allocator, &data, 2, .{ .seed = 999 });
     defer result.deinit();
 
     try testing.expectEqual(@as(usize, 2), result.centroids.len);
@@ -457,7 +477,7 @@ test "kmeans: high dimensional (5D)" {
         &.{ 10.5, 10.5, 10.5, 10.5, 10.5 },
     };
 
-    var result = try kmeans(f64, allocator, &data, 2, .{});
+    var result = try kmeans(f64, allocator, &data, 2, .{ .seed = 1 });
     defer result.deinit();
 
     try testing.expectEqual(@as(usize, 2), result.centroids.len);
@@ -477,7 +497,8 @@ test "kmeans: convergence iterations" {
         &.{ 10.1, 10.1 },
     };
 
-    var result = try kmeans(f64, allocator, &data, 2, .{ .max_iterations = 100, .tolerance = 1e-4 });
+    const options: KMeansOptions = .{ .seed = 1, .max_iterations = 100, .tolerance = 1e-4 };
+    var result = try kmeans(f64, allocator, &data, 2, options);
     defer result.deinit();
 
     // Should converge in < 100 iterations for well-separated clusters
@@ -489,7 +510,7 @@ test "kmeans: error - empty data" {
 
     const data = [_][]const f64{};
 
-    try testing.expectError(error.EmptyData, kmeans(f64, allocator, &data, 1, .{}));
+    try testing.expectError(error.EmptyData, kmeans(f64, allocator, &data, 1, .{ .seed = 1 }));
 }
 
 test "kmeans: error - k = 0" {
@@ -499,7 +520,7 @@ test "kmeans: error - k = 0" {
         &.{ 1.0, 1.0 },
     };
 
-    try testing.expectError(error.InvalidK, kmeans(f64, allocator, &data, 0, .{}));
+    try testing.expectError(error.InvalidK, kmeans(f64, allocator, &data, 0, .{ .seed = 1 }));
 }
 
 test "kmeans: error - k > n" {
@@ -510,7 +531,7 @@ test "kmeans: error - k > n" {
         &.{ 2.0, 2.0 },
     };
 
-    try testing.expectError(error.InvalidK, kmeans(f64, allocator, &data, 3, .{}));
+    try testing.expectError(error.InvalidK, kmeans(f64, allocator, &data, 3, .{ .seed = 1 }));
 }
 
 test "kmeans: error - inconsistent dimensions" {
@@ -521,47 +542,63 @@ test "kmeans: error - inconsistent dimensions" {
         &.{ 2.0, 2.0, 2.0 }, // 3D instead of 2D
     };
 
-    try testing.expectError(error.InconsistentDimensions, kmeans(f64, allocator, &data, 2, .{}));
+    const result = kmeans(f64, allocator, &data, 2, .{ .seed = 1 });
+    try testing.expectError(error.InconsistentDimensions, result);
 }
 
 test "kmeans: large dataset (100 points)" {
     const allocator = testing.allocator;
 
-    var data_list = std.ArrayList([]f64).init(allocator);
-    defer {
-        for (data_list.items) |point| allocator.free(point);
-        data_list.deinit();
+    // Deterministic jitter from a seeded PRNG; two well-separated blobs of 50 points.
+    var prng = std.Random.DefaultPrng.init(7);
+    const rand = prng.random();
+    var storage: [100][2]f64 = undefined;
+    var data: [100][]const f64 = undefined;
+    for (&storage, &data, 0..) |*point, *slice, i| {
+        const offset: f64 = if (i < 50) 0.0 else 10.0;
+        point[0] = offset + rand.float(f64);
+        point[1] = offset + rand.float(f64);
+        slice.* = point;
     }
 
-    // Cluster 1: around (0,0)
-    for (0..50) |_| {
-        var point = try allocator.alloc(f64, 2);
-        point[0] = @as(f64, @floatFromInt(@mod(@as(u64, @intCast(std.time.microTimestamp())), 100))) / 100.0;
-        point[1] = @as(f64, @floatFromInt(@mod(@as(u64, @intCast(std.time.microTimestamp())) >> 8, 100))) / 100.0;
-        try data_list.append(point);
-    }
-
-    // Cluster 2: around (10,10)
-    for (0..50) |_| {
-        var point = try allocator.alloc(f64, 2);
-        point[0] = 10.0 + @as(f64, @floatFromInt(@mod(@as(u64, @intCast(std.time.microTimestamp())), 100))) / 100.0;
-        point[1] = 10.0 + @as(f64, @floatFromInt(@mod(@as(u64, @intCast(std.time.microTimestamp())) >> 8, 100))) / 100.0;
-        try data_list.append(point);
-    }
-
-    var result = try kmeans(f64, allocator, data_list.items, 2, .{});
+    var result = try kmeans(f64, allocator, &data, 2, .{ .seed = 1 });
     defer result.deinit();
 
     try testing.expectEqual(@as(usize, 2), result.centroids.len);
     try testing.expectEqual(@as(usize, 100), result.labels.len);
 
-    // Both clusters should have points
-    var count0: usize = 0;
-    var count1: usize = 0;
-    for (result.labels) |label| {
-        if (label == 0) count0 += 1 else count1 += 1;
+    // Each blob must land wholly in one cluster, and the blobs in different clusters.
+    for (result.labels[1..50]) |label| try testing.expectEqual(result.labels[0], label);
+    for (result.labels[51..100]) |label| try testing.expectEqual(result.labels[50], label);
+    try testing.expect(result.labels[0] != result.labels[50]);
+}
+
+test "kmeans: empty cluster keeps its previous centroid" {
+    const allocator = testing.allocator;
+
+    // Identical points: k-means++ seeds both centroids at (5,5) and every point is assigned to
+    // centroid 0, leaving cluster 1 empty. It must stay at (5,5), not collapse to the origin.
+    const data = [_][]const f64{ &.{ 5.0, 5.0 }, &.{ 5.0, 5.0 }, &.{ 5.0, 5.0 }, &.{ 5.0, 5.0 } };
+
+    var result = try kmeans(f64, allocator, &data, 2, .{ .seed = 3 });
+    defer result.deinit();
+
+    for (result.centroids) |centroid| {
+        try testing.expectEqualSlices(f64, &.{ 5.0, 5.0 }, centroid);
     }
-    try testing.expect(count0 > 0 and count1 > 0);
+    try testing.expectEqual(@as(f64, 0.0), result.inertia);
+}
+
+test "kmeans: no leaks when any allocation fails" {
+    const data = [_][]const f64{
+        &.{ 1.0, 1.0 }, &.{ 1.5, 2.0 }, &.{ 5.0, 7.0 }, &.{ 5.5, 8.0 }, &.{ 9.0, 9.0 },
+    };
+    try testing.checkAllAllocationFailures(testing.allocator, kmeans_oom_run, .{&data});
+}
+
+fn kmeans_oom_run(allocator: Allocator, data: []const []const f64) !void {
+    var result = try kmeans(f64, allocator, data, 3, .{ .seed = 11, .max_iterations = 50 });
+    defer result.deinit();
 }
 
 test "kmeans: reproducibility with seed" {
@@ -574,10 +611,10 @@ test "kmeans: reproducibility with seed" {
         &.{ 11.0, 11.0 },
     };
 
-    var result1 = try kmeans(f64, allocator, &data, 2, .{ .random_seed = 42 });
+    var result1 = try kmeans(f64, allocator, &data, 2, .{ .seed = 42 });
     defer result1.deinit();
 
-    var result2 = try kmeans(f64, allocator, &data, 2, .{ .random_seed = 42 });
+    var result2 = try kmeans(f64, allocator, &data, 2, .{ .seed = 42 });
     defer result2.deinit();
 
     // Same seed should produce identical results

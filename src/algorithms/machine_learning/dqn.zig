@@ -41,6 +41,8 @@ pub fn DQN(comptime T: type) type {
 
         /// Configuration for DQN
         pub const Config = struct {
+            /// Seeds weight initialization and exploration. Required (ADR 0001 D1).
+            seed: u64,
             /// Learning rate for Q-network updates
             learning_rate: T = 0.001,
             /// Discount factor γ ∈ [0,1] (future reward importance)
@@ -245,7 +247,7 @@ pub fn DQN(comptime T: type) type {
             if (state_dim == 0) return error.InvalidStateDim;
             if (num_actions == 0) return error.InvalidNumActions;
 
-            var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
+            var rng = std.Random.DefaultPrng.init(config.seed);
             const hidden_size = @max(64, state_dim * 2); // Heuristic
 
             var q_network = try QNetwork.init(allocator, state_dim, hidden_size, num_actions, rng.random());
@@ -432,7 +434,7 @@ const testing = std.testing;
 test "DQN: basic initialization" {
     const allocator = testing.allocator;
 
-    var dqn = try DQN(f64).init(allocator, 4, 2, .{});
+    var dqn = try DQN(f64).init(allocator, 4, 2, .{ .seed = 1 });
     defer dqn.deinit();
 
     try testing.expectEqual(4, dqn.state_dim);
@@ -443,7 +445,8 @@ test "DQN: basic initialization" {
 test "DQN: epsilon-greedy action selection" {
     const allocator = testing.allocator;
 
-    var dqn = try DQN(f64).init(allocator, 2, 3, .{ .epsilon = 1.0 }); // Full exploration
+    // Full exploration.
+    var dqn = try DQN(f64).init(allocator, 2, 3, .{ .seed = 1, .epsilon = 1.0 });
     defer dqn.deinit();
 
     const state = [_]f64{ 0.5, 0.5 };
@@ -466,7 +469,7 @@ test "DQN: epsilon-greedy action selection" {
 test "DQN: greedy action selection" {
     const allocator = testing.allocator;
 
-    var dqn = try DQN(f64).init(allocator, 2, 3, .{ .epsilon = 0.0 }); // No exploration
+    var dqn = try DQN(f64).init(allocator, 2, 3, .{ .seed = 1, .epsilon = 0.0 }); // No exploration
     defer dqn.deinit();
 
     const state = [_]f64{ 0.5, 0.5 };
@@ -480,7 +483,7 @@ test "DQN: greedy action selection" {
 test "DQN: store and replay experiences" {
     const allocator = testing.allocator;
 
-    var dqn = try DQN(f64).init(allocator, 2, 2, .{ .buffer_size = 10 });
+    var dqn = try DQN(f64).init(allocator, 2, 2, .{ .seed = 1, .buffer_size = 10 });
     defer dqn.deinit();
 
     const state = [_]f64{ 0.0, 0.0 };
@@ -498,7 +501,7 @@ test "DQN: store and replay experiences" {
 test "DQN: buffer overflow (circular)" {
     const allocator = testing.allocator;
 
-    var dqn = try DQN(f64).init(allocator, 2, 2, .{ .buffer_size = 3 });
+    var dqn = try DQN(f64).init(allocator, 2, 2, .{ .seed = 1, .buffer_size = 3 });
     defer dqn.deinit();
 
     const state = [_]f64{ 0.0, 0.0 };
@@ -516,7 +519,8 @@ test "DQN: buffer overflow (circular)" {
 test "DQN: training updates Q-network" {
     const allocator = testing.allocator;
 
-    var dqn = try DQN(f64).init(allocator, 2, 2, .{ .batch_size = 4, .learning_rate = 0.1 });
+    const config: DQN(f64).Config = .{ .seed = 1, .batch_size = 4, .learning_rate = 0.1 };
+    var dqn = try DQN(f64).init(allocator, 2, 2, config);
     defer dqn.deinit();
 
     const state = [_]f64{ 0.0, 0.0 };
@@ -547,6 +551,7 @@ test "DQN: epsilon decay" {
     const allocator = testing.allocator;
 
     var dqn = try DQN(f64).init(allocator, 2, 2, .{
+        .seed = 1,
         .epsilon = 1.0,
         .epsilon_min = 0.1,
         .epsilon_decay = 0.9,
@@ -576,6 +581,7 @@ test "DQN: target network update" {
     const allocator = testing.allocator;
 
     var dqn = try DQN(f64).init(allocator, 2, 2, .{
+        .seed = 1,
         .target_update_freq = 2,
         .batch_size = 2,
     });
@@ -605,6 +611,7 @@ test "DQN: cartpole-like learning" {
     const allocator = testing.allocator;
 
     var dqn = try DQN(f64).init(allocator, 4, 2, .{
+        .seed = 1,
         .learning_rate = 0.01,
         .gamma = 0.99,
         .epsilon = 0.5,
@@ -649,7 +656,7 @@ test "DQN: cartpole-like learning" {
 test "DQN: terminal state handling" {
     const allocator = testing.allocator;
 
-    var dqn = try DQN(f64).init(allocator, 2, 2, .{ .batch_size = 2 });
+    var dqn = try DQN(f64).init(allocator, 2, 2, .{ .seed = 1, .batch_size = 2 });
     defer dqn.deinit();
 
     const state = [_]f64{ 0.0, 0.0 };
@@ -670,7 +677,7 @@ test "DQN: terminal state handling" {
 test "DQN: reset functionality" {
     const allocator = testing.allocator;
 
-    var dqn = try DQN(f64).init(allocator, 2, 2, .{ .epsilon = 0.5 });
+    var dqn = try DQN(f64).init(allocator, 2, 2, .{ .seed = 1, .epsilon = 0.5 });
     defer dqn.deinit();
 
     const state = [_]f64{ 0.0, 0.0 };
@@ -692,7 +699,7 @@ test "DQN: reset functionality" {
 test "DQN: f32 support" {
     const allocator = testing.allocator;
 
-    var dqn = try DQN(f32).init(allocator, 2, 2, .{});
+    var dqn = try DQN(f32).init(allocator, 2, 2, .{ .seed = 1 });
     defer dqn.deinit();
 
     const state = [_]f32{ 0.5, 0.5 };
@@ -703,7 +710,7 @@ test "DQN: f32 support" {
 test "DQN: large state-action space" {
     const allocator = testing.allocator;
 
-    var dqn = try DQN(f64).init(allocator, 100, 10, .{});
+    var dqn = try DQN(f64).init(allocator, 100, 10, .{ .seed = 1 });
     defer dqn.deinit();
 
     var state: [100]f64 = undefined;
@@ -716,7 +723,7 @@ test "DQN: large state-action space" {
 test "DQN: error handling - invalid state dimension" {
     const allocator = testing.allocator;
 
-    var dqn = try DQN(f64).init(allocator, 2, 2, .{});
+    var dqn = try DQN(f64).init(allocator, 2, 2, .{ .seed = 1 });
     defer dqn.deinit();
 
     const wrong_state = [_]f64{0.0}; // Should be length 2
@@ -726,7 +733,7 @@ test "DQN: error handling - invalid state dimension" {
 test "DQN: error handling - invalid action" {
     const allocator = testing.allocator;
 
-    var dqn = try DQN(f64).init(allocator, 2, 2, .{});
+    var dqn = try DQN(f64).init(allocator, 2, 2, .{ .seed = 1 });
     defer dqn.deinit();
 
     const state = [_]f64{ 0.0, 0.0 };
@@ -738,19 +745,20 @@ test "DQN: error handling - invalid action" {
 test "DQN: error handling - zero state dimension" {
     const allocator = testing.allocator;
 
-    try testing.expectError(error.InvalidStateDim, DQN(f64).init(allocator, 0, 2, .{}));
+    try testing.expectError(error.InvalidStateDim, DQN(f64).init(allocator, 0, 2, .{ .seed = 1 }));
 }
 
 test "DQN: error handling - zero actions" {
     const allocator = testing.allocator;
 
-    try testing.expectError(error.InvalidNumActions, DQN(f64).init(allocator, 2, 0, .{}));
+    const result = DQN(f64).init(allocator, 2, 0, .{ .seed = 1 });
+    try testing.expectError(error.InvalidNumActions, result);
 }
 
 test "DQN: memory safety with testing allocator" {
     const allocator = testing.allocator;
 
-    var dqn = try DQN(f64).init(allocator, 4, 2, .{ .buffer_size = 5 });
+    var dqn = try DQN(f64).init(allocator, 4, 2, .{ .seed = 1, .buffer_size = 5 });
     defer dqn.deinit();
 
     const state = [_]f64{ 0.0, 0.0, 0.0, 0.0 };
@@ -763,4 +771,13 @@ test "DQN: memory safety with testing allocator" {
     }
 
     // No memory leaks should be detected by testing.allocator
+}
+
+test "DQN: no leaks when any allocation fails" {
+    try testing.checkAllAllocationFailures(testing.allocator, dqn_oom_run, .{});
+}
+
+fn dqn_oom_run(allocator: Allocator) !void {
+    var dqn = try DQN(f64).init(allocator, 2, 2, .{ .seed = 3, .buffer_size = 4 });
+    defer dqn.deinit();
 }
