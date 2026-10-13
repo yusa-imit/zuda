@@ -1,5 +1,15 @@
+//! Job sequencing: greedy scheduling of unit-time jobs with deadlines and profits, and Smith's
+//! rule for ordering jobs by weighted completion time.
+//!
+//! Ownership: `JobSequence.jobs` is allocated with the caller's `gpa` and must be freed by the
+//! caller with the same allocator (an empty sequence owns nothing, and freeing it is a no-op).
+//! The `ArrayList(usize)` from `jobSequencingWeighted` is released with `deinit(gpa)`.
+
 const std = @import("std");
 const testing = std.testing;
+const Allocator = std.mem.Allocator;
+const ArrayList = std.ArrayList;
+const assert = std.debug.assert;
 
 /// Job with deadline and profit
 pub const Job = struct {
@@ -17,7 +27,10 @@ pub const JobSequence = struct {
 
 /// Solves job sequencing with deadlines using greedy approach
 ///
-/// Algorithm: Sort by profit (descending), assign each job to latest available slot before deadline
+/// Algorithm: Sort by profit (descending), assign each job to latest available slot before
+/// deadline. Jobs with negative profit are never scheduled, and a job whose deadline is zero
+/// cannot be scheduled. A deadline beyond the number of jobs is clamped to it, since that many
+/// slots are always enough.
 ///
 /// Time: O(n²) — for each job, find slot
 /// Space: O(n) — slot array
@@ -29,12 +42,12 @@ pub const JobSequence = struct {
 ///     .{ .id = 1, .deadline = 1, .profit = 50 },
 ///     .{ .id = 2, .deadline = 2, .profit = 10 },
 /// };
-/// var result = try jobSequencing(allocator, &jobs);
-/// defer allocator.free(result.jobs);
+/// var result = try jobSequencing(gpa, &jobs);
+/// defer gpa.free(result.jobs);
 /// // result.jobs = [1, 0], total_profit = 150
 /// ```
 pub fn jobSequencing(
-    allocator: std.mem.Allocator,
+    gpa: Allocator,
     jobs: []const Job,
 ) !JobSequence {
     if (jobs.len == 0) {
@@ -45,46 +58,42 @@ pub fn jobSequencing(
         };
     }
 
-    // Find maximum deadline to determine number of slots
-    var max_deadline: usize = 0;
-    for (jobs) |job| {
-        if (job.deadline > max_deadline) {
-            max_deadline = job.deadline;
-        }
-    }
-
     // Sort jobs by profit (descending)
-    const sorted = try allocator.alloc(Job, jobs.len);
-    defer allocator.free(sorted);
-    @memcpy(sorted, jobs);
+    const sorted = try gpa.alloc(Job, jobs.len);
+    defer gpa.free(sorted);
 
+    @memcpy(sorted, jobs);
     std.mem.sort(Job, sorted, {}, greaterByProfit);
 
-    // Slot array: slots[i] = job ID scheduled at time slot i (0 = empty)
-    var slots = try allocator.alloc(?usize, max_deadline);
-    defer allocator.free(slots);
+    // Slot array: slots[i] = job ID scheduled at time slot i + 1. At most `jobs.len` jobs can
+    // run, so a later deadline never needs a later slot.
+    const slots = try gpa.alloc(?usize, jobs.len);
+    defer gpa.free(slots);
+
     @memset(slots, null);
 
     var total_profit: i64 = 0;
-    var selected_jobs = std.ArrayList(usize).init(allocator);
-    defer selected_jobs.deinit();
+    var scheduled_count: usize = 0;
 
     // Assign jobs to slots
     for (sorted) |job| {
+        if (job.profit < 0) break; // Sorted descending: everything after is a loss too.
+
         // Find latest available slot before deadline
-        var slot: usize = job.deadline;
-        while (slot > 0) : (slot -= 1) {
+        var slot = @min(job.deadline, jobs.len);
+        for (0..slot) |_| {
             if (slots[slot - 1] == null) {
                 slots[slot - 1] = job.id;
                 total_profit += job.profit;
-                try selected_jobs.append(job.id);
+                scheduled_count += 1;
                 break;
             }
+            slot -= 1;
         }
     }
 
     // Build result in execution order
-    var result_jobs = try allocator.alloc(usize, selected_jobs.items.len);
+    const result_jobs = try gpa.alloc(usize, scheduled_count);
     var result_idx: usize = 0;
     for (slots) |maybe_job| {
         if (maybe_job) |job_id| {
@@ -93,6 +102,8 @@ pub fn jobSequencing(
         }
     }
 
+    assert(result_idx == scheduled_count);
+    assert(result_idx <= jobs.len);
     return .{
         .jobs = result_jobs,
         .total_profit = total_profit,
@@ -106,23 +117,24 @@ fn greaterByProfit(_: void, a: Job, b: Job) bool {
 
 /// Job sequencing with weighted completion times (minimize weighted sum)
 ///
-/// Algorithm: Sort by weight/processing_time ratio (Smith's rule)
+/// Algorithm: Sort by weight/processing_time ratio (Smith's rule). Ties keep input order.
 ///
 /// Time: O(n log n)
 /// Space: O(n)
+///
+/// Returns the index into `jobs` of each job, in execution order.
 pub fn jobSequencingWeighted(
-    allocator: std.mem.Allocator,
+    gpa: Allocator,
     jobs: []const WeightedJob,
-) !std.ArrayList(usize) {
-    var result = std.ArrayList(usize).init(allocator);
-    errdefer result.deinit();
+) !ArrayList(usize) {
+    var result: ArrayList(usize) = .empty;
+    errdefer result.deinit(gpa);
 
     if (jobs.len == 0) return result;
 
     // Sort by weight/time ratio (descending) — Smith's rule
-    const sorted_indices = try allocator.alloc(usize, jobs.len);
-    defer allocator.free(sorted_indices);
-    for (sorted_indices, 0..) |*idx, i| idx.* = i;
+    try result.ensureTotalCapacityPrecise(gpa, jobs.len);
+    for (0..jobs.len) |i| result.appendAssumeCapacity(i);
 
     const Context = struct {
         jobs: []const WeightedJob,
@@ -133,12 +145,9 @@ pub fn jobSequencingWeighted(
         }
     };
 
-    std.mem.sort(usize, sorted_indices, Context{ .jobs = jobs }, Context.lessThan);
+    std.mem.sort(usize, result.items, Context{ .jobs = jobs }, Context.lessThan);
 
-    for (sorted_indices) |idx| {
-        try result.append(idx);
-    }
-
+    assert(result.items.len == jobs.len);
     return result;
 }
 
@@ -147,12 +156,17 @@ pub const WeightedJob = struct {
     processing_time: f64,
     weight: f64, // Importance/priority
 
+    /// Weight per unit of processing time. A job that takes no time has an infinite ratio when
+    /// its weight is positive (it should run first), minus infinity when negative, and zero
+    /// when its weight is zero.
     pub fn ratio(self: WeightedJob) f64 {
-        return if (self.processing_time > 0) self.weight / self.processing_time else 0;
+        if (self.processing_time > 0) return self.weight / self.processing_time;
+        if (self.weight > 0) return std.math.inf(f64);
+        if (self.weight < 0) return -std.math.inf(f64);
+        return 0;
     }
 };
 
-// Tests
 test "job sequencing - basic case" {
     const jobs = [_]Job{
         .{ .id = 0, .deadline = 4, .profit = 20 },
@@ -231,7 +245,7 @@ test "weighted job sequencing - Smith's rule" {
     };
 
     var sequence = try jobSequencingWeighted(testing.allocator, &jobs);
-    defer sequence.deinit();
+    defer sequence.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 3), sequence.items.len);
     // Should order by ratio (descending): job 2, job 0, job 1
@@ -247,15 +261,16 @@ test "weighted job sequencing - equal ratios" {
     };
 
     var sequence = try jobSequencingWeighted(testing.allocator, &jobs);
-    defer sequence.deinit();
+    defer sequence.deinit(testing.allocator);
 
-    try testing.expectEqual(@as(usize, 2), sequence.items.len);
+    // Equal ratios keep input order.
+    try testing.expectEqualSlices(usize, &.{ 0, 1 }, sequence.items);
 }
 
 test "weighted job sequencing - empty" {
     const jobs: []const WeightedJob = &.{};
     var sequence = try jobSequencingWeighted(testing.allocator, jobs);
-    defer sequence.deinit();
+    defer sequence.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 0), sequence.items.len);
 }
@@ -291,7 +306,7 @@ test "weighted job sequencing - single job sequence has one entry" {
         .{ .id = 0, .processing_time = 3, .weight = 6 },
     };
     var sequence = try jobSequencingWeighted(testing.allocator, &jobs);
-    defer sequence.deinit();
+    defer sequence.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 1), sequence.items.len);
     try testing.expectEqual(@as(usize, 0), sequence.items[0]);
@@ -323,4 +338,84 @@ test "job sequencing - memory safety loop" {
         defer testing.allocator.free(result.jobs);
         try testing.expect(result.total_profit > 0);
     }
+}
+
+test "job sequencing - execution order follows the slots" {
+    const jobs = [_]Job{
+        .{ .id = 7, .deadline = 2, .profit = 100 },
+        .{ .id = 8, .deadline = 1, .profit = 50 },
+        .{ .id = 9, .deadline = 2, .profit = 10 },
+    };
+    const result = try jobSequencing(testing.allocator, &jobs);
+    defer testing.allocator.free(result.jobs);
+
+    try testing.expectEqualSlices(usize, &.{ 8, 7 }, result.jobs);
+    try testing.expectEqual(@as(i64, 150), result.total_profit);
+    try testing.expectEqual(@as(usize, 2), result.slots_used);
+}
+
+test "job sequencing - huge deadlines need no huge allocation" {
+    const jobs = [_]Job{
+        .{ .id = 0, .deadline = std.math.maxInt(usize), .profit = 5 },
+        .{ .id = 1, .deadline = std.math.maxInt(usize), .profit = 9 },
+        .{ .id = 2, .deadline = 0, .profit = 1000 },
+    };
+    const result = try jobSequencing(testing.allocator, &jobs);
+    defer testing.allocator.free(result.jobs);
+
+    // Deadline 0 can never be met; the other two share the three clamped slots.
+    try testing.expectEqual(@as(i64, 14), result.total_profit);
+    try testing.expectEqualSlices(usize, &.{ 0, 1 }, result.jobs);
+}
+
+test "job sequencing - negative profit jobs are skipped" {
+    const jobs = [_]Job{
+        .{ .id = 0, .deadline = 1, .profit = -30 },
+        .{ .id = 1, .deadline = 2, .profit = 10 },
+        .{ .id = 2, .deadline = 3, .profit = 0 },
+    };
+    const result = try jobSequencing(testing.allocator, &jobs);
+    defer testing.allocator.free(result.jobs);
+
+    try testing.expectEqual(@as(i64, 10), result.total_profit);
+    try testing.expectEqual(@as(usize, 2), result.jobs.len);
+    try testing.expect(std.mem.findScalar(usize, result.jobs, 0) == null);
+}
+
+test "weighted job sequencing - zero-length jobs go first" {
+    const jobs = [_]WeightedJob{
+        .{ .id = 0, .processing_time = 1, .weight = 100 },
+        .{ .id = 1, .processing_time = 0, .weight = 1 },
+        .{ .id = 2, .processing_time = 0, .weight = 0 },
+    };
+    var sequence = try jobSequencingWeighted(testing.allocator, &jobs);
+    defer sequence.deinit(testing.allocator);
+
+    try testing.expectEqualSlices(usize, &.{ 1, 0, 2 }, sequence.items);
+}
+
+test "job sequencing - no leaks when an allocation fails" {
+    const Runner = struct {
+        fn run(gpa: Allocator) !void {
+            const jobs = [_]Job{
+                .{ .id = 0, .deadline = 2, .profit = 100 },
+                .{ .id = 1, .deadline = 1, .profit = 50 },
+                .{ .id = 2, .deadline = 2, .profit = 10 },
+            };
+            const result = try jobSequencing(gpa, &jobs);
+            defer gpa.free(result.jobs);
+
+            const weighted = [_]WeightedJob{
+                .{ .id = 0, .processing_time = 2, .weight = 3 },
+                .{ .id = 1, .processing_time = 1, .weight = 4 },
+            };
+            var sequence = try jobSequencingWeighted(gpa, &weighted);
+            defer sequence.deinit(gpa);
+
+            try testing.expectEqualSlices(usize, &.{ 1, 0 }, result.jobs);
+            try testing.expectEqualSlices(usize, &.{ 1, 0 }, sequence.items);
+        }
+    };
+
+    try testing.checkAllAllocationFailures(testing.allocator, Runner.run, .{});
 }

@@ -1,3 +1,10 @@
+//! Greedy graph coloring heuristics: first-fit, Welsh-Powell and DSatur.
+//!
+//! Input is an adjacency list (`adj_list[u]` holds the neighbours of `u`, ids below the vertex
+//! count). Results are unmanaged `ArrayList(usize)` colors, 0-indexed, owned by the caller and
+//! released with `deinit(gpa)`. Every function allocates only its scratch and result and frees
+//! all of it on failure.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
@@ -18,16 +25,16 @@ const ArrayList = std.ArrayList;
 ///
 /// Example:
 ///   ```zig
-///   var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 3);
-///   defer graph.deinit();
+///   var graph = try ArrayList(ArrayList(u32)).initCapacity(gpa, 3);
+///   defer graph.deinit(gpa);
 ///   // Add edges...
-///   const coloring = try greedyColoring(u32, allocator, graph);
-///   defer coloring.deinit();
+///   var coloring = try greedyColoring(u32, allocator, graph);
+///   defer coloring.deinit(gpa);
 ///   ```
-pub fn greedyColoring(comptime T: type, allocator: Allocator, adj_list: ArrayList(ArrayList(T))) !ArrayList(usize) {
+pub fn greedyColoring(comptime T: type, gpa: Allocator, adj_list: ArrayList(ArrayList(T))) !ArrayList(usize) {
     const n = adj_list.items.len;
-    var colors = try ArrayList(usize).initCapacity(allocator, n);
-    errdefer colors.deinit();
+    var colors = try ArrayList(usize).initCapacity(gpa, n);
+    errdefer colors.deinit(gpa);
 
     // Initialize all vertices as uncolored (max value sentinel)
     for (0..n) |_| {
@@ -37,7 +44,7 @@ pub fn greedyColoring(comptime T: type, allocator: Allocator, adj_list: ArrayLis
     // Color vertices in order 0, 1, 2, ..., n-1
     for (0..n) |u| {
         // Track which colors are used by neighbors
-        var used_colors = std.AutoHashMap(usize, void).init(allocator);
+        var used_colors = std.AutoHashMap(usize, void).init(gpa);
         defer used_colors.deinit();
 
         for (adj_list.items[u].items) |v_raw| {
@@ -63,12 +70,12 @@ pub fn greedyColoring(comptime T: type, allocator: Allocator, adj_list: ArrayLis
 /// Space: O(V) for color assignments + O(V) for degree sorting
 ///
 /// Generally produces better colorings than simple greedy approach
-pub fn welshPowell(comptime T: type, allocator: Allocator, adj_list: ArrayList(ArrayList(T))) !ArrayList(usize) {
+pub fn welshPowell(comptime T: type, gpa: Allocator, adj_list: ArrayList(ArrayList(T))) !ArrayList(usize) {
     const n = adj_list.items.len;
 
     // Compute degrees
-    var degrees = try ArrayList(struct { vertex: usize, degree: usize }).initCapacity(allocator, n);
-    defer degrees.deinit();
+    var degrees = try ArrayList(struct { vertex: usize, degree: usize }).initCapacity(gpa, n);
+    defer degrees.deinit(gpa);
 
     for (adj_list.items, 0..) |neighbors, u| {
         degrees.appendAssumeCapacity(.{ .vertex = u, .degree = neighbors.items.len });
@@ -82,8 +89,8 @@ pub fn welshPowell(comptime T: type, allocator: Allocator, adj_list: ArrayList(A
     }.lessThan);
 
     // Initialize colors
-    var colors = try ArrayList(usize).initCapacity(allocator, n);
-    errdefer colors.deinit();
+    var colors = try ArrayList(usize).initCapacity(gpa, n);
+    errdefer colors.deinit(gpa);
     for (0..n) |_| {
         colors.appendAssumeCapacity(std.math.maxInt(usize));
     }
@@ -93,7 +100,7 @@ pub fn welshPowell(comptime T: type, allocator: Allocator, adj_list: ArrayList(A
         const u = item.vertex;
 
         // Track which colors are used by neighbors
-        var used_colors = std.AutoHashMap(usize, void).init(allocator);
+        var used_colors = std.AutoHashMap(usize, void).init(gpa);
         defer used_colors.deinit();
 
         for (adj_list.items[u].items) |v_raw| {
@@ -119,29 +126,25 @@ pub fn welshPowell(comptime T: type, allocator: Allocator, adj_list: ArrayList(A
 /// Space: O(V) for color assignments + O(V) for saturation tracking
 ///
 /// Often produces optimal or near-optimal colorings
-pub fn dsatur(comptime T: type, allocator: Allocator, adj_list: ArrayList(ArrayList(T))) !ArrayList(usize) {
+pub fn dsatur(comptime T: type, gpa: Allocator, adj_list: ArrayList(ArrayList(T))) !ArrayList(usize) {
     const n = adj_list.items.len;
 
     // Initialize colors
-    var colors = try ArrayList(usize).initCapacity(allocator, n);
-    errdefer colors.deinit();
+    var colors = try ArrayList(usize).initCapacity(gpa, n);
+    errdefer colors.deinit(gpa);
     for (0..n) |_| {
         colors.appendAssumeCapacity(std.math.maxInt(usize));
     }
 
     // Track saturation degree (number of different colors used by neighbors)
-    var saturation = try ArrayList(usize).initCapacity(allocator, n);
-    defer saturation.deinit();
+    var saturation = try ArrayList(usize).initCapacity(gpa, n);
+    defer saturation.deinit(gpa);
     for (0..n) |_| {
         saturation.appendAssumeCapacity(0);
     }
 
-    // Track uncolored vertices
-    var uncolored = std.AutoHashMap(usize, void).init(allocator);
-    defer uncolored.deinit();
-    for (0..n) |u| {
-        try uncolored.put(u, {});
-    }
+    // An empty graph has no vertex to seed the coloring with.
+    if (n == 0) return colors;
 
     // Color the vertex with highest degree first
     var max_degree: usize = 0;
@@ -153,7 +156,6 @@ pub fn dsatur(comptime T: type, allocator: Allocator, adj_list: ArrayList(ArrayL
         }
     }
     colors.items[first_vertex] = 0;
-    _ = uncolored.remove(first_vertex);
 
     // Update saturation of neighbors
     for (adj_list.items[first_vertex].items) |v_raw| {
@@ -161,31 +163,32 @@ pub fn dsatur(comptime T: type, allocator: Allocator, adj_list: ArrayList(ArrayL
         saturation.items[v] = 1;
     }
 
-    // Color remaining vertices
-    while (uncolored.count() > 0) {
-        // Find vertex with highest saturation (break ties by degree)
+    // Color the remaining n - 1 vertices; scanning 0..n in index order keeps ties deterministic.
+    for (1..n) |_| {
+        // Find the uncolored vertex with highest saturation (break ties by degree). Selecting
+        // on "no candidate yet" rather than a zero threshold keeps isolated vertices reachable.
         var max_sat: usize = 0;
         var max_deg: usize = 0;
-        var next_vertex: usize = 0;
+        var next_vertex: ?usize = null;
 
-        var it = uncolored.keyIterator();
-        while (it.next()) |u_ptr| {
-            const u = u_ptr.*;
+        for (0..n) |u| {
+            if (colors.items[u] != std.math.maxInt(usize)) continue;
             const sat = saturation.items[u];
             const deg = adj_list.items[u].items.len;
 
-            if (sat > max_sat or (sat == max_sat and deg > max_deg)) {
+            if (next_vertex == null or sat > max_sat or (sat == max_sat and deg > max_deg)) {
                 max_sat = sat;
                 max_deg = deg;
                 next_vertex = u;
             }
         }
+        const chosen = next_vertex.?; // Exactly one uncolored vertex disappears per iteration.
 
         // Color the selected vertex
-        var used_colors = std.AutoHashMap(usize, void).init(allocator);
+        var used_colors = std.AutoHashMap(usize, void).init(gpa);
         defer used_colors.deinit();
 
-        for (adj_list.items[next_vertex].items) |v_raw| {
+        for (adj_list.items[chosen].items) |v_raw| {
             const v: usize = @intCast(v_raw);
             if (colors.items[v] != std.math.maxInt(usize)) {
                 try used_colors.put(colors.items[v], {});
@@ -195,15 +198,14 @@ pub fn dsatur(comptime T: type, allocator: Allocator, adj_list: ArrayList(ArrayL
         // Find smallest unused color
         var color: usize = 0;
         while (used_colors.contains(color)) : (color += 1) {}
-        colors.items[next_vertex] = color;
-        _ = uncolored.remove(next_vertex);
+        colors.items[chosen] = color;
 
         // Update saturation of uncolored neighbors
-        for (adj_list.items[next_vertex].items) |v_raw| {
+        for (adj_list.items[chosen].items) |v_raw| {
             const v: usize = @intCast(v_raw);
             if (colors.items[v] == std.math.maxInt(usize)) {
                 // Count distinct colors used by v's neighbors
-                var neighbor_colors = std.AutoHashMap(usize, void).init(allocator);
+                var neighbor_colors = std.AutoHashMap(usize, void).init(gpa);
                 defer neighbor_colors.deinit();
 
                 for (adj_list.items[v].items) |w_raw| {
@@ -261,112 +263,112 @@ pub fn isValidColoring(comptime T: type, adj_list: ArrayList(ArrayList(T)), colo
 // ============================================================================
 
 test "greedy coloring - simple triangle" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
     // Triangle graph: 0-1-2-0
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 3);
+    var graph = try ArrayList(ArrayList(u32)).initCapacity(gpa, 3);
     defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
+        for (graph.items) |*list| list.deinit(gpa);
+        graph.deinit(gpa);
     }
 
-    var list0 = ArrayList(u32).init(allocator);
-    try list0.append(1);
-    try list0.append(2);
-    try graph.append(list0);
+    var list0: ArrayList(u32) = .empty;
+    try list0.append(gpa, 1);
+    try list0.append(gpa, 2);
+    try graph.append(gpa, list0);
 
-    var list1 = ArrayList(u32).init(allocator);
-    try list1.append(0);
-    try list1.append(2);
-    try graph.append(list1);
+    var list1: ArrayList(u32) = .empty;
+    try list1.append(gpa, 0);
+    try list1.append(gpa, 2);
+    try graph.append(gpa, list1);
 
-    var list2 = ArrayList(u32).init(allocator);
-    try list2.append(0);
-    try list2.append(1);
-    try graph.append(list2);
+    var list2: ArrayList(u32) = .empty;
+    try list2.append(gpa, 0);
+    try list2.append(gpa, 1);
+    try graph.append(gpa, list2);
 
-    const coloring = try greedyColoring(u32, allocator, graph);
-    defer coloring.deinit();
+    var coloring = try greedyColoring(u32, gpa, graph);
+    defer coloring.deinit(gpa);
 
     try std.testing.expect(isValidColoring(u32, graph, coloring));
     try std.testing.expectEqual(@as(usize, 3), chromaticNumber(coloring));
 }
 
 test "greedy coloring - bipartite graph" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
     // Complete bipartite K(2,2): 0-2, 0-3, 1-2, 1-3
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 4);
+    var graph = try ArrayList(ArrayList(u32)).initCapacity(gpa, 4);
     defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
+        for (graph.items) |*list| list.deinit(gpa);
+        graph.deinit(gpa);
     }
 
-    var list0 = ArrayList(u32).init(allocator);
-    try list0.append(2);
-    try list0.append(3);
-    try graph.append(list0);
+    var list0: ArrayList(u32) = .empty;
+    try list0.append(gpa, 2);
+    try list0.append(gpa, 3);
+    try graph.append(gpa, list0);
 
-    var list1 = ArrayList(u32).init(allocator);
-    try list1.append(2);
-    try list1.append(3);
-    try graph.append(list1);
+    var list1: ArrayList(u32) = .empty;
+    try list1.append(gpa, 2);
+    try list1.append(gpa, 3);
+    try graph.append(gpa, list1);
 
-    var list2 = ArrayList(u32).init(allocator);
-    try list2.append(0);
-    try list2.append(1);
-    try graph.append(list2);
+    var list2: ArrayList(u32) = .empty;
+    try list2.append(gpa, 0);
+    try list2.append(gpa, 1);
+    try graph.append(gpa, list2);
 
-    var list3 = ArrayList(u32).init(allocator);
-    try list3.append(0);
-    try list3.append(1);
-    try graph.append(list3);
+    var list3: ArrayList(u32) = .empty;
+    try list3.append(gpa, 0);
+    try list3.append(gpa, 1);
+    try graph.append(gpa, list3);
 
-    const coloring = try greedyColoring(u32, allocator, graph);
-    defer coloring.deinit();
+    var coloring = try greedyColoring(u32, gpa, graph);
+    defer coloring.deinit(gpa);
 
     try std.testing.expect(isValidColoring(u32, graph, coloring));
     try std.testing.expectEqual(@as(usize, 2), chromaticNumber(coloring));
 }
 
 test "welsh-powell - improved coloring" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
     // Graph where Welsh-Powell outperforms simple greedy
     // 0-1, 0-2, 1-3, 2-3, 3-4
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 5);
+    var graph = try ArrayList(ArrayList(u32)).initCapacity(gpa, 5);
     defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
+        for (graph.items) |*list| list.deinit(gpa);
+        graph.deinit(gpa);
     }
 
-    var list0 = ArrayList(u32).init(allocator);
-    try list0.append(1);
-    try list0.append(2);
-    try graph.append(list0);
+    var list0: ArrayList(u32) = .empty;
+    try list0.append(gpa, 1);
+    try list0.append(gpa, 2);
+    try graph.append(gpa, list0);
 
-    var list1 = ArrayList(u32).init(allocator);
-    try list1.append(0);
-    try list1.append(3);
-    try graph.append(list1);
+    var list1: ArrayList(u32) = .empty;
+    try list1.append(gpa, 0);
+    try list1.append(gpa, 3);
+    try graph.append(gpa, list1);
 
-    var list2 = ArrayList(u32).init(allocator);
-    try list2.append(0);
-    try list2.append(3);
-    try graph.append(list2);
+    var list2: ArrayList(u32) = .empty;
+    try list2.append(gpa, 0);
+    try list2.append(gpa, 3);
+    try graph.append(gpa, list2);
 
-    var list3 = ArrayList(u32).init(allocator);
-    try list3.append(1);
-    try list3.append(2);
-    try list3.append(4);
-    try graph.append(list3);
+    var list3: ArrayList(u32) = .empty;
+    try list3.append(gpa, 1);
+    try list3.append(gpa, 2);
+    try list3.append(gpa, 4);
+    try graph.append(gpa, list3);
 
-    var list4 = ArrayList(u32).init(allocator);
-    try list4.append(3);
-    try graph.append(list4);
+    var list4: ArrayList(u32) = .empty;
+    try list4.append(gpa, 3);
+    try graph.append(gpa, list4);
 
-    const coloring = try welshPowell(u32, allocator, graph);
-    defer coloring.deinit();
+    var coloring = try welshPowell(u32, gpa, graph);
+    defer coloring.deinit(gpa);
 
     try std.testing.expect(isValidColoring(u32, graph, coloring));
     // Should use at most 3 colors (optimal)
@@ -374,84 +376,85 @@ test "welsh-powell - improved coloring" {
 }
 
 test "dsatur - optimal coloring" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
     // Same graph as welsh-powell test
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 5);
+    var graph = try ArrayList(ArrayList(u32)).initCapacity(gpa, 5);
     defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
+        for (graph.items) |*list| list.deinit(gpa);
+        graph.deinit(gpa);
     }
 
-    var list0 = ArrayList(u32).init(allocator);
-    try list0.append(1);
-    try list0.append(2);
-    try graph.append(list0);
+    var list0: ArrayList(u32) = .empty;
+    try list0.append(gpa, 1);
+    try list0.append(gpa, 2);
+    try graph.append(gpa, list0);
 
-    var list1 = ArrayList(u32).init(allocator);
-    try list1.append(0);
-    try list1.append(3);
-    try graph.append(list1);
+    var list1: ArrayList(u32) = .empty;
+    try list1.append(gpa, 0);
+    try list1.append(gpa, 3);
+    try graph.append(gpa, list1);
 
-    var list2 = ArrayList(u32).init(allocator);
-    try list2.append(0);
-    try list2.append(3);
-    try graph.append(list2);
+    var list2: ArrayList(u32) = .empty;
+    try list2.append(gpa, 0);
+    try list2.append(gpa, 3);
+    try graph.append(gpa, list2);
 
-    var list3 = ArrayList(u32).init(allocator);
-    try list3.append(1);
-    try list3.append(2);
-    try list3.append(4);
-    try graph.append(list3);
+    var list3: ArrayList(u32) = .empty;
+    try list3.append(gpa, 1);
+    try list3.append(gpa, 2);
+    try list3.append(gpa, 4);
+    try graph.append(gpa, list3);
 
-    var list4 = ArrayList(u32).init(allocator);
-    try list4.append(3);
-    try graph.append(list4);
+    var list4: ArrayList(u32) = .empty;
+    try list4.append(gpa, 3);
+    try graph.append(gpa, list4);
 
-    const coloring = try dsatur(u32, allocator, graph);
-    defer coloring.deinit();
+    // The graph is bipartite (cycle 0-1-3-2 plus pendant 4), so two colors are optimal.
+    var coloring = try dsatur(u32, gpa, graph);
+    defer coloring.deinit(gpa);
 
     try std.testing.expect(isValidColoring(u32, graph, coloring));
-    try std.testing.expectEqual(@as(usize, 3), chromaticNumber(coloring));
+    try std.testing.expectEqual(@as(usize, 2), chromaticNumber(coloring));
 }
 
 test "dsatur - complete graph K5" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
     // Complete graph K5 requires 5 colors
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 5);
+    var graph = try ArrayList(ArrayList(u32)).initCapacity(gpa, 5);
     defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
+        for (graph.items) |*list| list.deinit(gpa);
+        graph.deinit(gpa);
     }
 
     for (0..5) |i| {
-        var list = ArrayList(u32).init(allocator);
+        var list: ArrayList(u32) = .empty;
         for (0..5) |j| {
-            if (i != j) try list.append(@intCast(j));
+            if (i != j) try list.append(gpa, @intCast(j));
         }
-        try graph.append(list);
+        try graph.append(gpa, list);
     }
 
-    const coloring = try dsatur(u32, allocator, graph);
-    defer coloring.deinit();
+    var coloring = try dsatur(u32, gpa, graph);
+    defer coloring.deinit(gpa);
 
     try std.testing.expect(isValidColoring(u32, graph, coloring));
     try std.testing.expectEqual(@as(usize, 5), chromaticNumber(coloring));
 }
 
 test "chromatic number - empty graph" {
-    const allocator = std.testing.allocator;
-    var colors = ArrayList(usize).init(allocator);
-    defer colors.deinit();
+    const gpa = std.testing.allocator;
+    var colors: ArrayList(usize) = .empty;
+    defer colors.deinit(gpa);
 
     try std.testing.expectEqual(@as(usize, 0), chromaticNumber(colors));
 }
 
 test "chromatic number - single color" {
-    const allocator = std.testing.allocator;
-    var colors = try ArrayList(usize).initCapacity(allocator, 3);
-    defer colors.deinit();
+    const gpa = std.testing.allocator;
+    var colors = try ArrayList(usize).initCapacity(gpa, 3);
+    defer colors.deinit(gpa);
 
     colors.appendAssumeCapacity(0);
     colors.appendAssumeCapacity(0);
@@ -461,26 +464,26 @@ test "chromatic number - single color" {
 }
 
 test "isValidColoring - invalid coloring" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
     // Simple edge 0-1
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 2);
+    var graph = try ArrayList(ArrayList(u32)).initCapacity(gpa, 2);
     defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
+        for (graph.items) |*list| list.deinit(gpa);
+        graph.deinit(gpa);
     }
 
-    var list0 = ArrayList(u32).init(allocator);
-    try list0.append(1);
-    try graph.append(list0);
+    var list0: ArrayList(u32) = .empty;
+    try list0.append(gpa, 1);
+    try graph.append(gpa, list0);
 
-    var list1 = ArrayList(u32).init(allocator);
-    try list1.append(0);
-    try graph.append(list1);
+    var list1: ArrayList(u32) = .empty;
+    try list1.append(gpa, 0);
+    try graph.append(gpa, list1);
 
     // Invalid: both vertices have the same color
-    var colors = try ArrayList(usize).initCapacity(allocator, 2);
-    defer colors.deinit();
+    var colors = try ArrayList(usize).initCapacity(gpa, 2);
+    defer colors.deinit(gpa);
     colors.appendAssumeCapacity(0);
     colors.appendAssumeCapacity(0);
 
@@ -488,31 +491,31 @@ test "isValidColoring - invalid coloring" {
 }
 
 test "greedy coloring - empty graph" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
-    var graph = ArrayList(ArrayList(u32)).init(allocator);
-    defer graph.deinit();
+    var graph: ArrayList(ArrayList(u32)) = .empty;
+    defer graph.deinit(gpa);
 
-    const coloring = try greedyColoring(u32, allocator, graph);
-    defer coloring.deinit();
+    var coloring = try greedyColoring(u32, gpa, graph);
+    defer coloring.deinit(gpa);
 
     try std.testing.expectEqual(@as(usize, 0), coloring.items.len);
 }
 
 test "greedy coloring - single vertex" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 1);
+    var graph = try ArrayList(ArrayList(u32)).initCapacity(gpa, 1);
     defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
+        for (graph.items) |*list| list.deinit(gpa);
+        graph.deinit(gpa);
     }
 
-    const list0 = ArrayList(u32).init(allocator);
-    try graph.append(list0);
+    const list0 = ArrayList(u32).empty;
+    try graph.append(gpa, list0);
 
-    const coloring = try greedyColoring(u32, allocator, graph);
-    defer coloring.deinit();
+    var coloring = try greedyColoring(u32, gpa, graph);
+    defer coloring.deinit(gpa);
 
     try std.testing.expectEqual(@as(usize, 1), coloring.items.len);
     try std.testing.expectEqual(@as(usize, 0), coloring.items[0]);
@@ -520,13 +523,13 @@ test "greedy coloring - single vertex" {
 }
 
 test "welsh-powell - petersen graph" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
     // Petersen graph (10 vertices, 15 edges, chromatic number = 3)
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 10);
+    var graph = try ArrayList(ArrayList(u32)).initCapacity(gpa, 10);
     defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
+        for (graph.items) |*list| list.deinit(gpa);
+        graph.deinit(gpa);
     }
 
     // Outer pentagon: 0-1-2-3-4-0
@@ -539,41 +542,144 @@ test "welsh-powell - petersen graph" {
     };
 
     for (0..10) |_| {
-        try graph.append(ArrayList(u32).init(allocator));
+        try graph.append(gpa, ArrayList(u32).empty);
     }
 
     for (edges) |edge| {
-        try graph.items[edge[0]].append(edge[1]);
-        try graph.items[edge[1]].append(edge[0]);
+        try graph.items[edge[0]].append(gpa, edge[1]);
+        try graph.items[edge[1]].append(gpa, edge[0]);
     }
 
-    const coloring = try welshPowell(u32, allocator, graph);
-    defer coloring.deinit();
+    var coloring = try welshPowell(u32, gpa, graph);
+    defer coloring.deinit(gpa);
 
     try std.testing.expect(isValidColoring(u32, graph, coloring));
     try std.testing.expectEqual(@as(usize, 3), chromaticNumber(coloring));
 }
 
 test "dsatur - cycle graph" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
     // Cycle C6: 0-1-2-3-4-5-0 (chromatic number = 2)
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 6);
+    var graph = try ArrayList(ArrayList(u32)).initCapacity(gpa, 6);
     defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
+        for (graph.items) |*list| list.deinit(gpa);
+        graph.deinit(gpa);
     }
 
     for (0..6) |i| {
-        var list = ArrayList(u32).init(allocator);
-        try list.append(@intCast((i + 1) % 6));
-        try list.append(@intCast((i + 5) % 6));
-        try graph.append(list);
+        var list: ArrayList(u32) = .empty;
+        try list.append(gpa, @intCast((i + 1) % 6));
+        try list.append(gpa, @intCast((i + 5) % 6));
+        try graph.append(gpa, list);
     }
 
-    const coloring = try dsatur(u32, allocator, graph);
-    defer coloring.deinit();
+    var coloring = try dsatur(u32, gpa, graph);
+    defer coloring.deinit(gpa);
 
     try std.testing.expect(isValidColoring(u32, graph, coloring));
     try std.testing.expectEqual(@as(usize, 2), chromaticNumber(coloring));
+}
+
+test "dsatur - empty graph" {
+    const gpa = std.testing.allocator;
+
+    var graph: ArrayList(ArrayList(u32)) = .empty;
+    defer graph.deinit(gpa);
+
+    var coloring = try dsatur(u32, gpa, graph);
+    defer coloring.deinit(gpa);
+
+    try std.testing.expectEqual(@as(usize, 0), coloring.items.len);
+    try std.testing.expectEqual(@as(usize, 0), chromaticNumber(coloring));
+}
+
+test "welsh-powell - empty graph" {
+    const gpa = std.testing.allocator;
+
+    var graph: ArrayList(ArrayList(u32)) = .empty;
+    defer graph.deinit(gpa);
+
+    var coloring = try welshPowell(u32, gpa, graph);
+    defer coloring.deinit(gpa);
+
+    try std.testing.expectEqual(@as(usize, 0), coloring.items.len);
+}
+
+fn color_triangle_with_every_strategy(gpa: Allocator) !void {
+    // Fixture graph is built with the testing allocator so only the colorers can fail.
+    var graph: ArrayList(ArrayList(u32)) = .empty;
+    defer {
+        for (graph.items) |*list| list.deinit(std.testing.allocator);
+        graph.deinit(std.testing.allocator);
+    }
+    for (0..3) |u| {
+        var list: ArrayList(u32) = .empty;
+        errdefer list.deinit(std.testing.allocator);
+        for (0..3) |v| {
+            if (u != v) try list.append(std.testing.allocator, @intCast(v));
+        }
+        try graph.append(std.testing.allocator, list);
+    }
+
+    var greedy = try greedyColoring(u32, gpa, graph);
+    defer greedy.deinit(gpa);
+    var welsh = try welshPowell(u32, gpa, graph);
+    defer welsh.deinit(gpa);
+    var saturated = try dsatur(u32, gpa, graph);
+    defer saturated.deinit(gpa);
+
+    try std.testing.expectEqual(@as(usize, 3), chromaticNumber(greedy));
+    try std.testing.expectEqual(@as(usize, 3), chromaticNumber(welsh));
+    try std.testing.expectEqual(@as(usize, 3), chromaticNumber(saturated));
+}
+
+test "coloring - no leaks when an allocation fails" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        color_triangle_with_every_strategy,
+        .{},
+    );
+}
+
+test "dsatur - isolated vertices terminate and get color zero" {
+    const gpa = std.testing.allocator;
+
+    // Vertex 0-1 share an edge; vertices 2 and 3 are isolated.
+    var graph: ArrayList(ArrayList(u32)) = .empty;
+    defer {
+        for (graph.items) |*list| list.deinit(gpa);
+        graph.deinit(gpa);
+    }
+    for (0..4) |u| {
+        var list: ArrayList(u32) = .empty;
+        errdefer list.deinit(gpa);
+        if (u == 0) try list.append(gpa, 1);
+        if (u == 1) try list.append(gpa, 0);
+        try graph.append(gpa, list);
+    }
+
+    var coloring = try dsatur(u32, gpa, graph);
+    defer coloring.deinit(gpa);
+
+    try std.testing.expect(isValidColoring(u32, graph, coloring));
+    try std.testing.expectEqual(@as(usize, 2), chromaticNumber(coloring));
+    try std.testing.expectEqual(@as(usize, 0), coloring.items[2]);
+    try std.testing.expectEqual(@as(usize, 0), coloring.items[3]);
+}
+
+test "dsatur - edgeless graph uses one color" {
+    const gpa = std.testing.allocator;
+
+    var graph: ArrayList(ArrayList(u32)) = .empty;
+    defer {
+        for (graph.items) |*list| list.deinit(gpa);
+        graph.deinit(gpa);
+    }
+    for (0..2) |_| try graph.append(gpa, .empty);
+
+    var coloring = try dsatur(u32, gpa, graph);
+    defer coloring.deinit(gpa);
+
+    try std.testing.expectEqual(@as(usize, 1), chromaticNumber(coloring));
 }
