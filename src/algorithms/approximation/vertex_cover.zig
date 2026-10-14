@@ -4,8 +4,8 @@
 //! The minimum is NP-complete; `vertexCoverApprox` is a 2-approximation and
 //! `vertexCoverGreedy` is a degree heuristic without a guarantee.
 //!
-//! Edges are `[2]usize` endpoint pairs; every endpoint must be below `num_vertices` (a caller
-//! contract, asserted). Self-loops are allowed.
+//! Edges are `[2]usize` endpoint pairs and are user data: an endpoint at or above `num_vertices`
+//! returns `error.InvalidEdge` before anything is allocated. Self-loops are allowed.
 //!
 //! Ownership: returned `ArrayList(usize)` values are owned by the caller, who releases them with
 //! `deinit(gpa)` using the same allocator. On error nothing is leaked.
@@ -14,6 +14,16 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const assert = std.debug.assert;
+
+pub const Error = error{InvalidEdge} || Allocator.Error;
+
+/// Returns `error.InvalidEdge` when any endpoint is not below `num_vertices`.
+fn edges_validate(num_vertices: usize, edges: []const [2]usize) error{InvalidEdge}!void {
+    for (edges) |edge| {
+        if (edge[0] >= num_vertices) return error.InvalidEdge;
+        if (edge[1] >= num_vertices) return error.InvalidEdge;
+    }
+}
 
 /// Computes a 2-approximation of minimum vertex cover using greedy edge selection.
 /// Repeatedly picks an uncovered edge and adds both endpoints to the cover.
@@ -39,7 +49,9 @@ pub fn vertexCoverApprox(
     gpa: Allocator,
     num_vertices: usize,
     edges: []const [2]usize,
-) !ArrayList(usize) {
+) Error!ArrayList(usize) {
+    try edges_validate(num_vertices, edges);
+
     var cover: ArrayList(usize) = .empty;
     errdefer cover.deinit(gpa);
 
@@ -55,6 +67,7 @@ pub fn vertexCoverApprox(
     for (edges) |edge| {
         const u = edge[0];
         const v = edge[1];
+        // Postcondition of `edges_validate` on this path.
         assert(u < num_vertices);
         assert(v < num_vertices);
         if (in_cover[u] or in_cover[v]) continue;
@@ -94,7 +107,9 @@ pub fn vertexCoverGreedy(
     gpa: Allocator,
     num_vertices: usize,
     edges: []const [2]usize,
-) !ArrayList(usize) {
+) Error!ArrayList(usize) {
+    try edges_validate(num_vertices, edges);
+
     var cover: ArrayList(usize) = .empty;
     errdefer cover.deinit(gpa);
 
@@ -119,6 +134,7 @@ pub fn vertexCoverGreedy(
         @memset(degrees, 0);
         for (edges, 0..) |edge, i| {
             if (edge_covered[i]) continue;
+            // Postcondition of `edges_validate` on this path.
             assert(edge[0] < num_vertices);
             assert(edge[1] < num_vertices);
             degrees[edge[0]] += 1;
@@ -360,4 +376,23 @@ test "vertex cover: no leaks when an allocation fails" {
     };
 
     try std.testing.checkAllAllocationFailures(std.testing.allocator, Runner.run, .{});
+}
+
+test "vertex cover: endpoint out of range is InvalidEdge in both algorithms" {
+    const gpa = std.testing.allocator;
+    // Boundary: endpoint == num_vertices is the first invalid index; the bad edge is last so
+    // earlier valid edges must not leak.
+    const edges = [_][2]usize{ .{ 0, 1 }, .{ 1, 3 } };
+    try std.testing.expectError(error.InvalidEdge, vertexCoverApprox(gpa, 3, &edges));
+    try std.testing.expectError(error.InvalidEdge, vertexCoverGreedy(gpa, 3, &edges));
+
+    const first_endpoint = [_][2]usize{.{ 5, 0 }};
+    try std.testing.expectError(error.InvalidEdge, vertexCoverApprox(gpa, 2, &first_endpoint));
+    try std.testing.expectError(error.InvalidEdge, vertexCoverGreedy(gpa, 2, &first_endpoint));
+
+    // The largest valid index still succeeds.
+    const valid = [_][2]usize{.{ 2, 2 }};
+    var cover = try vertexCoverApprox(gpa, 3, &valid);
+    defer cover.deinit(gpa);
+    try std.testing.expectEqualSlices(usize, &.{2}, cover.items);
 }
