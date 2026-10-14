@@ -7,6 +7,9 @@
 //! An item larger than `capacity` cannot be packed feasibly; it is placed alone in its own bin
 //! and `isValidPacking` reports the result as infeasible.
 //!
+//! A negative or NaN capacity and a negative or NaN item size are user data and return
+//! `error.InvalidInput` before anything is allocated.
+//!
 //! Ownership: a `BinPackingResult` owns its bins; release it with `deinit(gpa)` using the
 //! allocator that produced it. On error nothing is leaked.
 
@@ -14,6 +17,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const assert = std.debug.assert;
+
+pub const Error = error{InvalidInput} || Allocator.Error;
 
 pub const BinPackingResult = struct {
     bins: ArrayList(ArrayList(usize)),
@@ -53,7 +58,8 @@ pub fn firstFit(
     gpa: Allocator,
     items: []const f64,
     capacity: f64,
-) !BinPackingResult {
+) Error!BinPackingResult {
+    try input_validate(items, capacity);
     assert(capacity >= 0.0);
 
     var packing = try Packing.init(gpa, items.len);
@@ -89,7 +95,8 @@ pub fn bestFit(
     gpa: Allocator,
     items: []const f64,
     capacity: f64,
-) !BinPackingResult {
+) Error!BinPackingResult {
+    try input_validate(items, capacity);
     assert(capacity >= 0.0);
 
     var packing = try Packing.init(gpa, items.len);
@@ -143,7 +150,8 @@ pub fn firstFitDecreasing(
     gpa: Allocator,
     items: []const f64,
     capacity: f64,
-) !BinPackingResult {
+) Error!BinPackingResult {
+    try input_validate(items, capacity);
     assert(capacity >= 0.0);
 
     // Create sorted indices
@@ -170,6 +178,15 @@ pub fn firstFitDecreasing(
     }
 
     return packing.finish(gpa);
+}
+
+/// Returns `error.InvalidInput` for a negative or NaN capacity or item size.
+fn input_validate(items: []const f64, capacity: f64) error{InvalidInput}!void {
+    // Written as `!(x >= 0)` so that NaN is rejected too.
+    if (!(capacity >= 0.0)) return error.InvalidInput;
+    for (items) |item_size| {
+        if (!(item_size >= 0.0)) return error.InvalidInput;
+    }
 }
 
 /// Bins under construction plus their running loads; shared by all three algorithms.
@@ -514,4 +531,29 @@ test "bin packing: no leaks when an allocation fails" {
     };
 
     try std.testing.checkAllAllocationFailures(std.testing.allocator, Runner.run, .{});
+}
+
+test "bin packing: invalid capacity or item size is InvalidInput in all algorithms" {
+    const gpa = std.testing.allocator;
+    const nan = std.math.nan(f64);
+    const good = [_]f64{ 0.5, 0.4 };
+    const negative_item = [_]f64{ 0.5, -0.1 };
+    const nan_item = [_]f64{ 0.5, nan };
+
+    try std.testing.expectError(error.InvalidInput, firstFit(gpa, &good, -1.0));
+    try std.testing.expectError(error.InvalidInput, bestFit(gpa, &good, -1.0));
+    try std.testing.expectError(error.InvalidInput, firstFitDecreasing(gpa, &good, -1.0));
+    try std.testing.expectError(error.InvalidInput, firstFit(gpa, &good, nan));
+    try std.testing.expectError(error.InvalidInput, bestFit(gpa, &good, nan));
+    try std.testing.expectError(error.InvalidInput, firstFitDecreasing(gpa, &good, nan));
+    try std.testing.expectError(error.InvalidInput, firstFit(gpa, &negative_item, 1.0));
+    try std.testing.expectError(error.InvalidInput, bestFit(gpa, &negative_item, 1.0));
+    try std.testing.expectError(error.InvalidInput, firstFitDecreasing(gpa, &nan_item, 1.0));
+    try std.testing.expectError(error.InvalidInput, firstFit(gpa, &nan_item, 1.0));
+
+    // Zero capacity and zero-size items are valid boundaries.
+    const zero_items = [_]f64{0.0};
+    var result = try firstFit(gpa, &zero_items, 0.0);
+    defer result.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 1), result.num_bins);
 }

@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   released with `deinit(gpa)`. `vertexCover*` take `edges: []const [2]usize`. `huffmanDecode`
   gains `error.InvalidBitCharacter`. `DFA.matchLen` is new. `exactKColoring` now means "a proper
   coloring with exactly k colors exists" (chi <= k <= n).
+- Breaking (user data is an error, not an assert): `vertexCoverApprox`/`vertexCoverGreedy` return
+  `error.InvalidEdge` for an endpoint >= `num_vertices`; the three `greedy` knapsack functions
+  return `error.InvalidInput` for NaN value/weight/capacity or a negative weight; `firstFit`,
+  `bestFit`, `firstFitDecreasing` return `error.InvalidInput` for a negative or NaN capacity or
+  item size. Each module exports its error set as `Error`.
 
 ### Fixed
 - `algorithms/{approximation,greedy,graph_coloring}` and `automata/dfa`: all 13 files compile on

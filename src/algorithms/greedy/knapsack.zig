@@ -4,6 +4,9 @@
 //! Items with a non-positive value are never selected, and non-positive capacity selects
 //! nothing. An item with zero weight and positive value is free, so it ranks first.
 //!
+//! A NaN value, NaN weight, negative weight or NaN capacity is user data and returns
+//! `error.InvalidInput` before anything is allocated.
+//!
 //! Ownership: the sorted copy of the items is freed before every function returns. The
 //! `ArrayList` results are owned by the caller, who releases them with `deinit(gpa)` using the
 //! same allocator.
@@ -13,6 +16,8 @@ const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const assert = std.debug.assert;
+
+pub const Error = error{InvalidInput} || Allocator.Error;
 
 /// Item with value and weight
 pub const Item = struct {
@@ -28,6 +33,17 @@ pub const Item = struct {
         return 0;
     }
 };
+
+/// Returns `error.InvalidInput` for a NaN capacity or an item with NaN value, NaN or negative
+/// weight; infinite values are accepted.
+fn input_validate(items: []const Item, capacity: f64) error{InvalidInput}!void {
+    if (std.math.isNan(capacity)) return error.InvalidInput;
+    for (items) |item| {
+        if (std.math.isNan(item.value)) return error.InvalidInput;
+        if (std.math.isNan(item.weight)) return error.InvalidInput;
+        if (item.weight < 0) return error.InvalidInput;
+    }
+}
 
 /// Solves fractional knapsack problem using greedy approach
 ///
@@ -52,7 +68,8 @@ pub fn fractionalKnapsack(
     gpa: Allocator,
     items: []const Item,
     capacity: f64,
-) !f64 {
+) Error!f64 {
+    try input_validate(items, capacity);
     if (items.len == 0 or capacity <= 0) return 0;
 
     const sorted = try sortedByRatio(gpa, items);
@@ -89,7 +106,9 @@ pub fn fractionalKnapsackDetailed(
     gpa: Allocator,
     items: []const Item,
     capacity: f64,
-) !ArrayList(ItemSelection) {
+) Error!ArrayList(ItemSelection) {
+    try input_validate(items, capacity);
+
     var result: ArrayList(ItemSelection) = .empty;
     errdefer result.deinit(gpa);
 
@@ -163,7 +182,9 @@ pub fn zeroOneKnapsackGreedy(
     gpa: Allocator,
     items: []const Item,
     capacity: f64,
-) !ArrayList(usize) {
+) Error!ArrayList(usize) {
+    try input_validate(items, capacity);
+
     var result: ArrayList(usize) = .empty;
     errdefer result.deinit(gpa);
 
@@ -456,4 +477,32 @@ test "knapsack - no leaks when an allocation fails" {
     };
 
     try testing.checkAllAllocationFailures(testing.allocator, Runner.run, .{});
+}
+
+test "knapsack - invalid numeric input is InvalidInput, never an assert" {
+    const gpa = testing.allocator;
+    const nan = std.math.nan(f64);
+    const good = [_]Item{.{ .value = 5, .weight = 2, .id = 0 }};
+    const negative_weight = [_]Item{
+        .{ .value = 5, .weight = 2, .id = 0 },
+        .{ .value = 9, .weight = -1, .id = 1 },
+    };
+    const nan_weight = [_]Item{.{ .value = 5, .weight = nan, .id = 0 }};
+    const nan_value = [_]Item{.{ .value = nan, .weight = 1, .id = 0 }};
+
+    try testing.expectError(error.InvalidInput, fractionalKnapsack(gpa, &negative_weight, 10));
+    try testing.expectError(error.InvalidInput, fractionalKnapsack(gpa, &nan_weight, 10));
+    try testing.expectError(error.InvalidInput, fractionalKnapsack(gpa, &nan_value, 10));
+    try testing.expectError(error.InvalidInput, fractionalKnapsack(gpa, &good, nan));
+    const detailed_negative = fractionalKnapsackDetailed(gpa, &negative_weight, 10);
+    try testing.expectError(error.InvalidInput, detailed_negative);
+    try testing.expectError(error.InvalidInput, fractionalKnapsackDetailed(gpa, &good, nan));
+    try testing.expectError(error.InvalidInput, zeroOneKnapsackGreedy(gpa, &negative_weight, 10));
+    try testing.expectError(error.InvalidInput, zeroOneKnapsackGreedy(gpa, &nan_value, 10));
+    try testing.expectError(error.InvalidInput, zeroOneKnapsackGreedy(gpa, &good, nan));
+
+    // Zero weight and zero capacity are valid boundaries, not errors.
+    const free = [_]Item{.{ .value = 3, .weight = 0, .id = 7 }};
+    try testing.expectEqual(@as(f64, 3), try fractionalKnapsack(gpa, &free, 1));
+    try testing.expectEqual(@as(f64, 0), try fractionalKnapsack(gpa, &good, 0));
 }
