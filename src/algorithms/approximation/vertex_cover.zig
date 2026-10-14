@@ -1,11 +1,19 @@
+//! Vertex cover approximation algorithms.
+//!
+//! Vertex cover: a set of vertices such that every edge has at least one endpoint in the set.
+//! The minimum is NP-complete; `vertexCoverApprox` is a 2-approximation and
+//! `vertexCoverGreedy` is a degree heuristic without a guarantee.
+//!
+//! Edges are `[2]usize` endpoint pairs; every endpoint must be below `num_vertices` (a caller
+//! contract, asserted). Self-loops are allowed.
+//!
+//! Ownership: returned `ArrayList(usize)` values are owned by the caller, who releases them with
+//! `deinit(gpa)` using the same allocator. On error nothing is leaked.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
-
-/// Vertex Cover Approximation Algorithms
-///
-/// Vertex cover: a set of vertices such that every edge has at least one endpoint in the set.
-/// Finding minimum vertex cover is NP-complete, but we can approximate it efficiently.
+const assert = std.debug.assert;
 
 /// Computes a 2-approximation of minimum vertex cover using greedy edge selection.
 /// Repeatedly picks an uncovered edge and adds both endpoints to the cover.
@@ -16,63 +24,51 @@ const ArrayList = std.ArrayList;
 /// Returns: ArrayList of vertex indices in the cover (caller owns memory)
 ///
 /// Algorithm:
-/// 1. While there are uncovered edges:
-///    - Pick an arbitrary uncovered edge (u, v)
-///    - Add both u and v to the cover
-///    - Mark all edges incident to u or v as covered
-/// 2. Approximation ratio: |C| ≤ 2 × |OPT|
+/// 1. Scan the edges in order; an edge whose endpoints are both outside the cover is uncovered
+///    - Add both endpoints to the cover (this also covers every edge incident to them)
+/// 2. The picked edges form a matching and OPT needs one endpoint of each, so |C| ≤ 2 × |OPT|
 ///
 /// Example:
 /// ```zig
-/// var edges = ArrayList([2]usize).init(allocator);
-/// try edges.append(.{0, 1});
-/// try edges.append(.{1, 2});
-/// try edges.append(.{2, 3});
-/// var cover = try vertexCoverApprox(allocator, 4, edges.items);
-/// defer cover.deinit();
-/// // cover contains vertices that cover all edges (e.g., {1, 2})
+/// const edges = [_][2]usize{ .{ 0, 1 }, .{ 1, 2 }, .{ 2, 3 } };
+/// var cover = try vertexCoverApprox(gpa, 4, &edges);
+/// defer cover.deinit(gpa);
+/// // cover contains vertices that cover all edges (here {0, 1, 2, 3})
 /// ```
-pub fn vertexCoverApprox(allocator: Allocator, num_vertices: usize, edges: [][2]usize) !ArrayList(usize) {
-    var cover = ArrayList(usize).init(allocator);
-    errdefer cover.deinit();
+pub fn vertexCoverApprox(
+    gpa: Allocator,
+    num_vertices: usize,
+    edges: []const [2]usize,
+) !ArrayList(usize) {
+    var cover: ArrayList(usize) = .empty;
+    errdefer cover.deinit(gpa);
 
     if (edges.len == 0) return cover;
 
     // Track which vertices are in the cover
-    var in_cover = try allocator.alloc(bool, num_vertices);
-    defer allocator.free(in_cover);
+    const in_cover = try gpa.alloc(bool, num_vertices);
+    defer gpa.free(in_cover);
+
     @memset(in_cover, false);
 
-    // Track which edges are covered
-    var edge_covered = try allocator.alloc(bool, edges.len);
-    defer allocator.free(edge_covered);
-    @memset(edge_covered, false);
+    // An edge is covered exactly when one of its endpoints is already in the cover.
+    for (edges) |edge| {
+        const u = edge[0];
+        const v = edge[1];
+        assert(u < num_vertices);
+        assert(v < num_vertices);
+        if (in_cover[u] or in_cover[v]) continue;
 
-    // Greedy: pick uncovered edges and add both endpoints
-    for (edges, 0..) |edge, i| {
-        if (!edge_covered[i]) {
-            const u = edge[0];
-            const v = edge[1];
-
-            // Add both endpoints to cover
-            if (!in_cover[u]) {
-                try cover.append(u);
-                in_cover[u] = true;
-            }
-            if (!in_cover[v]) {
-                try cover.append(v);
-                in_cover[v] = true;
-            }
-
-            // Mark all edges incident to u or v as covered
-            for (edges, 0..) |e, j| {
-                if (e[0] == u or e[0] == v or e[1] == u or e[1] == v) {
-                    edge_covered[j] = true;
-                }
-            }
+        // Add both endpoints to cover (a self-loop adds one vertex).
+        try cover.append(gpa, u);
+        in_cover[u] = true;
+        if (v != u) {
+            try cover.append(gpa, v);
+            in_cover[v] = true;
         }
     }
 
+    assert(cover.items.len <= num_vertices);
     return cover;
 }
 
@@ -89,41 +85,46 @@ pub fn vertexCoverApprox(allocator: Allocator, num_vertices: usize, edges: [][2]
 ///
 /// Example:
 /// ```zig
-/// var edges = ArrayList([2]usize).init(allocator);
-/// try edges.append(.{0, 1});
-/// try edges.append(.{0, 2});
-/// try edges.append(.{1, 2});
-/// var cover = try vertexCoverGreedy(allocator, 3, edges.items);
-/// defer cover.deinit();
+/// const edges = [_][2]usize{ .{ 0, 1 }, .{ 0, 2 }, .{ 1, 2 } };
+/// var cover = try vertexCoverGreedy(gpa, 3, &edges);
+/// defer cover.deinit(gpa);
 /// // cover likely contains vertex 0 or 1 (highest degree)
 /// ```
-pub fn vertexCoverGreedy(allocator: Allocator, num_vertices: usize, edges: [][2]usize) !ArrayList(usize) {
-    var cover = ArrayList(usize).init(allocator);
-    errdefer cover.deinit();
+pub fn vertexCoverGreedy(
+    gpa: Allocator,
+    num_vertices: usize,
+    edges: []const [2]usize,
+) !ArrayList(usize) {
+    var cover: ArrayList(usize) = .empty;
+    errdefer cover.deinit(gpa);
 
     if (edges.len == 0) return cover;
 
     // Track which edges are covered
-    var edge_covered = try allocator.alloc(bool, edges.len);
-    defer allocator.free(edge_covered);
+    const edge_covered = try gpa.alloc(bool, edges.len);
+    defer gpa.free(edge_covered);
+
     @memset(edge_covered, false);
+
+    const degrees = try gpa.alloc(usize, num_vertices);
+    defer gpa.free(degrees);
 
     var uncovered_count = edges.len;
 
-    while (uncovered_count > 0) {
-        // Find vertex with maximum degree among uncovered edges
-        var degrees = try allocator.alloc(usize, num_vertices);
-        defer allocator.free(degrees);
-        @memset(degrees, 0);
+    // Every pass covers at least one edge, so `edges.len` bounds the loop.
+    for (0..edges.len) |_| {
+        if (uncovered_count == 0) break;
 
+        // Find vertex with maximum degree among uncovered edges
+        @memset(degrees, 0);
         for (edges, 0..) |edge, i| {
-            if (!edge_covered[i]) {
-                degrees[edge[0]] += 1;
-                degrees[edge[1]] += 1;
-            }
+            if (edge_covered[i]) continue;
+            assert(edge[0] < num_vertices);
+            assert(edge[1] < num_vertices);
+            degrees[edge[0]] += 1;
+            degrees[edge[1]] += 1;
         }
 
-        // Find vertex with max degree
         var max_degree: usize = 0;
         var max_vertex: usize = 0;
         for (degrees, 0..) |deg, v| {
@@ -132,11 +133,11 @@ pub fn vertexCoverGreedy(allocator: Allocator, num_vertices: usize, edges: [][2]
                 max_vertex = v;
             }
         }
-
-        if (max_degree == 0) break;
+        // An uncovered edge contributes to the degree of its endpoints.
+        assert(max_degree > 0);
 
         // Add vertex to cover
-        try cover.append(max_vertex);
+        try cover.append(gpa, max_vertex);
 
         // Mark edges incident to this vertex as covered
         for (edges, 0..) |edge, i| {
@@ -147,6 +148,7 @@ pub fn vertexCoverGreedy(allocator: Allocator, num_vertices: usize, edges: [][2]
         }
     }
 
+    assert(uncovered_count == 0);
     return cover;
 }
 
@@ -156,7 +158,7 @@ pub fn vertexCoverGreedy(allocator: Allocator, num_vertices: usize, edges: [][2]
 /// Space: O(1)
 ///
 /// Returns: true if all edges are covered, false otherwise
-pub fn isValidCover(edges: [][2]usize, cover: []const usize) bool {
+pub fn isValidCover(edges: []const [2]usize, cover: []const usize) bool {
     // Check each edge has at least one endpoint in cover
     for (edges) |edge| {
         var covered = false;
@@ -176,111 +178,109 @@ pub fn isValidCover(edges: [][2]usize, cover: []const usize) bool {
 // ============================================================================
 
 test "vertex cover: empty graph" {
-    const allocator = std.testing.allocator;
-    const edges: [][2]usize = &.{};
-    var cover = try vertexCoverApprox(allocator, 0, edges);
-    defer cover.deinit();
+    const gpa = std.testing.allocator;
+    const edges: []const [2]usize = &.{};
+    var cover = try vertexCoverApprox(gpa, 0, edges);
+    defer cover.deinit(gpa);
     try std.testing.expectEqual(@as(usize, 0), cover.items.len);
 }
 
 test "vertex cover: single edge" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
     const edges = [_][2]usize{.{ 0, 1 }};
-    var cover = try vertexCoverApprox(allocator, 2, &edges);
-    defer cover.deinit();
+    var cover = try vertexCoverApprox(gpa, 2, &edges);
+    defer cover.deinit(gpa);
 
-    try std.testing.expect(cover.items.len >= 1 and cover.items.len <= 2);
+    // The single edge is picked, so both endpoints enter the cover.
+    try std.testing.expectEqualSlices(usize, &.{ 0, 1 }, cover.items);
     try std.testing.expect(isValidCover(&edges, cover.items));
 }
 
 test "vertex cover: triangle graph" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
     const edges = [_][2]usize{ .{ 0, 1 }, .{ 1, 2 }, .{ 2, 0 } };
-    var cover = try vertexCoverApprox(allocator, 3, &edges);
-    defer cover.deinit();
+    var cover = try vertexCoverApprox(gpa, 3, &edges);
+    defer cover.deinit(gpa);
 
-    // Triangle requires at least 2 vertices (OPT=2), approx gives ≤4
-    try std.testing.expect(cover.items.len >= 2);
-    try std.testing.expect(cover.items.len <= 4);
+    // Edge (0,1) is picked and covers the whole triangle: OPT=2, approx gives exactly 2.
+    try std.testing.expectEqualSlices(usize, &.{ 0, 1 }, cover.items);
     try std.testing.expect(isValidCover(&edges, cover.items));
 }
 
 test "vertex cover: path graph" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
     // Path: 0-1-2-3-4
     const edges = [_][2]usize{ .{ 0, 1 }, .{ 1, 2 }, .{ 2, 3 }, .{ 3, 4 } };
-    var cover = try vertexCoverApprox(allocator, 5, &edges);
-    defer cover.deinit();
+    var cover = try vertexCoverApprox(gpa, 5, &edges);
+    defer cover.deinit(gpa);
 
-    // Path of length 4 requires OPT=2 (e.g., {1,3}), approx gives ≤4
-    try std.testing.expect(cover.items.len >= 2);
-    try std.testing.expect(cover.items.len <= 4);
+    // Matching edges (0,1) and (2,3) are picked: 4 vertices against OPT=2 ({1,3}), ratio 2.
+    try std.testing.expectEqualSlices(usize, &.{ 0, 1, 2, 3 }, cover.items);
     try std.testing.expect(isValidCover(&edges, cover.items));
 }
 
 test "vertex cover: star graph" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
     // Star: center 0 connected to 1,2,3,4
     const edges = [_][2]usize{ .{ 0, 1 }, .{ 0, 2 }, .{ 0, 3 }, .{ 0, 4 } };
-    var cover = try vertexCoverApprox(allocator, 5, &edges);
-    defer cover.deinit();
+    var cover = try vertexCoverApprox(gpa, 5, &edges);
+    defer cover.deinit(gpa);
 
-    // Star requires OPT=1 (center), approx may give 2-4
-    try std.testing.expect(cover.items.len >= 1);
+    // Star requires OPT=1 (center); edge (0,1) is picked and covers every edge: 2 = 2 x OPT.
+    try std.testing.expectEqualSlices(usize, &.{ 0, 1 }, cover.items);
     try std.testing.expect(isValidCover(&edges, cover.items));
 }
 
 test "vertex cover: complete graph K4" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
     const edges = [_][2]usize{
         .{ 0, 1 }, .{ 0, 2 }, .{ 0, 3 },
         .{ 1, 2 }, .{ 1, 3 }, .{ 2, 3 },
     };
-    var cover = try vertexCoverApprox(allocator, 4, &edges);
-    defer cover.deinit();
+    var cover = try vertexCoverApprox(gpa, 4, &edges);
+    defer cover.deinit(gpa);
 
-    // K4 requires OPT=3, approx gives ≤6
-    try std.testing.expect(cover.items.len >= 3);
-    try std.testing.expect(cover.items.len <= 6);
+    // K4 requires OPT=3; edges (0,1) and (2,3) are picked, giving 4 <= 2 x OPT.
+    try std.testing.expectEqualSlices(usize, &.{ 0, 1, 2, 3 }, cover.items);
     try std.testing.expect(isValidCover(&edges, cover.items));
 }
 
 test "vertex cover: disconnected components" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
     // Two triangles: 0-1-2 and 3-4-5
     const edges = [_][2]usize{
         .{ 0, 1 }, .{ 1, 2 }, .{ 2, 0 },
         .{ 3, 4 }, .{ 4, 5 }, .{ 5, 3 },
     };
-    var cover = try vertexCoverApprox(allocator, 6, &edges);
-    defer cover.deinit();
+    var cover = try vertexCoverApprox(gpa, 6, &edges);
+    defer cover.deinit(gpa);
 
-    // Two triangles require OPT=4, approx gives ≤8
-    try std.testing.expect(cover.items.len >= 4);
+    // Two triangles require OPT=4; each triangle contributes its first edge: 4 vertices.
+    try std.testing.expectEqualSlices(usize, &.{ 0, 1, 3, 4 }, cover.items);
     try std.testing.expect(isValidCover(&edges, cover.items));
 }
 
 test "vertex cover: greedy heuristic - star" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
     // Star: center 0 connected to 1,2,3,4
     const edges = [_][2]usize{ .{ 0, 1 }, .{ 0, 2 }, .{ 0, 3 }, .{ 0, 4 } };
-    var cover = try vertexCoverGreedy(allocator, 5, &edges);
-    defer cover.deinit();
+    var cover = try vertexCoverGreedy(gpa, 5, &edges);
+    defer cover.deinit(gpa);
 
     // Greedy should pick center (highest degree) - optimal solution
-    try std.testing.expect(cover.items.len >= 1);
+    try std.testing.expectEqualSlices(usize, &.{0}, cover.items);
     try std.testing.expect(isValidCover(&edges, cover.items));
 }
 
 test "vertex cover: greedy vs approx comparison" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
     const edges = [_][2]usize{ .{ 0, 1 }, .{ 1, 2 }, .{ 2, 3 }, .{ 3, 4 } };
 
-    var cover_approx = try vertexCoverApprox(allocator, 5, &edges);
-    defer cover_approx.deinit();
+    var cover_approx = try vertexCoverApprox(gpa, 5, &edges);
+    defer cover_approx.deinit(gpa);
 
-    var cover_greedy = try vertexCoverGreedy(allocator, 5, &edges);
-    defer cover_greedy.deinit();
+    var cover_greedy = try vertexCoverGreedy(gpa, 5, &edges);
+    defer cover_greedy.deinit(gpa);
 
     // Both should be valid covers
     try std.testing.expect(isValidCover(&edges, cover_approx.items));
@@ -288,22 +288,21 @@ test "vertex cover: greedy vs approx comparison" {
 }
 
 test "vertex cover: large path (stress test)" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
     // Path of length 100: 0-1-2-...-100
-    var edges = ArrayList([2]usize).init(allocator);
-    defer edges.deinit();
+    var edges: ArrayList([2]usize) = .empty;
+    defer edges.deinit(gpa);
 
     for (0..100) |i| {
-        try edges.append(.{ i, i + 1 });
+        try edges.append(gpa, .{ i, i + 1 });
     }
 
-    var cover = try vertexCoverApprox(allocator, 101, edges.items);
-    defer cover.deinit();
+    var cover = try vertexCoverApprox(gpa, 101, edges.items);
+    defer cover.deinit(gpa);
 
-    // Path of length 100 requires OPT=50, approx gives ≤100
-    try std.testing.expect(cover.items.len >= 50);
-    try std.testing.expect(cover.items.len <= 100);
+    // Path of length 100 requires OPT=50; the picked matching has 50 edges, so 100 vertices.
+    try std.testing.expectEqual(@as(usize, 100), cover.items.len);
     try std.testing.expect(isValidCover(edges.items, cover.items));
 }
 
@@ -317,4 +316,48 @@ test "vertex cover: isValidCover accepts minimal valid cover" {
     const edges = [_][2]usize{ .{ 0, 1 }, .{ 1, 2 }, .{ 2, 3 } };
     const valid_cover = [_]usize{ 1, 2 }; // Covers all edges
     try std.testing.expect(isValidCover(&edges, &valid_cover));
+}
+
+test "vertex cover: self-loop adds its vertex once" {
+    const gpa = std.testing.allocator;
+    const edges = [_][2]usize{ .{ 2, 2 }, .{ 0, 1 } };
+    var cover = try vertexCoverApprox(gpa, 3, &edges);
+    defer cover.deinit(gpa);
+
+    try std.testing.expectEqualSlices(usize, &.{ 2, 0, 1 }, cover.items);
+    try std.testing.expect(isValidCover(&edges, cover.items));
+
+    var greedy = try vertexCoverGreedy(gpa, 3, &edges);
+    defer greedy.deinit(gpa);
+
+    try std.testing.expect(isValidCover(&edges, greedy.items));
+}
+
+test "vertex cover: greedy can beat the matching bound" {
+    const gpa = std.testing.allocator;
+    // Path 0-1-2-3-4: the minimum cover {1,3} has 2 vertices; greedy takes degree-2 vertex 1,
+    // then the remaining edges (2,3),(3,4) have vertex 3 with degree 2.
+    const edges = [_][2]usize{ .{ 0, 1 }, .{ 1, 2 }, .{ 2, 3 }, .{ 3, 4 } };
+    var cover = try vertexCoverGreedy(gpa, 5, &edges);
+    defer cover.deinit(gpa);
+
+    try std.testing.expectEqualSlices(usize, &.{ 1, 3 }, cover.items);
+}
+
+test "vertex cover: no leaks when an allocation fails" {
+    const Runner = struct {
+        fn run(gpa: Allocator) !void {
+            const edges = [_][2]usize{ .{ 0, 1 }, .{ 1, 2 }, .{ 2, 3 }, .{ 3, 4 } };
+            var approx = try vertexCoverApprox(gpa, 5, &edges);
+            defer approx.deinit(gpa);
+
+            var greedy = try vertexCoverGreedy(gpa, 5, &edges);
+            defer greedy.deinit(gpa);
+
+            try std.testing.expect(isValidCover(&edges, approx.items));
+            try std.testing.expect(isValidCover(&edges, greedy.items));
+        }
+    };
+
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Runner.run, .{});
 }

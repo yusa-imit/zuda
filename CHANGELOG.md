@@ -17,7 +17,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   v3.0.0 break — clock-derived PRNG seeds become a required `seed: u64` option, `io` is never
   stored in a container, and lands on ~18 public functions instead of ~40.
 
+### Changed
+- Breaking (Zig 0.16 unmanaged lists): `BinPackingResult.deinit(gpa)`, `TspResult.deinit(gpa)`;
+  results of `approximation`, `greedy` and `graph_coloring` functions are unmanaged `ArrayList`s
+  released with `deinit(gpa)`. `vertexCover*` take `edges: []const [2]usize`. `huffmanDecode`
+  gains `error.InvalidBitCharacter`. `DFA.matchLen` is new. `exactKColoring` now means "a proper
+  coloring with exactly k colors exists" (chi <= k <= n).
+
 ### Fixed
+- `algorithms/{approximation,greedy,graph_coloring}` and `automata/dfa`: all 13 files compile on
+  Zig 0.16 and their tests run in `zig build test`; each gains an allocation-failure test.
+  Bugs the never-run tests exposed: `DFA.search`/`count` required the match to end the text and
+  `fromSuffix` missed overlapping suffixes (now a KMP automaton); `dsatur` looped forever on an
+  isolated vertex and indexed out of bounds on an empty graph; `exactKColoring` and
+  `coloringWithPropagation` returned wrong answers; `set_cover` double-counted duplicate
+  elements; `job_sequencing` allocated a slot array as large as the biggest deadline;
+  `knapsack` ranked zero-weight items wrongly; `tsp` nearest-neighbour could revisit a vertex on
+  infinite distances; `huffman` codes depended on hash-map order and tree building leaked on
+  allocation failure.
 - `algorithms/backtracking`: allocation-failure leaks and an undefined free in
   `palindrome_partition` (`minCut`, `partition`, `countPartitions`), `knights_tour`,
   `combination_sum`, `permutations`, `subsets` and `n_queens`; each file gains a

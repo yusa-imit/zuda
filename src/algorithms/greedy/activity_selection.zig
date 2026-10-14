@@ -1,5 +1,17 @@
+//! Activity selection: greedy for the unweighted problem, dynamic programming for the weighted
+//! one.
+//!
+//! Activities occupy the half-open interval `[start, finish)`: one that starts exactly when
+//! another finishes is compatible with it.
+//!
+//! Ownership: returned `ArrayList(usize)` values are owned by the caller, who releases them with
+//! `deinit(gpa)` using the same allocator. On error nothing is leaked.
+
 const std = @import("std");
 const testing = std.testing;
+const Allocator = std.mem.Allocator;
+const ArrayList = std.ArrayList;
+const assert = std.debug.assert;
 
 /// Activity with start and finish times
 pub const Activity = struct {
@@ -15,6 +27,8 @@ pub const Activity = struct {
 /// Time: O(n log n) — sorting dominates
 /// Space: O(n) — result storage
 ///
+/// Returns the `id` of each selected activity, in order of finish time.
+///
 /// Example:
 /// ```zig
 /// const activities = [_]Activity{
@@ -22,40 +36,42 @@ pub const Activity = struct {
 ///     .{ .start = 2, .finish = 5, .id = 1 },
 ///     .{ .start = 4, .finish = 6, .id = 2 },
 /// };
-/// var result = try activitySelection(testing.allocator, &activities);
-/// defer result.deinit();
+/// var result = try activitySelection(gpa, &activities);
+/// defer result.deinit(gpa);
 /// // result.items contains [0, 2] — activities 0 and 2 are selected
 /// ```
 pub fn activitySelection(
-    allocator: std.mem.Allocator,
+    gpa: Allocator,
     activities: []const Activity,
-) !std.ArrayList(usize) {
-    if (activities.len == 0) {
-        return std.ArrayList(usize).init(allocator);
-    }
+) !ArrayList(usize) {
+    if (activities.len == 0) return .empty;
 
     // Sort by finish time
-    var sorted = try allocator.alloc(Activity, activities.len);
-    defer allocator.free(sorted);
-    @memcpy(sorted, activities);
+    const sorted = try gpa.alloc(Activity, activities.len);
+    defer gpa.free(sorted);
 
+    @memcpy(sorted, activities);
     std.mem.sort(Activity, sorted, {}, lessThanByFinish);
 
-    var result = std.ArrayList(usize).init(allocator);
-    errdefer result.deinit();
+    var result: ArrayList(usize) = .empty;
+    errdefer result.deinit(gpa);
+
+    try result.ensureTotalCapacityPrecise(gpa, activities.len);
 
     // Always select first activity (earliest finish)
-    try result.append(sorted[0].id);
+    result.appendAssumeCapacity(sorted[0].id);
     var last_finish = sorted[0].finish;
 
     // Greedily select compatible activities
     for (sorted[1..]) |activity| {
         if (activity.start >= last_finish) {
-            try result.append(activity.id);
+            result.appendAssumeCapacity(activity.id);
             last_finish = activity.finish;
         }
     }
 
+    assert(result.items.len >= 1);
+    assert(result.items.len <= activities.len);
     return result;
 }
 
@@ -65,25 +81,28 @@ fn lessThanByFinish(_: void, a: Activity, b: Activity) bool {
 
 /// Weighted activity selection — maximizes total weight
 ///
-/// Algorithm: Dynamic programming approach (greedy doesn't work for weighted case)
+/// Algorithm: Dynamic programming approach (greedy doesn't work for weighted case). Activities
+/// are sorted by finish time; for each one a binary search finds how many earlier activities
+/// are compatible. An activity with non-positive weight is never selected.
 ///
-/// Time: O(n log n) — sorting + DP
+/// Time: O(n log n) — sorting + DP with binary search
 /// Space: O(n) — DP table
+///
+/// Returns the index into `activities` (and `weights`) of each selected activity, in order of
+/// finish time. `weights.len` must equal `activities.len`.
 pub fn weightedActivitySelection(
-    allocator: std.mem.Allocator,
+    gpa: Allocator,
     activities: []const Activity,
     weights: []const f64,
-) !std.ArrayList(usize) {
-    if (activities.len == 0) {
-        return std.ArrayList(usize).init(allocator);
-    }
+) !ArrayList(usize) {
+    assert(activities.len == weights.len);
+    if (activities.len == 0) return .empty;
 
-    std.debug.assert(activities.len == weights.len);
+    // Sort indices by finish time.
+    const order = try gpa.alloc(usize, activities.len);
+    defer gpa.free(order);
 
-    // Sort by finish time
-    const sorted_indices = try allocator.alloc(usize, activities.len);
-    defer allocator.free(sorted_indices);
-    for (sorted_indices, 0..) |*idx, i| idx.* = i;
+    for (order, 0..) |*idx, i| idx.* = i;
 
     const Context = struct {
         activities: []const Activity,
@@ -91,72 +110,75 @@ pub fn weightedActivitySelection(
             return ctx.activities[a].finish < ctx.activities[b].finish;
         }
     };
-    std.mem.sort(usize, sorted_indices, Context{ .activities = activities }, Context.lessThan);
+    std.mem.sort(usize, order, Context{ .activities = activities }, Context.lessThan);
 
-    // DP: dp[i] = max weight using activities 0..i
-    var dp = try allocator.alloc(f64, activities.len);
-    defer allocator.free(dp);
+    // best[k] = max weight using the first k activities in finish order (best[0] = 0).
+    // compatible[i] = how many leading activities finish no later than order[i] starts.
+    const best = try gpa.alloc(f64, activities.len + 1);
+    defer gpa.free(best);
 
-    var prev = try allocator.alloc(?usize, activities.len);
-    defer allocator.free(prev);
+    const compatible = try gpa.alloc(usize, activities.len);
+    defer gpa.free(compatible);
 
-    // Base case
-    dp[0] = weights[sorted_indices[0]];
-    prev[0] = null;
+    const taken = try gpa.alloc(bool, activities.len);
+    defer gpa.free(taken);
 
-    // Fill DP table
-    for (1..activities.len) |i| {
-        const current_idx = sorted_indices[i];
-        const current_weight = weights[current_idx];
-
-        // Find latest compatible activity
-        var latest_compatible: ?usize = null;
-        var j: usize = i;
-        while (j > 0) {
-            j -= 1;
-            if (activities[sorted_indices[j]].finish <= activities[current_idx].start) {
-                latest_compatible = j;
-                break;
-            }
-        }
-
-        // Include current activity or skip
-        const include_weight = if (latest_compatible) |lc| dp[lc] + current_weight else current_weight;
-        const exclude_weight = dp[i - 1];
-
-        if (include_weight > exclude_weight) {
-            dp[i] = include_weight;
-            prev[i] = latest_compatible;
-        } else {
-            dp[i] = exclude_weight;
-            prev[i] = null; // Skip current
-        }
+    best[0] = 0.0;
+    for (order, 0..) |idx, i| {
+        compatible[i] = countCompatible(activities, order[0..i], activities[idx].start);
+        assert(compatible[i] <= i);
+        const include_weight = best[compatible[i]] + weights[idx];
+        taken[i] = include_weight > best[i];
+        best[i + 1] = if (taken[i]) include_weight else best[i];
     }
 
     // Reconstruct solution
-    var result = std.ArrayList(usize).init(allocator);
-    errdefer result.deinit();
+    var result: ArrayList(usize) = .empty;
+    errdefer result.deinit(gpa);
 
-    var i: ?usize = activities.len - 1;
-    while (i) |idx| {
-        if (prev[idx]) |p| {
-            try result.append(sorted_indices[idx]);
-            i = p;
-        } else if (idx == 0 or dp[idx] != dp[idx - 1]) {
-            try result.append(sorted_indices[idx]);
-            break;
+    try result.ensureTotalCapacityPrecise(gpa, activities.len);
+
+    var k = activities.len;
+    // Every step lowers `k` by at least one, so `activities.len` steps always suffice.
+    for (0..activities.len) |_| {
+        if (k == 0) break;
+        if (taken[k - 1]) {
+            result.appendAssumeCapacity(order[k - 1]);
+            k = compatible[k - 1];
         } else {
-            if (idx == 0) break;
-            i = idx - 1;
+            k -= 1;
         }
     }
+    assert(k == 0);
 
     // Reverse to get chronological order
     std.mem.reverse(usize, result.items);
     return result;
 }
 
-// Tests
+/// Counts the leading activities of `order` (sorted by finish) that finish by `start`.
+///
+/// Because `order` is sorted by finish time the compatible ones form a prefix, so a binary
+/// search finds its length.
+fn countCompatible(activities: []const Activity, order: []const usize, start: i32) usize {
+    var low: usize = 0;
+    var high: usize = order.len;
+    // The interval [low, high) halves each pass, so `order.len + 1` passes always suffice.
+    for (0..order.len + 1) |_| {
+        if (low >= high) break;
+
+        const mid = low + @divFloor(high - low, 2);
+        if (activities[order[mid]].finish <= start) {
+            low = mid + 1;
+        } else {
+            high = mid;
+        }
+    }
+    assert(low == high);
+    assert(low <= order.len);
+    return low;
+}
+
 test "activity selection - basic case" {
     const activities = [_]Activity{
         .{ .start = 1, .finish = 3, .id = 0 },
@@ -168,7 +190,7 @@ test "activity selection - basic case" {
     };
 
     var result = try activitySelection(testing.allocator, &activities);
-    defer result.deinit();
+    defer result.deinit(testing.allocator);
 
     // Should select activities: 0 (1-3), 2 (4-6), 3 (6-7), 5 (8-9)
     try testing.expectEqual(@as(usize, 4), result.items.len);
@@ -181,7 +203,7 @@ test "activity selection - basic case" {
 test "activity selection - empty" {
     const activities: []const Activity = &.{};
     var result = try activitySelection(testing.allocator, activities);
-    defer result.deinit();
+    defer result.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 0), result.items.len);
 }
 
@@ -189,8 +211,8 @@ test "activity selection - single activity" {
     const activities = [_]Activity{
         .{ .start = 1, .finish = 5, .id = 0 },
     };
-    var result = try activitySelection(testing.allocator, activities);
-    defer result.deinit();
+    var result = try activitySelection(testing.allocator, &activities);
+    defer result.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 1), result.items.len);
     try testing.expectEqual(@as(usize, 0), result.items[0]);
 }
@@ -201,8 +223,8 @@ test "activity selection - all overlapping" {
         .{ .start = 2, .finish = 9, .id = 1 },
         .{ .start = 3, .finish = 8, .id = 2 },
     };
-    var result = try activitySelection(testing.allocator, activities);
-    defer result.deinit();
+    var result = try activitySelection(testing.allocator, &activities);
+    defer result.deinit(testing.allocator);
     // Should select activity 2 (earliest finish)
     try testing.expectEqual(@as(usize, 1), result.items.len);
     try testing.expectEqual(@as(usize, 2), result.items[0]);
@@ -214,8 +236,8 @@ test "activity selection - no overlaps" {
         .{ .start = 3, .finish = 4, .id = 1 },
         .{ .start = 5, .finish = 6, .id = 2 },
     };
-    var result = try activitySelection(testing.allocator, activities);
-    defer result.deinit();
+    var result = try activitySelection(testing.allocator, &activities);
+    defer result.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 3), result.items.len);
 }
 
@@ -228,15 +250,10 @@ test "weighted activity selection - basic case" {
     const weights = [_]f64{ 50, 200, 100 };
 
     var result = try weightedActivitySelection(testing.allocator, &activities, &weights);
-    defer result.deinit();
+    defer result.deinit(testing.allocator);
 
-    // Should select activity 1 (weight 200) — best value
-    try testing.expect(result.items.len > 0);
-    var total_weight: f64 = 0;
-    for (result.items) |id| {
-        total_weight += weights[id];
-    }
-    try testing.expect(total_weight >= 200); // At least as good as selecting activity 1
+    // Activity 1 (weight 200) beats activities 0 + 2 (50 + 100) and overlaps both.
+    try testing.expectEqualSlices(usize, &.{1}, result.items);
 }
 
 test "weighted activity selection - prefer high weight" {
@@ -249,14 +266,10 @@ test "weighted activity selection - prefer high weight" {
     const weights = [_]f64{ 10, 1000, 10, 10 }; // Activity 1 has very high weight
 
     var result = try weightedActivitySelection(testing.allocator, &activities, &weights);
-    defer result.deinit();
+    defer result.deinit(testing.allocator);
 
-    var total_weight: f64 = 0;
-    for (result.items) |id| {
-        total_weight += weights[id];
-    }
-    // Should select activity 1 (weight 1000) despite overlaps
-    try testing.expect(total_weight >= 1000);
+    // Activity 1 (weight 1000) beats the three short ones (10 + 10 + 10) despite the overlaps.
+    try testing.expectEqualSlices(usize, &.{1}, result.items);
 }
 
 test "activity selection - adjacent activities both selected" {
@@ -267,7 +280,7 @@ test "activity selection - adjacent activities both selected" {
         .{ .start = 9, .finish = 12, .id = 2 },
     };
     var result = try activitySelection(testing.allocator, &activities);
-    defer result.deinit();
+    defer result.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 3), result.items.len);
 }
@@ -281,7 +294,7 @@ test "activity selection - unsorted input selects correct count" {
         .{ .start = 3, .finish = 6, .id = 3 },
     };
     var result = try activitySelection(testing.allocator, &activities);
-    defer result.deinit();
+    defer result.deinit(testing.allocator);
 
     // Sorted by finish: id1(1-3), id3(3-6), id0(5-9), id2(7-11)
     // Select id1(1-3), id3(3-6 start>=3 ✓), id2(7-11 start>=6 ✓) = 3
@@ -298,7 +311,7 @@ test "activity selection - ten non-overlapping activities all selected" {
         };
     }
     var result = try activitySelection(testing.allocator, &activities);
-    defer result.deinit();
+    defer result.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 10), result.items.len);
 }
@@ -307,7 +320,7 @@ test "weighted activity selection - empty gives empty result" {
     const activities: []const Activity = &.{};
     const weights: []const f64 = &.{};
     var result = try weightedActivitySelection(testing.allocator, activities, weights);
-    defer result.deinit();
+    defer result.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 0), result.items.len);
 }
@@ -320,7 +333,66 @@ test "activity selection - memory safety loop" {
     };
     for (0..10) |_| {
         var result = try activitySelection(testing.allocator, &activities);
-        defer result.deinit();
+        defer result.deinit(testing.allocator);
         try testing.expect(result.items.len > 0);
     }
+}
+
+test "weighted activity selection - combines compatible activities" {
+    const activities = [_]Activity{
+        .{ .start = 0, .finish = 3, .id = 0 },
+        .{ .start = 3, .finish = 6, .id = 1 },
+        .{ .start = 2, .finish = 5, .id = 2 },
+        .{ .start = 6, .finish = 9, .id = 3 },
+    };
+    const weights = [_]f64{ 5, 6, 12, 4 };
+
+    var result = try weightedActivitySelection(testing.allocator, &activities, &weights);
+    defer result.deinit(testing.allocator);
+
+    // {0,1,3} weighs 15, {2,3} weighs 16: activity 2 overlaps 0 and 1 but is worth more.
+    try testing.expectEqualSlices(usize, &.{ 2, 3 }, result.items);
+}
+
+test "weighted activity selection - never selects a negative weight" {
+    const activities = [_]Activity{
+        .{ .start = 0, .finish = 2, .id = 0 },
+        .{ .start = 3, .finish = 5, .id = 1 },
+    };
+    const weights = [_]f64{ -4, 7 };
+
+    var result = try weightedActivitySelection(testing.allocator, &activities, &weights);
+    defer result.deinit(testing.allocator);
+
+    try testing.expectEqualSlices(usize, &.{1}, result.items);
+
+    const all_negative = [_]f64{ -4, -7 };
+    var none = try weightedActivitySelection(testing.allocator, &activities, &all_negative);
+    defer none.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 0), none.items.len);
+}
+
+test "activity selection - no leaks when an allocation fails" {
+    const Runner = struct {
+        fn run(gpa: Allocator) !void {
+            const activities = [_]Activity{
+                .{ .start = 1, .finish = 3, .id = 0 },
+                .{ .start = 2, .finish = 5, .id = 1 },
+                .{ .start = 4, .finish = 6, .id = 2 },
+            };
+            const weights = [_]f64{ 50, 200, 100 };
+
+            var selected = try activitySelection(gpa, &activities);
+            defer selected.deinit(gpa);
+
+            var weighted = try weightedActivitySelection(gpa, &activities, &weights);
+            defer weighted.deinit(gpa);
+
+            try testing.expectEqualSlices(usize, &.{ 0, 2 }, selected.items);
+            try testing.expectEqualSlices(usize, &.{1}, weighted.items);
+        }
+    };
+
+    try testing.checkAllAllocationFailures(testing.allocator, Runner.run, .{});
 }

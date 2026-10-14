@@ -1,5 +1,18 @@
+//! Greedy knapsack: the optimal fractional knapsack and a 0/1 approximation, both by descending
+//! value-to-weight ratio.
+//!
+//! Items with a non-positive value are never selected, and non-positive capacity selects
+//! nothing. An item with zero weight and positive value is free, so it ranks first.
+//!
+//! Ownership: the sorted copy of the items is freed before every function returns. The
+//! `ArrayList` results are owned by the caller, who releases them with `deinit(gpa)` using the
+//! same allocator.
+
 const std = @import("std");
 const testing = std.testing;
+const Allocator = std.mem.Allocator;
+const ArrayList = std.ArrayList;
+const assert = std.debug.assert;
 
 /// Item with value and weight
 pub const Item = struct {
@@ -7,8 +20,12 @@ pub const Item = struct {
     weight: f64,
     id: usize,
 
+    /// Value per unit of weight. A weightless item with positive value is infinitely good, and
+    /// anything else without weight is worth nothing.
     pub fn valuePerWeight(self: Item) f64 {
-        return if (self.weight > 0) self.value / self.weight else 0;
+        if (self.weight > 0) return self.value / self.weight;
+        if (self.value > 0) return std.math.inf(f64);
+        return 0;
     }
 };
 
@@ -23,34 +40,30 @@ pub const Item = struct {
 ///
 /// Example:
 /// ```zig
-/// const allocator = std.heap.page_allocator;
 /// const items = [_]Item{
 ///     .{ .value = 60, .weight = 10, .id = 0 },
 ///     .{ .value = 100, .weight = 20, .id = 1 },
 ///     .{ .value = 120, .weight = 30, .id = 2 },
 /// };
-/// const value = try fractionalKnapsack(allocator, &items, 50);
+/// const value = try fractionalKnapsack(gpa, &items, 50);
 /// // value = 240 (all of item 1, all of item 0, 2/3 of item 2)
 /// ```
 pub fn fractionalKnapsack(
-    allocator: std.mem.Allocator,
+    gpa: Allocator,
     items: []const Item,
     capacity: f64,
 ) !f64 {
     if (items.len == 0 or capacity <= 0) return 0;
 
-    // Sort by value-to-weight ratio (descending)
-    const sorted = try allocator.alloc(Item, items.len);
-    defer allocator.free(sorted);
-    @memcpy(sorted, items);
-
-    std.mem.sort(Item, sorted, {}, greaterByRatio);
+    const sorted = try sortedByRatio(gpa, items);
+    defer gpa.free(sorted);
 
     var total_value: f64 = 0;
     var remaining_capacity = capacity;
 
     for (sorted) |item| {
         if (remaining_capacity <= 0) break;
+        if (item.value <= 0) continue;
 
         if (item.weight <= remaining_capacity) {
             // Take entire item
@@ -64,6 +77,7 @@ pub fn fractionalKnapsack(
         }
     }
 
+    assert(remaining_capacity <= capacity);
     return total_value;
 }
 
@@ -72,28 +86,28 @@ pub fn fractionalKnapsack(
 /// Time: O(n log n)
 /// Space: O(n)
 pub fn fractionalKnapsackDetailed(
-    allocator: std.mem.Allocator,
+    gpa: Allocator,
     items: []const Item,
     capacity: f64,
-) !std.ArrayList(ItemSelection) {
-    var result = std.ArrayList(ItemSelection).init(allocator);
-    errdefer result.deinit();
+) !ArrayList(ItemSelection) {
+    var result: ArrayList(ItemSelection) = .empty;
+    errdefer result.deinit(gpa);
 
     if (items.len == 0 or capacity <= 0) return result;
 
-    const sorted = try allocator.alloc(Item, items.len);
-    defer allocator.free(sorted);
-    @memcpy(sorted, items);
+    const sorted = try sortedByRatio(gpa, items);
+    defer gpa.free(sorted);
 
-    std.mem.sort(Item, sorted, {}, greaterByRatio);
+    try result.ensureTotalCapacityPrecise(gpa, items.len);
 
     var remaining_capacity = capacity;
 
     for (sorted) |item| {
         if (remaining_capacity <= 0) break;
+        if (item.value <= 0) continue;
 
         if (item.weight <= remaining_capacity) {
-            try result.append(.{
+            result.appendAssumeCapacity(.{
                 .item_id = item.id,
                 .fraction = 1.0,
                 .value_taken = item.value,
@@ -101,7 +115,7 @@ pub fn fractionalKnapsackDetailed(
             remaining_capacity -= item.weight;
         } else {
             const fraction = remaining_capacity / item.weight;
-            try result.append(.{
+            result.appendAssumeCapacity(.{
                 .item_id = item.id,
                 .fraction = fraction,
                 .value_taken = item.value * fraction,
@@ -110,6 +124,7 @@ pub fn fractionalKnapsackDetailed(
         }
     }
 
+    assert(remaining_capacity <= capacity);
     return result;
 }
 
@@ -123,6 +138,19 @@ fn greaterByRatio(_: void, a: Item, b: Item) bool {
     return a.valuePerWeight() > b.valuePerWeight();
 }
 
+/// Returns a freshly allocated copy of `items` sorted by descending ratio; the caller frees it.
+fn sortedByRatio(gpa: Allocator, items: []const Item) ![]Item {
+    assert(items.len > 0);
+
+    const sorted = try gpa.alloc(Item, items.len);
+    errdefer gpa.free(sorted);
+
+    @memcpy(sorted, items);
+    std.mem.sort(Item, sorted, {}, greaterByRatio);
+    assert(sorted.len == items.len);
+    return sorted;
+}
+
 /// 0/1 Knapsack using greedy approximation (not optimal, but fast)
 ///
 /// Algorithm: Sort by value-to-weight ratio, take whole items until full
@@ -132,34 +160,35 @@ fn greaterByRatio(_: void, a: Item, b: Item) bool {
 ///
 /// Note: This is an approximation. For exact solution, use dynamic programming.
 pub fn zeroOneKnapsackGreedy(
-    allocator: std.mem.Allocator,
+    gpa: Allocator,
     items: []const Item,
     capacity: f64,
-) !std.ArrayList(usize) {
-    var result = std.ArrayList(usize).init(allocator);
-    errdefer result.deinit();
+) !ArrayList(usize) {
+    var result: ArrayList(usize) = .empty;
+    errdefer result.deinit(gpa);
 
     if (items.len == 0 or capacity <= 0) return result;
 
-    const sorted = try allocator.alloc(Item, items.len);
-    defer allocator.free(sorted);
-    @memcpy(sorted, items);
+    const sorted = try sortedByRatio(gpa, items);
+    defer gpa.free(sorted);
 
-    std.mem.sort(Item, sorted, {}, greaterByRatio);
+    try result.ensureTotalCapacityPrecise(gpa, items.len);
 
     var remaining_capacity = capacity;
 
     for (sorted) |item| {
+        if (item.value <= 0) continue;
+
         if (item.weight <= remaining_capacity) {
-            try result.append(item.id);
+            result.appendAssumeCapacity(item.id);
             remaining_capacity -= item.weight;
         }
     }
 
+    assert(remaining_capacity <= capacity);
     return result;
 }
 
-// Tests
 test "fractional knapsack - basic case" {
     const items = [_]Item{
         .{ .value = 60, .weight = 10, .id = 0 },
@@ -183,7 +212,7 @@ test "fractional knapsack - detailed selection" {
     const capacity = 50.0;
 
     var selections = try fractionalKnapsackDetailed(testing.allocator, &items, capacity);
-    defer selections.deinit();
+    defer selections.deinit(testing.allocator);
 
     var total_value: f64 = 0;
     for (selections.items) |sel| {
@@ -249,10 +278,10 @@ test "0/1 knapsack greedy - basic case" {
     const capacity = 50.0;
 
     var selected = try zeroOneKnapsackGreedy(testing.allocator, &items, capacity);
-    defer selected.deinit();
+    defer selected.deinit(testing.allocator);
 
-    // Greedy selects items 1 and 0 (total weight 30, value 160)
-    try testing.expect(selected.items.len >= 2);
+    // Greedy selects items 0 and 1 (total weight 30, value 160); item 2 no longer fits.
+    try testing.expectEqualSlices(usize, &.{ 0, 1 }, selected.items);
 
     var total_value: f64 = 0;
     var total_weight: f64 = 0;
@@ -273,7 +302,7 @@ test "0/1 knapsack greedy - all items fit" {
     const capacity = 100.0;
 
     var selected = try zeroOneKnapsackGreedy(testing.allocator, &items, capacity);
-    defer selected.deinit();
+    defer selected.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 2), selected.items.len);
 }
@@ -310,7 +339,7 @@ test "0/1 knapsack greedy - greedy suboptimal known case" {
     const capacity = 8.0;
 
     var selected = try zeroOneKnapsackGreedy(testing.allocator, &items, capacity);
-    defer selected.deinit();
+    defer selected.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 2), selected.items.len);
 
@@ -329,7 +358,7 @@ test "fractional knapsack - detailed selection fractions sum to one item" {
     const capacity = 30.0;
 
     var selections = try fractionalKnapsackDetailed(testing.allocator, &items, capacity);
-    defer selections.deinit();
+    defer selections.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 2), selections.items.len);
 
@@ -362,13 +391,69 @@ test "fractional knapsack - memory safety loop" {
         .{ .value = 20, .weight = 10, .id = 1 },
     };
 
-    var i: usize = 0;
-    while (i < 10) : (i += 1) {
+    for (0..10) |_| {
         const value = try fractionalKnapsack(testing.allocator, &items, 12.0);
         try testing.expect(value > 0);
 
         var selected = try zeroOneKnapsackGreedy(testing.allocator, &items, 12.0);
-        defer selected.deinit();
+        defer selected.deinit(testing.allocator);
         try testing.expect(selected.items.len > 0);
     }
+}
+
+test "fractional knapsack - free items are taken even when the sack is otherwise full" {
+    const items = [_]Item{
+        .{ .value = 60, .weight = 10, .id = 0 },
+        .{ .value = 5, .weight = 0, .id = 1 },
+    };
+
+    const value = try fractionalKnapsack(testing.allocator, &items, 10);
+    try testing.expectApproxEqAbs(@as(f64, 65), value, 1e-9);
+
+    var selected = try zeroOneKnapsackGreedy(testing.allocator, &items, 10);
+    defer selected.deinit(testing.allocator);
+
+    try testing.expectEqualSlices(usize, &.{ 1, 0 }, selected.items);
+}
+
+test "knapsack - items without positive value are never selected" {
+    const items = [_]Item{
+        .{ .value = -10, .weight = 1, .id = 0 },
+        .{ .value = 0, .weight = 1, .id = 1 },
+        .{ .value = 8, .weight = 2, .id = 2 },
+    };
+
+    const value = try fractionalKnapsack(testing.allocator, &items, 100);
+    try testing.expectApproxEqAbs(@as(f64, 8), value, 1e-9);
+
+    var selections = try fractionalKnapsackDetailed(testing.allocator, &items, 100);
+    defer selections.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 1), selections.items.len);
+    try testing.expectEqual(@as(usize, 2), selections.items[0].item_id);
+}
+
+test "knapsack - no leaks when an allocation fails" {
+    const Runner = struct {
+        fn run(gpa: Allocator) !void {
+            const items = [_]Item{
+                .{ .value = 60, .weight = 10, .id = 0 },
+                .{ .value = 100, .weight = 20, .id = 1 },
+                .{ .value = 120, .weight = 30, .id = 2 },
+            };
+            const value = try fractionalKnapsack(gpa, &items, 50);
+            try testing.expectApproxEqAbs(@as(f64, 240), value, 1e-9);
+
+            var selections = try fractionalKnapsackDetailed(gpa, &items, 50);
+            defer selections.deinit(gpa);
+
+            var selected = try zeroOneKnapsackGreedy(gpa, &items, 50);
+            defer selected.deinit(gpa);
+
+            try testing.expectEqual(@as(usize, 3), selections.items.len);
+            try testing.expectEqualSlices(usize, &.{ 0, 1 }, selected.items);
+        }
+    };
+
+    try testing.checkAllAllocationFailures(testing.allocator, Runner.run, .{});
 }

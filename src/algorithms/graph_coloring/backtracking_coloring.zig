@@ -1,82 +1,123 @@
+//! Exact graph coloring by backtracking: m-coloring, chromatic number, exact k-coloring, and
+//! m-coloring with forward checking.
+//!
+//! Graphs are adjacency lists (`adj_list.items[u]` = neighbors of `u`). Every search is an
+//! explicit iterative depth-first walk over vertices `0..n`; its depth is bounded by `n`.
+//! Self loops are ignored. Returned colorings are `ArrayList(usize)` owned by the caller,
+//! who frees them with `deinit(gpa)`.
+
 const std = @import("std");
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
+
+/// Sentinel color of a vertex that has not been colored yet.
+const uncolored: usize = std.math.maxInt(usize);
 
 /// M-Coloring Problem using Backtracking
 /// Determines if a graph can be colored using at most m colors
 ///
 /// Time: O(m^V) worst case (exponential - NP-complete)
-/// Space: O(V) for recursion stack and color assignments
+/// Space: O(V) for color assignments (the search is iterative)
 ///
 /// Parameters:
 ///   - T: Vertex ID type (must be integer type)
-///   - allocator: Memory allocator
+///   - gpa: Memory allocator
 ///   - adj_list: Adjacency list representation
 ///   - m: Maximum number of colors allowed
 ///
 /// Returns:
-///   - ArrayList of colors if possible, null otherwise
+///   - ArrayList of colors (colors[u] in 0..m) if possible, null otherwise
 ///
 /// Example:
 ///   ```zig
-///   const result = try mColoring(u32, allocator, graph, 3);
-///   if (result) |coloring| {
-///       defer coloring.deinit();
+///   const result = try mColoring(u32, gpa, graph, 3);
+///   if (result) |found| {
+///       var coloring = found;
+///       defer coloring.deinit(gpa);
 ///       // Use coloring...
 ///   }
 ///   ```
-pub fn mColoring(comptime T: type, allocator: Allocator, adj_list: ArrayList(ArrayList(T)), m: usize) !?ArrayList(usize) {
+pub fn mColoring(
+    comptime T: type,
+    gpa: Allocator,
+    adj_list: ArrayList(ArrayList(T)),
+    m: usize,
+) !?ArrayList(usize) {
     const n = adj_list.items.len;
-    if (n == 0) return ArrayList(usize).init(allocator);
+    if (n == 0) return .empty;
     if (m == 0) return null;
 
-    var colors = try ArrayList(usize).initCapacity(allocator, n);
-    errdefer colors.deinit();
+    var colors = try ArrayList(usize).initCapacity(gpa, n);
+    errdefer colors.deinit(gpa);
 
-    // Initialize all vertices as uncolored
-    for (0..n) |_| {
-        colors.appendAssumeCapacity(std.math.maxInt(usize));
-    }
+    colors.appendNTimesAssumeCapacity(uncolored, n);
+    assert(colors.items.len == n);
 
-    // Try to color all vertices
-    if (try mColoringHelper(T, adj_list, m, 0, &colors)) {
-        return colors;
-    } else {
-        colors.deinit();
-        return null;
-    }
+    if (searchColoring(T, adj_list, m, colors.items)) return colors;
+
+    colors.deinit(gpa);
+    return null;
 }
 
-/// Helper function for m-coloring backtracking
-fn mColoringHelper(comptime T: type, adj_list: ArrayList(ArrayList(T)), m: usize, vertex: usize, colors: *ArrayList(usize)) !bool {
-    const n = adj_list.items.len;
+/// Iterative backtracking over vertices in index order. Fills `colors` (all `uncolored` on
+/// entry) and returns true on success; returns false when no coloring with `m` colors exists.
+/// Every step either advances one vertex or retreats one vertex and tries a strictly larger
+/// color there, so the walk visits each node of the finite search tree at most once.
+fn searchColoring(
+    comptime T: type,
+    adj_list: ArrayList(ArrayList(T)),
+    m: usize,
+    colors: []usize,
+) bool {
+    const n = colors.len;
+    assert(n == adj_list.items.len);
+    assert(m > 0);
 
-    // Base case: all vertices are colored
-    if (vertex == n) return true;
+    var vertex: usize = 0;
+    var color_first: usize = 0;
+    while (vertex < n) {
+        assert(colors[vertex] == uncolored);
 
-    // Try all colors for current vertex
-    for (0..m) |color| {
-        if (isSafeColor(T, adj_list, vertex, color, colors)) {
-            colors.items[vertex] = color;
-
-            // Recursively color remaining vertices
-            if (try mColoringHelper(T, adj_list, m, vertex + 1, colors)) {
-                return true;
+        var color_chosen: ?usize = null;
+        for (color_first..m) |color| {
+            if (isSafeColor(T, adj_list, vertex, color, colors)) {
+                color_chosen = color;
+                break;
             }
+        }
 
-            // Backtrack
-            colors.items[vertex] = std.math.maxInt(usize);
+        if (color_chosen) |color| {
+            colors[vertex] = color;
+            vertex += 1;
+            color_first = 0;
+        } else {
+            if (vertex == 0) return false;
+            vertex -= 1;
+            color_first = colors[vertex] + 1;
+            colors[vertex] = uncolored;
         }
     }
 
-    return false;
+    assert(vertex == n);
+    return true;
 }
 
 /// Checks if assigning color to vertex is safe (no conflicts with neighbors)
-fn isSafeColor(comptime T: type, adj_list: ArrayList(ArrayList(T)), vertex: usize, color: usize, colors: *ArrayList(usize)) bool {
+fn isSafeColor(
+    comptime T: type,
+    adj_list: ArrayList(ArrayList(T)),
+    vertex: usize,
+    color: usize,
+    colors: []const usize,
+) bool {
+    assert(vertex < colors.len);
+    assert(color != uncolored);
+
     for (adj_list.items[vertex].items) |neighbor_raw| {
         const neighbor: usize = @intCast(neighbor_raw);
-        if (colors.items[neighbor] == color) return false;
+        assert(neighbor < colors.len);
+        if (neighbor != vertex and colors[neighbor] == color) return false;
     }
     return true;
 }
@@ -88,11 +129,15 @@ fn isSafeColor(comptime T: type, adj_list: ArrayList(ArrayList(T)), vertex: usiz
 /// Space: O(V)
 ///
 /// Use with caution - only for small graphs (V < 15)
-pub fn findChromaticNumber(comptime T: type, allocator: Allocator, adj_list: ArrayList(ArrayList(T))) !usize {
+pub fn findChromaticNumber(
+    comptime T: type,
+    gpa: Allocator,
+    adj_list: ArrayList(ArrayList(T)),
+) !usize {
     const n = adj_list.items.len;
     if (n == 0) return 0;
 
-    // Upper bound: use simple greedy to get an upper bound
+    // Greedy first-fit never needs more than max_degree + 1 colors, so the search ends there.
     var max_degree: usize = 0;
     for (adj_list.items) |neighbors| {
         if (neighbors.items.len > max_degree) {
@@ -100,11 +145,14 @@ pub fn findChromaticNumber(comptime T: type, allocator: Allocator, adj_list: Arr
         }
     }
     const upper_bound = max_degree + 1;
+    assert(upper_bound >= 1);
 
-    // Try colors from 1 to upper_bound
     for (1..upper_bound + 1) |m| {
-        if (try mColoring(T, allocator, adj_list, m)) |coloring| {
-            defer coloring.deinit();
+        if (try mColoring(T, gpa, adj_list, m)) |found| {
+            var coloring = found;
+            defer coloring.deinit(gpa);
+
+            assert(coloring.items.len == n);
             return m;
         }
     }
@@ -112,455 +160,510 @@ pub fn findChromaticNumber(comptime T: type, allocator: Allocator, adj_list: Arr
     return upper_bound; // Fallback
 }
 
-/// Hamiltonian Cycle-based Graph Coloring
-/// Uses the fact that finding optimal coloring is related to finding cliques
+/// Exact k-coloring check
+/// A graph has a proper coloring that uses exactly k colors if and only if its chromatic
+/// number is at most k and k is at most the vertex count: take a proper coloring with the
+/// fewest colors and split color classes (each of size >= 2) until k classes exist.
 ///
 /// Time: O(m^V) worst case
 /// Space: O(V)
 ///
 /// Returns true if the graph can be colored with exactly k colors
-pub fn exactKColoring(comptime T: type, allocator: Allocator, adj_list: ArrayList(ArrayList(T)), k: usize) !bool {
-    const result = try mColoring(T, allocator, adj_list, k);
-    if (result) |coloring| {
-        defer coloring.deinit();
+pub fn exactKColoring(
+    comptime T: type,
+    gpa: Allocator,
+    adj_list: ArrayList(ArrayList(T)),
+    k: usize,
+) !bool {
+    const n = adj_list.items.len;
+    if (k > n) return false;
 
-        // Verify that all k colors are actually used
-        var colors_used = std.AutoHashMap(usize, void).init(allocator);
-        defer colors_used.deinit();
+    const result = try mColoring(T, gpa, adj_list, k);
+    if (result) |found| {
+        var coloring = found;
+        defer coloring.deinit(gpa);
 
-        for (coloring.items) |color| {
-            if (color != std.math.maxInt(usize)) {
-                try colors_used.put(color, {});
-            }
-        }
-
-        return colors_used.count() == k;
+        assert(coloring.items.len == n);
+        return true;
     }
+    assert(n > 0);
     return false;
 }
 
 /// Graph Coloring with Constraint Propagation
-/// Uses forward checking to prune the search space
+/// Uses forward checking to prune the search space: when a vertex takes a color, that color
+/// is blocked for its neighbors, and the branch is abandoned as soon as an uncolored
+/// neighbor has no color left.
 ///
 /// Time: O(m^V) worst case, but often much faster than naive backtracking
 /// Space: O(V × m) for domain tracking
-pub fn coloringWithPropagation(comptime T: type, allocator: Allocator, adj_list: ArrayList(ArrayList(T)), m: usize) !?ArrayList(usize) {
+pub fn coloringWithPropagation(
+    comptime T: type,
+    gpa: Allocator,
+    adj_list: ArrayList(ArrayList(T)),
+    m: usize,
+) !?ArrayList(usize) {
     const n = adj_list.items.len;
-    if (n == 0) return ArrayList(usize).init(allocator);
+    if (n == 0) return .empty;
     if (m == 0) return null;
 
-    // Initialize color domains (possible colors for each vertex)
-    var domains = try ArrayList(std.AutoHashMap(usize, void)).initCapacity(allocator, n);
-    defer {
-        for (domains.items) |*domain| domain.deinit();
-        domains.deinit();
-    }
+    // Any graph is n-colorable, so a palette larger than n only adds search width.
+    const palette = @min(m, n);
+    assert(palette > 0);
 
-    for (0..n) |_| {
-        var domain = std.AutoHashMap(usize, void).init(allocator);
-        for (0..m) |color| {
-            try domain.put(color, {});
+    // blocked[v * palette + c] counts colored neighbors of v that hold color c.
+    // Color c is in the domain of v exactly when that count is zero.
+    var blocked = try ArrayList(u32).initCapacity(gpa, n * palette);
+    defer blocked.deinit(gpa);
+
+    blocked.appendNTimesAssumeCapacity(0, n * palette);
+
+    var colors = try ArrayList(usize).initCapacity(gpa, n);
+    errdefer colors.deinit(gpa);
+
+    colors.appendNTimesAssumeCapacity(uncolored, n);
+
+    if (searchPropagating(T, adj_list, palette, colors.items, blocked.items)) return colors;
+
+    colors.deinit(gpa);
+    return null;
+}
+
+/// Iterative backtracking with forward checking. `colors` is all `uncolored` and `blocked` all
+/// zero on entry; on a false return both are back in that state.
+fn searchPropagating(
+    comptime T: type,
+    adj_list: ArrayList(ArrayList(T)),
+    palette: usize,
+    colors: []usize,
+    blocked: []u32,
+) bool {
+    const n = colors.len;
+    assert(n == adj_list.items.len);
+    assert(blocked.len == n * palette);
+
+    var vertex: usize = 0;
+    var color_first: usize = 0;
+    while (vertex < n) {
+        assert(colors[vertex] == uncolored);
+
+        var color_chosen: ?usize = null;
+        for (color_first..palette) |color| {
+            if (blocked[vertex * palette + color] != 0) continue;
+
+            blockColor(T, adj_list, palette, vertex, color, blocked);
+            if (neighborsHaveDomain(T, adj_list, palette, vertex, colors, blocked)) {
+                color_chosen = color;
+                break;
+            }
+            unblockColor(T, adj_list, palette, vertex, color, blocked);
         }
-        domains.appendAssumeCapacity(domain);
+
+        if (color_chosen) |color| {
+            colors[vertex] = color;
+            vertex += 1;
+            color_first = 0;
+        } else {
+            if (vertex == 0) return false;
+            vertex -= 1;
+            const color_previous = colors[vertex];
+            unblockColor(T, adj_list, palette, vertex, color_previous, blocked);
+            colors[vertex] = uncolored;
+            color_first = color_previous + 1;
+        }
     }
 
-    var colors = try ArrayList(usize).initCapacity(allocator, n);
-    errdefer colors.deinit();
-    for (0..n) |_| {
-        colors.appendAssumeCapacity(std.math.maxInt(usize));
-    }
+    assert(vertex == n);
+    return true;
+}
 
-    if (try propagateHelper(T, adj_list, 0, &colors, &domains)) {
-        return colors;
-    } else {
-        colors.deinit();
-        return null;
+/// Removes `color` from the domain of every neighbor of `vertex`.
+fn blockColor(
+    comptime T: type,
+    adj_list: ArrayList(ArrayList(T)),
+    palette: usize,
+    vertex: usize,
+    color: usize,
+    blocked: []u32,
+) void {
+    assert(color < palette);
+    assert(vertex < adj_list.items.len);
+
+    for (adj_list.items[vertex].items) |neighbor_raw| {
+        const neighbor: usize = @intCast(neighbor_raw);
+        if (neighbor == vertex) continue;
+        blocked[neighbor * palette + color] += 1;
     }
 }
 
-fn propagateHelper(comptime T: type, adj_list: ArrayList(ArrayList(T)), vertex: usize, colors: *ArrayList(usize), domains: *ArrayList(std.AutoHashMap(usize, void))) !bool {
-    const n = adj_list.items.len;
-    if (vertex == n) return true;
+/// Exact inverse of `blockColor`.
+fn unblockColor(
+    comptime T: type,
+    adj_list: ArrayList(ArrayList(T)),
+    palette: usize,
+    vertex: usize,
+    color: usize,
+    blocked: []u32,
+) void {
+    assert(color < palette);
+    assert(vertex < adj_list.items.len);
 
-    // Try each color in the domain
-    var it = domains.items[vertex].keyIterator();
-    while (it.next()) |color_ptr| {
-        const color = color_ptr.*;
-
-        if (isSafeColor(T, adj_list, vertex, color, colors)) {
-            colors.items[vertex] = color;
-
-            // Forward check: remove color from neighbors' domains
-            var removed = ArrayList(struct { neighbor: usize, color: usize }).init(domains.items[0].allocator);
-            defer removed.deinit();
-
-            for (adj_list.items[vertex].items) |neighbor_raw| {
-                const neighbor: usize = @intCast(neighbor_raw);
-                if (colors.items[neighbor] == std.math.maxInt(usize)) {
-                    if (domains.items[neighbor].remove(color)) {
-                        try removed.append(.{ .neighbor = neighbor, .color = color });
-                    }
-
-                    // Check if domain became empty
-                    if (domains.items[neighbor].count() == 0) {
-                        // Restore domains
-                        for (removed.items) |item| {
-                            try domains.items[item.neighbor].put(item.color, {});
-                        }
-                        colors.items[vertex] = std.math.maxInt(usize);
-                        continue; // Try next color
-                    }
-                }
-            }
-
-            // Recursively color remaining vertices
-            if (try propagateHelper(T, adj_list, vertex + 1, colors, domains)) {
-                return true;
-            }
-
-            // Backtrack: restore domains
-            for (removed.items) |item| {
-                try domains.items[item.neighbor].put(item.color, {});
-            }
-            colors.items[vertex] = std.math.maxInt(usize);
-        }
+    for (adj_list.items[vertex].items) |neighbor_raw| {
+        const neighbor: usize = @intCast(neighbor_raw);
+        if (neighbor == vertex) continue;
+        assert(blocked[neighbor * palette + color] > 0);
+        blocked[neighbor * palette + color] -= 1;
     }
+}
 
-    return false;
+/// Forward check: every uncolored neighbor of `vertex` must still have a free color.
+fn neighborsHaveDomain(
+    comptime T: type,
+    adj_list: ArrayList(ArrayList(T)),
+    palette: usize,
+    vertex: usize,
+    colors: []const usize,
+    blocked: []const u32,
+) bool {
+    assert(vertex < colors.len);
+    assert(blocked.len == colors.len * palette);
+
+    for (adj_list.items[vertex].items) |neighbor_raw| {
+        const neighbor: usize = @intCast(neighbor_raw);
+        if (neighbor == vertex or colors[neighbor] != uncolored) continue;
+
+        const row = blocked[neighbor * palette ..][0..palette];
+        var has_free_color = false;
+        for (row) |count| {
+            if (count == 0) {
+                has_free_color = true;
+                break;
+            }
+        }
+        if (!has_free_color) return false;
+    }
+    return true;
 }
 
 // ============================================================================
 // TESTS
 // ============================================================================
 
-test "m-coloring - triangle with 3 colors" {
-    const allocator = std.testing.allocator;
+const triangle_edges = [_][2]u32{ .{ 0, 1 }, .{ 1, 2 }, .{ 0, 2 } };
+const k4_edges = [_][2]u32{ .{ 0, 1 }, .{ 0, 2 }, .{ 0, 3 }, .{ 1, 2 }, .{ 1, 3 }, .{ 2, 3 } };
+const c5_edges = [_][2]u32{ .{ 0, 1 }, .{ 1, 2 }, .{ 2, 3 }, .{ 3, 4 }, .{ 4, 0 } };
+const path4_edges = [_][2]u32{ .{ 0, 1 }, .{ 1, 2 }, .{ 2, 3 } };
+const k22_edges = [_][2]u32{ .{ 0, 2 }, .{ 0, 3 }, .{ 1, 2 }, .{ 1, 3 } };
 
-    // Triangle: 0-1-2-0
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 3);
-    defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
+/// Builds an undirected adjacency list with `n` vertices from an edge list.
+fn graph_init(gpa: Allocator, n: usize, edges: []const [2]u32) !ArrayList(ArrayList(u32)) {
+    var graph = try ArrayList(ArrayList(u32)).initCapacity(gpa, n);
+    errdefer graph_deinit(gpa, &graph);
+
+    for (0..n) |_| graph.appendAssumeCapacity(.empty);
+    for (edges) |edge| {
+        try graph.items[edge[0]].append(gpa, edge[1]);
+        try graph.items[edge[1]].append(gpa, edge[0]);
     }
+    return graph;
+}
 
-    var list0 = ArrayList(u32).init(allocator);
-    try list0.append(1);
-    try list0.append(2);
-    try graph.append(list0);
+fn graph_deinit(gpa: Allocator, graph: *ArrayList(ArrayList(u32))) void {
+    for (graph.items) |*list| list.deinit(gpa);
+    graph.deinit(gpa);
+}
 
-    var list1 = ArrayList(u32).init(allocator);
-    try list1.append(0);
-    try list1.append(2);
-    try graph.append(list1);
-
-    var list2 = ArrayList(u32).init(allocator);
-    try list2.append(0);
-    try list2.append(1);
-    try graph.append(list2);
-
-    const result = try mColoring(u32, allocator, graph, 3);
-    try std.testing.expect(result != null);
-
-    if (result) |coloring| {
-        defer coloring.deinit();
-        // All three vertices should have different colors
-        try std.testing.expect(coloring.items[0] != coloring.items[1]);
-        try std.testing.expect(coloring.items[1] != coloring.items[2]);
-        try std.testing.expect(coloring.items[0] != coloring.items[2]);
+/// Fails unless `coloring` is proper for `graph` and every color is below `palette`.
+fn expect_proper(
+    graph: ArrayList(ArrayList(u32)),
+    coloring: ArrayList(usize),
+    palette: usize,
+) !void {
+    try std.testing.expectEqual(graph.items.len, coloring.items.len);
+    for (graph.items, 0..) |neighbors, u| {
+        try std.testing.expect(coloring.items[u] < palette);
+        for (neighbors.items) |v| {
+            try std.testing.expect(coloring.items[u] != coloring.items[v]);
+        }
     }
 }
 
+test "m-coloring - triangle with 3 colors" {
+    const gpa = std.testing.allocator;
+
+    var graph = try graph_init(gpa, 3, &triangle_edges);
+    defer graph_deinit(gpa, &graph);
+
+    var coloring = (try mColoring(u32, gpa, graph, 3)) orelse return error.TestUnexpectedResult;
+    defer coloring.deinit(gpa);
+
+    try expect_proper(graph, coloring, 3);
+    // All three vertices should have different colors
+    try std.testing.expect(coloring.items[0] != coloring.items[1]);
+    try std.testing.expect(coloring.items[1] != coloring.items[2]);
+    try std.testing.expect(coloring.items[0] != coloring.items[2]);
+}
+
 test "m-coloring - triangle with 2 colors (impossible)" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 3);
-    defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
-    }
+    var graph = try graph_init(gpa, 3, &triangle_edges);
+    defer graph_deinit(gpa, &graph);
 
-    var list0 = ArrayList(u32).init(allocator);
-    try list0.append(1);
-    try list0.append(2);
-    try graph.append(list0);
-
-    var list1 = ArrayList(u32).init(allocator);
-    try list1.append(0);
-    try list1.append(2);
-    try graph.append(list1);
-
-    var list2 = ArrayList(u32).init(allocator);
-    try list2.append(0);
-    try list2.append(1);
-    try graph.append(list2);
-
-    const result = try mColoring(u32, allocator, graph, 2);
+    const result = try mColoring(u32, gpa, graph, 2);
     try std.testing.expect(result == null);
 }
 
 test "m-coloring - bipartite graph with 2 colors" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
     // Complete bipartite K(2,2)
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 4);
-    defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
-    }
+    var graph = try graph_init(gpa, 4, &k22_edges);
+    defer graph_deinit(gpa, &graph);
 
-    var list0 = ArrayList(u32).init(allocator);
-    try list0.append(2);
-    try list0.append(3);
-    try graph.append(list0);
+    var coloring = (try mColoring(u32, gpa, graph, 2)) orelse return error.TestUnexpectedResult;
+    defer coloring.deinit(gpa);
 
-    var list1 = ArrayList(u32).init(allocator);
-    try list1.append(2);
-    try list1.append(3);
-    try graph.append(list1);
+    // Bipartite: partition {0,1} and {2,3}
+    try std.testing.expectEqual(coloring.items[0], coloring.items[1]);
+    try std.testing.expectEqual(coloring.items[2], coloring.items[3]);
+    try std.testing.expect(coloring.items[0] != coloring.items[2]);
+}
 
-    var list2 = ArrayList(u32).init(allocator);
-    try list2.append(0);
-    try list2.append(1);
-    try graph.append(list2);
+test "m-coloring - zero colors" {
+    const gpa = std.testing.allocator;
 
-    var list3 = ArrayList(u32).init(allocator);
-    try list3.append(0);
-    try list3.append(1);
-    try graph.append(list3);
+    var graph = try graph_init(gpa, 2, &.{});
+    defer graph_deinit(gpa, &graph);
 
-    const result = try mColoring(u32, allocator, graph, 2);
-    try std.testing.expect(result != null);
+    const result = try mColoring(u32, gpa, graph, 0);
+    try std.testing.expect(result == null);
+}
 
-    if (result) |coloring| {
-        defer coloring.deinit();
-        // Bipartite: partition {0,1} and {2,3}
-        try std.testing.expectEqual(coloring.items[0], coloring.items[1]);
-        try std.testing.expectEqual(coloring.items[2], coloring.items[3]);
-        try std.testing.expect(coloring.items[0] != coloring.items[2]);
-    }
+test "m-coloring - odd cycle needs backtracking past first choices" {
+    const gpa = std.testing.allocator;
+
+    var graph = try graph_init(gpa, 5, &c5_edges);
+    defer graph_deinit(gpa, &graph);
+
+    const two = try mColoring(u32, gpa, graph, 2);
+    try std.testing.expect(two == null);
+
+    var coloring = (try mColoring(u32, gpa, graph, 3)) orelse return error.TestUnexpectedResult;
+    defer coloring.deinit(gpa);
+
+    try expect_proper(graph, coloring, 3);
 }
 
 test "find chromatic number - triangle" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 3);
-    defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
-    }
+    var graph = try graph_init(gpa, 3, &triangle_edges);
+    defer graph_deinit(gpa, &graph);
 
-    var list0 = ArrayList(u32).init(allocator);
-    try list0.append(1);
-    try list0.append(2);
-    try graph.append(list0);
-
-    var list1 = ArrayList(u32).init(allocator);
-    try list1.append(0);
-    try list1.append(2);
-    try graph.append(list1);
-
-    var list2 = ArrayList(u32).init(allocator);
-    try list2.append(0);
-    try list2.append(1);
-    try graph.append(list2);
-
-    const chi = try findChromaticNumber(u32, allocator, graph);
+    const chi = try findChromaticNumber(u32, gpa, graph);
     try std.testing.expectEqual(@as(usize, 3), chi);
 }
 
 test "find chromatic number - bipartite" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
     // Path graph: 0-1-2-3 (bipartite, chromatic number = 2)
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 4);
-    defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
-    }
+    var graph = try graph_init(gpa, 4, &path4_edges);
+    defer graph_deinit(gpa, &graph);
 
-    var list0 = ArrayList(u32).init(allocator);
-    try list0.append(1);
-    try graph.append(list0);
-
-    var list1 = ArrayList(u32).init(allocator);
-    try list1.append(0);
-    try list1.append(2);
-    try graph.append(list1);
-
-    var list2 = ArrayList(u32).init(allocator);
-    try list2.append(1);
-    try list2.append(3);
-    try graph.append(list2);
-
-    var list3 = ArrayList(u32).init(allocator);
-    try list3.append(2);
-    try graph.append(list3);
-
-    const chi = try findChromaticNumber(u32, allocator, graph);
+    const chi = try findChromaticNumber(u32, gpa, graph);
     try std.testing.expectEqual(@as(usize, 2), chi);
 }
 
+test "find chromatic number - K4 and C5" {
+    const gpa = std.testing.allocator;
+
+    var k4 = try graph_init(gpa, 4, &k4_edges);
+    defer graph_deinit(gpa, &k4);
+    try std.testing.expectEqual(@as(usize, 4), try findChromaticNumber(u32, gpa, k4));
+
+    var c5 = try graph_init(gpa, 5, &c5_edges);
+    defer graph_deinit(gpa, &c5);
+    try std.testing.expectEqual(@as(usize, 3), try findChromaticNumber(u32, gpa, c5));
+}
+
 test "exact k-coloring - true case" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
     // Triangle requires exactly 3 colors
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 3);
-    defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
-    }
+    var graph = try graph_init(gpa, 3, &triangle_edges);
+    defer graph_deinit(gpa, &graph);
 
-    var list0 = ArrayList(u32).init(allocator);
-    try list0.append(1);
-    try list0.append(2);
-    try graph.append(list0);
+    try std.testing.expect(try exactKColoring(u32, gpa, graph, 3));
+    try std.testing.expect(!try exactKColoring(u32, gpa, graph, 2));
+}
 
-    var list1 = ArrayList(u32).init(allocator);
-    try list1.append(0);
-    try list1.append(2);
-    try graph.append(list1);
+test "exact k-coloring - more colors than the chromatic number" {
+    const gpa = std.testing.allocator;
 
-    var list2 = ArrayList(u32).init(allocator);
-    try list2.append(0);
-    try list2.append(1);
-    try graph.append(list2);
+    // Path on 4 vertices: chi = 2, and it has proper colorings using exactly 2, 3, or 4 colors
+    // (split classes), but none using 1 color or 5 colors.
+    var graph = try graph_init(gpa, 4, &path4_edges);
+    defer graph_deinit(gpa, &graph);
 
-    try std.testing.expect(try exactKColoring(u32, allocator, graph, 3));
-    try std.testing.expect(!try exactKColoring(u32, allocator, graph, 2));
+    try std.testing.expect(!try exactKColoring(u32, gpa, graph, 0));
+    try std.testing.expect(!try exactKColoring(u32, gpa, graph, 1));
+    try std.testing.expect(try exactKColoring(u32, gpa, graph, 2));
+    try std.testing.expect(try exactKColoring(u32, gpa, graph, 3));
+    try std.testing.expect(try exactKColoring(u32, gpa, graph, 4));
+    try std.testing.expect(!try exactKColoring(u32, gpa, graph, 5));
 }
 
 test "coloring with propagation - triangle" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 3);
-    defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
-    }
+    var graph = try graph_init(gpa, 3, &triangle_edges);
+    defer graph_deinit(gpa, &graph);
 
-    var list0 = ArrayList(u32).init(allocator);
-    try list0.append(1);
-    try list0.append(2);
-    try graph.append(list0);
+    var coloring = (try coloringWithPropagation(u32, gpa, graph, 3)) orelse
+        return error.TestUnexpectedResult;
+    defer coloring.deinit(gpa);
 
-    var list1 = ArrayList(u32).init(allocator);
-    try list1.append(0);
-    try list1.append(2);
-    try graph.append(list1);
-
-    var list2 = ArrayList(u32).init(allocator);
-    try list2.append(0);
-    try list2.append(1);
-    try graph.append(list2);
-
-    const result = try coloringWithPropagation(u32, allocator, graph, 3);
-    try std.testing.expect(result != null);
-
-    if (result) |coloring| {
-        defer coloring.deinit();
-        try std.testing.expect(coloring.items[0] != coloring.items[1]);
-        try std.testing.expect(coloring.items[1] != coloring.items[2]);
-        try std.testing.expect(coloring.items[0] != coloring.items[2]);
-    }
+    try expect_proper(graph, coloring, 3);
+    try std.testing.expect(coloring.items[0] != coloring.items[1]);
+    try std.testing.expect(coloring.items[1] != coloring.items[2]);
+    try std.testing.expect(coloring.items[0] != coloring.items[2]);
 }
 
 test "coloring with propagation - impossible" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
     // Complete graph K4 with only 3 colors
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 4);
-    defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
-    }
+    var graph = try graph_init(gpa, 4, &k4_edges);
+    defer graph_deinit(gpa, &graph);
 
-    for (0..4) |i| {
-        var list = ArrayList(u32).init(allocator);
-        for (0..4) |j| {
-            if (i != j) try list.append(@intCast(j));
-        }
-        try graph.append(list);
-    }
-
-    const result = try coloringWithPropagation(u32, allocator, graph, 3);
+    const result = try coloringWithPropagation(u32, gpa, graph, 3);
     try std.testing.expect(result == null);
 }
 
+test "coloring with propagation - zero colors and surplus colors" {
+    const gpa = std.testing.allocator;
+
+    var graph = try graph_init(gpa, 3, &triangle_edges);
+    defer graph_deinit(gpa, &graph);
+
+    const none = try coloringWithPropagation(u32, gpa, graph, 0);
+    try std.testing.expect(none == null);
+
+    // A palette far larger than the vertex count must not blow up the domain table.
+    var coloring = (try coloringWithPropagation(u32, gpa, graph, 1_000_000)) orelse
+        return error.TestUnexpectedResult;
+    defer coloring.deinit(gpa);
+
+    try expect_proper(graph, coloring, 3);
+}
+
 test "m-coloring - empty graph" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
-    var graph = ArrayList(ArrayList(u32)).init(allocator);
-    defer graph.deinit();
+    var graph: ArrayList(ArrayList(u32)) = .empty;
+    defer graph.deinit(gpa);
 
-    const result = try mColoring(u32, allocator, graph, 1);
-    try std.testing.expect(result != null);
+    var coloring = (try mColoring(u32, gpa, graph, 1)) orelse return error.TestUnexpectedResult;
+    defer coloring.deinit(gpa);
 
-    if (result) |coloring| {
-        defer coloring.deinit();
-        try std.testing.expectEqual(@as(usize, 0), coloring.items.len);
-    }
+    try std.testing.expectEqual(@as(usize, 0), coloring.items.len);
 }
 
 test "m-coloring - single vertex" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 1);
-    defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
-    }
+    var graph = try graph_init(gpa, 1, &.{});
+    defer graph_deinit(gpa, &graph);
 
-    const list0 = ArrayList(u32).init(allocator);
-    try graph.append(list0);
+    var coloring = (try mColoring(u32, gpa, graph, 1)) orelse return error.TestUnexpectedResult;
+    defer coloring.deinit(gpa);
 
-    const result = try mColoring(u32, allocator, graph, 1);
-    try std.testing.expect(result != null);
-
-    if (result) |coloring| {
-        defer coloring.deinit();
-        try std.testing.expectEqual(@as(usize, 1), coloring.items.len);
-        try std.testing.expectEqual(@as(usize, 0), coloring.items[0]);
-    }
+    try std.testing.expectEqual(@as(usize, 1), coloring.items.len);
+    try std.testing.expectEqual(@as(usize, 0), coloring.items[0]);
 }
 
 test "find chromatic number - empty graph" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
-    var graph = ArrayList(ArrayList(u32)).init(allocator);
-    defer graph.deinit();
+    var graph: ArrayList(ArrayList(u32)) = .empty;
+    defer graph.deinit(gpa);
 
-    const chi = try findChromaticNumber(u32, allocator, graph);
+    const chi = try findChromaticNumber(u32, gpa, graph);
     try std.testing.expectEqual(@as(usize, 0), chi);
 }
 
+test "exact k-coloring - empty graph" {
+    const gpa = std.testing.allocator;
+
+    var graph: ArrayList(ArrayList(u32)) = .empty;
+    defer graph.deinit(gpa);
+
+    try std.testing.expect(try exactKColoring(u32, gpa, graph, 0));
+    try std.testing.expect(!try exactKColoring(u32, gpa, graph, 1));
+}
+
+test "coloring with propagation - empty graph" {
+    const gpa = std.testing.allocator;
+
+    var graph: ArrayList(ArrayList(u32)) = .empty;
+    defer graph.deinit(gpa);
+
+    var coloring = (try coloringWithPropagation(u32, gpa, graph, 2)) orelse
+        return error.TestUnexpectedResult;
+    defer coloring.deinit(gpa);
+
+    try std.testing.expectEqual(@as(usize, 0), coloring.items.len);
+}
+
 test "coloring with propagation - cycle C5" {
-    const allocator = std.testing.allocator;
+    const gpa = std.testing.allocator;
 
     // Odd cycle C5 requires 3 colors
-    var graph = try ArrayList(ArrayList(u32)).initCapacity(allocator, 5);
-    defer {
-        for (graph.items) |*list| list.deinit();
-        graph.deinit();
-    }
+    var graph = try graph_init(gpa, 5, &c5_edges);
+    defer graph_deinit(gpa, &graph);
 
-    for (0..5) |i| {
-        var list = ArrayList(u32).init(allocator);
-        try list.append(@intCast((i + 1) % 5));
-        try list.append(@intCast((i + 4) % 5));
-        try graph.append(list);
-    }
+    const two = try coloringWithPropagation(u32, gpa, graph, 2);
+    try std.testing.expect(two == null);
 
-    const result = try coloringWithPropagation(u32, allocator, graph, 3);
-    try std.testing.expect(result != null);
+    var coloring = (try coloringWithPropagation(u32, gpa, graph, 3)) orelse
+        return error.TestUnexpectedResult;
+    defer coloring.deinit(gpa);
 
-    if (result) |coloring| {
-        defer coloring.deinit();
-        // Verify no adjacent vertices have the same color
-        for (graph.items, 0..) |neighbors, u| {
-            for (neighbors.items) |v_raw| {
-                const v: usize = @intCast(v_raw);
-                try std.testing.expect(coloring.items[u] != coloring.items[v]);
-            }
-        }
-    }
+    // Verify no adjacent vertices have the same color
+    try expect_proper(graph, coloring, 3);
+}
+
+fn color_with_every_function(gpa: Allocator) !void {
+    // The fixture graph uses the testing allocator so only the functions under test can fail.
+    var graph = try graph_init(std.testing.allocator, 5, &c5_edges);
+    defer graph_deinit(std.testing.allocator, &graph);
+
+    var three = (try mColoring(u32, gpa, graph, 3)) orelse return error.TestUnexpectedResult;
+    defer three.deinit(gpa);
+    try expect_proper(graph, three, 3);
+
+    const two = try mColoring(u32, gpa, graph, 2);
+    try std.testing.expect(two == null);
+
+    try std.testing.expectEqual(@as(usize, 3), try findChromaticNumber(u32, gpa, graph));
+    try std.testing.expect(try exactKColoring(u32, gpa, graph, 4));
+    try std.testing.expect(!try exactKColoring(u32, gpa, graph, 2));
+
+    var pruned = (try coloringWithPropagation(u32, gpa, graph, 3)) orelse
+        return error.TestUnexpectedResult;
+    defer pruned.deinit(gpa);
+    try expect_proper(graph, pruned, 3);
+
+    const pruned_none = try coloringWithPropagation(u32, gpa, graph, 2);
+    try std.testing.expect(pruned_none == null);
+}
+
+test "backtracking coloring - no leaks when an allocation fails" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        color_with_every_function,
+        .{},
+    );
 }
