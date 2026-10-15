@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
 const testing = std.testing;
 const Thread = std.Thread;
 
@@ -20,7 +21,6 @@ const Thread = std.Thread;
 /// 1. Sequential scan: O(n) time, O(1) space
 /// 2. Work-efficient parallel scan (Blelloch): O(n) work, O(log n) depth
 /// 3. Parallel inclusive/exclusive scan variants
-
 /// Sequential prefix sum (inclusive scan)
 /// output[i] = sum(input[0..i+1])
 /// Time: O(n) | Space: O(n)
@@ -66,58 +66,41 @@ pub fn parallelScan(comptime T: type, input: []const T, allocator: Allocator, nu
         return exclusiveScan(T, input, allocator);
     }
 
-    const n = input.len;
-    const output = try allocator.alloc(T, n);
-    errdefer allocator.free(output);
+    // The Blelloch tree needs a power-of-two length: pad with zeros, which do not change any
+    // prefix, and copy the first `input.len` results out.
+    const n = std.math.ceilPowerOfTwo(usize, input.len) catch return error.OutOfMemory;
+    const work = try allocator.alloc(T, n);
+    defer allocator.free(work);
 
-    // Copy input to output (working array)
-    @memcpy(output, input);
+    @memcpy(work[0..input.len], input);
+    @memset(work[input.len..], 0);
 
-    // Up-sweep phase: build reduction tree
-    // For each level d from 0 to log(n)-1:
-    //   For i with stride 2^(d+1):
-    //     output[i*2^(d+1) + 2^(d+1) - 1] += output[i*2^(d+1) + 2^d - 1]
-    var d: usize = 0;
+    // Up-sweep phase: build the reduction tree.
     var stride: usize = 1;
-    while (stride < n) : ({
-        d += 1;
-        stride *= 2;
-    }) {
+    while (stride < n) : (stride *= 2) {
         const next_stride = stride * 2;
         var i: usize = 0;
         while (i < n) : (i += next_stride) {
-            const left_idx = i + stride - 1;
-            const right_idx = i + next_stride - 1;
-            if (right_idx < n) {
-                output[right_idx] = output[right_idx] + output[left_idx];
-            }
+            work[i + next_stride - 1] += work[i + stride - 1];
         }
     }
+    assert(stride == n);
 
-    // Set last element to 0 (for exclusive scan)
-    output[n - 1] = 0;
-
-    // Down-sweep phase: traverse down tree to build scan
-    // For each level d from log(n)-1 down to 0:
-    //   For i with stride 2^(d+1):
-    //     temp = output[i*2^(d+1) + 2^d - 1]
-    //     output[i*2^(d+1) + 2^d - 1] = output[i*2^(d+1) + 2^(d+1) - 1]
-    //     output[i*2^(d+1) + 2^(d+1) - 1] += temp
-    stride = stride / 2;
+    // Clear the root (exclusive scan), then sweep back down.
+    work[n - 1] = 0;
+    stride = n / 2;
     while (stride > 0) : (stride /= 2) {
         const next_stride = stride * 2;
         var i: usize = 0;
         while (i < n) : (i += next_stride) {
-            const left_idx = i + stride - 1;
-            const right_idx = i + next_stride - 1;
-            if (right_idx < n) {
-                const temp = output[left_idx];
-                output[left_idx] = output[right_idx];
-                output[right_idx] = output[right_idx] + temp;
-            }
+            const left_value = work[i + stride - 1];
+            work[i + stride - 1] = work[i + next_stride - 1];
+            work[i + next_stride - 1] += left_value;
         }
     }
 
+    const output = try allocator.alloc(T, input.len);
+    @memcpy(output, work[0..input.len]);
     return output;
 }
 
@@ -457,5 +440,25 @@ test "memory safety: prefix sum allocator check" {
 
         const result3 = try parallelScan(i32, &input, allocator, 2);
         allocator.free(result3);
+    }
+}
+
+test "parallelScan matches exclusiveScan for sizes around powers of two" {
+    const gpa = std.testing.allocator;
+    const sizes = [_]usize{ 1023, 1024, 1025, 1500, 2048, 3001 };
+
+    for (sizes) |size| {
+        const input = try gpa.alloc(i64, size);
+        defer gpa.free(input);
+
+        for (input, 0..) |*slot, index| slot.* = @as(i64, @intCast(index % 7)) - 2;
+
+        const expected = try exclusiveScan(i64, input, gpa);
+        defer gpa.free(expected);
+
+        const actual = try parallelScan(i64, input, gpa, 4);
+        defer gpa.free(actual);
+
+        try std.testing.expectEqualSlices(i64, expected, actual);
     }
 }

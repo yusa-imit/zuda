@@ -835,6 +835,9 @@ test {
     _ = @import("containers/lists/concurrent_skip_list.zig");
     _ = @import("compat/zoltraak_sortedset.zig");
     _ = @import("containers/queues/deque.zig");
+    _ = @import("containers/queues/work_stealing_deque.zig");
+    _ = @import("algorithms/parallel/parallel_sort.zig");
+    _ = @import("algorithms/parallel/prefix_sum.zig");
     _ = @import("algorithms/string/aho_corasick.zig");
     _ = @import("linalg/sparse.zig");
     _ = @import("linalg/preconditioner.zig");

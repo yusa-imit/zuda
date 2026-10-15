@@ -1,4 +1,11 @@
+//! Chase-Lev work-stealing deque backed by one growable ring buffer.
+//!
+//! The buffer is allocated in `init` with `gpa` and doubled by `push` when full; `deinit` frees it.
+//! Indices are free-running `usize` counters that wrap, so slot lookup is `index % capacity` with
+//! a power-of-two capacity. Resize is only safe while no stealer runs concurrently with `push`.
+
 const std = @import("std");
+const assert = std.debug.assert;
 
 /// Work-stealing deque for efficient task distribution in parallel execution.
 ///
@@ -84,10 +91,9 @@ pub fn WorkStealingDeque(comptime T: type) type {
 
             const t = self.top.load(.seq_cst); // Upgraded to seq_cst to act as fence
 
-            // Check if deque is non-empty: count = b - t + 1 (accounting for wraparound)
-            // When empty: bottom=0, top=0 → b=max_usize, count would wrap to 0
-            const count = b -% t +% 1;
-            if (count > 0 and t <= b) {
+            // Non-empty iff `b - t` (wrapping) is a valid distance. An empty deque has b == t - 1,
+            // so the wrapping difference is the maximum usize, which exceeds any capacity.
+            if (b -% t < self.capacity) {
                 // Non-empty deque
                 const task = self.items[b % self.capacity];
 
@@ -120,8 +126,9 @@ pub fn WorkStealingDeque(comptime T: type) type {
             const t = self.top.load(.seq_cst); // Upgraded to seq_cst to act as fence
             const b = self.bottom.load(.seq_cst); // Upgraded to seq_cst to act as fence
 
-            if (t < b) {
-                // Non-empty deque
+            // Wrapping distance, so the test stays right after the counters pass the usize maximum.
+            if (b -% t -% 1 < self.capacity) {
+                // Non-empty deque (b != t, and b is not transiently below t)
                 const task = self.items[t % self.capacity];
 
                 // Try to claim this task atomically
@@ -162,21 +169,20 @@ pub fn WorkStealingDeque(comptime T: type) type {
             const t = self.top.load(.acquire);
             const b = self.bottom.load(.acquire);
 
-            // Copy existing items to new array
-            var i: usize = 0;
+            // Copy items to the same logical indices: `top` and `bottom` must not move, because
+            // `push` holds a `bottom` value loaded before this resize.
+            const count = b -% t;
+            assert(count <= self.capacity);
             var idx = t;
-            while (idx < b) : (idx +%= 1) {
-                new_items[i] = self.items[idx % self.capacity];
-                i += 1;
+            for (0..count) |_| {
+                new_items[idx % new_capacity] = self.items[idx % self.capacity];
+                idx +%= 1;
             }
+            assert(idx == b);
 
             self.allocator.free(self.items);
             self.items = new_items;
             self.capacity = new_capacity;
-
-            // Reset indices to avoid wraparound issues
-            self.top.store(0, .release);
-            self.bottom.store(i, .release);
         }
 
         /// Validate internal invariants (for testing).
@@ -197,7 +203,7 @@ pub fn WorkStealingDeque(comptime T: type) type {
             }
 
             // Capacity must be power of 2 times MIN_CAPACITY
-            var cap = MIN_CAPACITY;
+            var cap: usize = MIN_CAPACITY;
             while (cap < self.capacity) {
                 cap *= 2;
             }
@@ -484,6 +490,59 @@ test "WorkStealingDeque: validate invariants" {
     }
     try testing.expectEqual(@as(u32, 100), pop_count);
     try testing.expectEqual(true, deque.isEmpty());
+}
+
+test "WorkStealingDeque: resize after top advanced keeps every item exactly once" {
+    const testing = std.testing;
+    var deque = try WorkStealingDeque(u32).init(testing.allocator);
+    defer deque.deinit();
+
+    // Advance `top` and `bottom` to 1 so the resize happens at non-zero indices.
+    try deque.push(testing.io, 7);
+    try testing.expectEqual(@as(?u32, 7), deque.pop());
+
+    var i: u32 = 0;
+    while (i < 100) : (i += 1) {
+        try deque.push(testing.io, i);
+        try deque.validate();
+    }
+    try testing.expectEqual(@as(usize, 100), deque.size());
+
+    var expected: u32 = 100;
+    while (deque.pop()) |value| {
+        expected -= 1;
+        try testing.expectEqual(expected, value);
+    }
+    try testing.expectEqual(@as(u32, 0), expected);
+    try testing.expect(deque.isEmpty());
+    try testing.expectEqual(@as(?u32, null), deque.steal());
+}
+
+test "WorkStealingDeque: resize with indices wrapped past the usize maximum" {
+    const testing = std.testing;
+    var deque = try WorkStealingDeque(u32).init(testing.allocator);
+    defer deque.deinit();
+
+    // Start 10 slots before the wrap point; 100 pushes force three resizes across it.
+    const start = std.math.maxInt(usize) - 10;
+    deque.top.store(start, .release);
+    deque.bottom.store(start, .release);
+
+    var i: u32 = 0;
+    while (i < 100) : (i += 1) try deque.push(testing.io, i);
+    try deque.validate();
+    try testing.expectEqual(@as(usize, 100), deque.size());
+
+    try testing.expectEqual(@as(?u32, 0), deque.steal());
+    try testing.expectEqual(@as(?u32, 99), deque.pop());
+    try testing.expectEqual(@as(?u32, 1), deque.steal());
+    var expected: u32 = 98;
+    while (deque.pop()) |value| {
+        try testing.expectEqual(expected, value);
+        if (expected == 2) break;
+        expected -= 1;
+    }
+    try testing.expectEqual(@as(usize, 0), deque.size());
 }
 
 test "WorkStealingDeque: string type" {

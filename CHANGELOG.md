@@ -30,6 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   item size. Each module exports its error set as `Error`.
 
 ### Fixed
+- `WorkStealingDeque` (now run by `zig build test`): `push` stored the item and advanced `bottom`
+  from an index loaded before a resize, while `resize` had reset the counters, so a deque whose
+  `top` had advanced gained a phantom item; resize now keeps the counters. `pop` and `steal`
+  compared the free-running counters with `<`, which broke once they wrapped past the `usize`
+  maximum; they use the wrapping distance. Its tests did not compile on Zig 0.16.
+- `algorithms/parallel`: `parallel_sort.zig` and `prefix_sum.zig` are wired into the test block.
+  `parallelMergeSort` returned corrupt data for inputs of 100+ elements (the merge copied the
+  whole scratch buffer back, including unwritten parts) and is stable; `parallelQuickSort` could
+  index out of bounds and skip elements, and is now an explicit-stack three-way quick sort;
+  `parallelScan` (Blelloch) returned wrong prefixes whenever the length was not a power of two.
+  `parallelMergeSort` returns `Allocator.Error!void`, takes `gpa`, requires `num_threads > 0` and
+  leaves the input untouched on allocation failure. None of these spawn threads; `map_reduce.zig`
+  still does not compile on 0.16 and awaits an API redesign.
 - `algorithms/{approximation,greedy,graph_coloring}` and `automata/dfa`: all 13 files compile on
   Zig 0.16 and their tests run in `zig build test`; each gains an allocation-failure test.
   Bugs the never-run tests exposed: `DFA.search`/`count` required the match to end the text and
