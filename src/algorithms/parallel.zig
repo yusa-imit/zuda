@@ -4,7 +4,7 @@
 /// multi-core parallelism. Includes sorting, map-reduce, and functional patterns.
 ///
 /// Note: Current implementations use sequential execution as a baseline.
-/// Real parallel versions would use std.Thread for task parallelism.
+/// Real parallel versions would take an injected `std.Io` and use `Io.Group`.
 ///
 /// Categories:
 /// - Parallel sorting (merge sort, quick sort)
@@ -37,6 +37,9 @@ pub const parallelPrefixSum = prefix_sum.exclusiveScan;
 pub const parallelReduce = prefix_sum.reduce;
 
 pub const mapReduce = map_reduce.mapReduce;
+pub const MapReduceOptions = map_reduce.MapReduceOptions;
+pub const EmitterType = map_reduce.EmitterType;
+pub const PairType = map_reduce.PairType;
 pub const MapReduceResult = map_reduce.MapReduceResult;
 pub const groupBy = map_reduce.groupBy;
 pub const GroupByResult = map_reduce.GroupByResult;
