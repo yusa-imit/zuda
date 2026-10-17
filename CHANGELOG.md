@@ -41,8 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   index out of bounds and skip elements, and is now an explicit-stack three-way quick sort;
   `parallelScan` (Blelloch) returned wrong prefixes whenever the length was not a power of two.
   `parallelMergeSort` returns `Allocator.Error!void`, takes `gpa`, requires `num_threads > 0` and
-  leaves the input untouched on allocation failure. None of these spawn threads; `map_reduce.zig`
-  still does not compile on 0.16 and awaits an API redesign.
+  leaves the input untouched on allocation failure. None of these spawn threads.
+- `algorithms/parallel/map_reduce.zig` is rewritten (the old API could not compile on Zig 0.16:
+  the mapper returned an uninstantiable anonymous struct slice, the word-count example returned a
+  dangling stack pointer, and slice keys broke `std.meta.eql`) and wired into the test block.
+  Breaking: `mapReduce(In, K, V, gpa, input, mapper, reducer, key_order, options)` where
+  `mapper(item, *EmitterType(K, V)) Error!void` calls `emit`, `key_order` is a comptime
+  `fn (K, K) Order`, and `options.pairs_max` bounds emitted pairs (`error.PairsLimitExceeded`).
+  `groupBy` takes `key_order`, `groupBy`/`mapReduce`/`partition` results no longer store an
+  allocator (`deinit(gpa)`), and grouping is stable.
 - `algorithms/{approximation,greedy,graph_coloring}` and `automata/dfa`: all 13 files compile on
   Zig 0.16 and their tests run in `zig build test`; each gains an allocation-failure test.
   Bugs the never-run tests exposed: `DFA.search`/`count` required the match to end the text and
