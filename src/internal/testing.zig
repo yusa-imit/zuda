@@ -16,10 +16,12 @@ pub fn initRandom(seed: u64) void {
     random = prng.random();
 }
 
-/// Initialize with timestamp-based seed
-pub fn initRandomDefault() void {
-    const seed = @as(u64, @intCast(std.time.milliTimestamp()));
+/// Initialize from `std.testing.random_seed` (settable with `zig build test --seed`) and return
+/// it, so a failing run reproduces with `initRandom(seed)`. No clock is read (ADR 0001).
+pub fn initRandomDefault() u64 {
+    const seed: u64 = std.testing.random_seed;
     initRandom(seed);
+    return seed;
 }
 
 /// Generate a slice of random integers
@@ -126,8 +128,8 @@ pub const StressTestConfig = struct {
     max_value: i64 = 10000,
     /// Operation weights
     weights: OperationWeights = .{},
-    /// Random seed (0 = use timestamp)
-    seed: u64 = 0,
+    /// Random seed; the caller chooses it (see `initRandomDefault`).
+    seed: u64,
 };
 
 /// Memory leak detector context
@@ -214,7 +216,7 @@ pub fn containsSameElements(
 }
 
 test "random integer generation" {
-    initRandomDefault();
+    _ = initRandomDefault();
 
     const slice = try generateRandomIntegers(i32, testing.allocator, 100);
     defer testing.allocator.free(slice);
@@ -222,8 +224,39 @@ test "random integer generation" {
     try testing.expectEqual(100, slice.len);
 }
 
+test "initRandom is reproducible from its seed" {
+    initRandom(0x5eed);
+    const first = try generateRandomIntegers(u32, testing.allocator, 64);
+    defer testing.allocator.free(first);
+
+    initRandom(0x5eed);
+    const second = try generateRandomIntegers(u32, testing.allocator, 64);
+    defer testing.allocator.free(second);
+
+    try testing.expectEqualSlices(u32, first, second);
+
+    initRandom(0x5eee);
+    const other = try generateRandomIntegers(u32, testing.allocator, 64);
+    defer testing.allocator.free(other);
+
+    try testing.expect(!std.mem.eql(u32, first, other));
+}
+
+test "initRandomDefault returns the seed it used" {
+    const seed = initRandomDefault();
+    try testing.expectEqual(@as(u64, testing.random_seed), seed);
+    const first = try generateRandomIntegers(u32, testing.allocator, 16);
+    defer testing.allocator.free(first);
+
+    initRandom(seed);
+    const second = try generateRandomIntegers(u32, testing.allocator, 16);
+    defer testing.allocator.free(second);
+
+    try testing.expectEqualSlices(u32, first, second);
+}
+
 test "unique random integer generation" {
-    initRandomDefault();
+    _ = initRandomDefault();
 
     const slice = try generateUniqueRandomIntegers(i32, testing.allocator, 50, 100);
     defer testing.allocator.free(slice);
@@ -233,7 +266,7 @@ test "unique random integer generation" {
 }
 
 test "operation sequence generation" {
-    initRandomDefault();
+    _ = initRandomDefault();
 
     const ops = try generateOperationSequence(testing.allocator, 100);
     defer testing.allocator.free(ops);
@@ -242,7 +275,7 @@ test "operation sequence generation" {
 }
 
 test "weighted operation sequence" {
-    initRandomDefault();
+    _ = initRandomDefault();
 
     const weights = OperationWeights{
         .insert = 50,

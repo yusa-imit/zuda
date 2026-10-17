@@ -154,13 +154,14 @@ pub const MemoryTracker = struct {
         };
     }
 
+    /// Zero the cumulative counters. Live bytes are kept (and become the new peak baseline):
+    /// memory allocated before the reset can still be freed afterwards without underflow.
     pub fn reset(self: *MemoryTracker) void {
-        self.peak_bytes = 0;
+        self.peak_bytes = self.current_bytes;
         self.total_allocated = 0;
         self.total_freed = 0;
         self.allocation_count = 0;
         self.free_count = 0;
-        self.current_bytes = 0;
     }
 
     pub fn stats(self: *const MemoryTracker) MemoryStats {
@@ -292,12 +293,11 @@ pub const Benchmark = struct {
         try self.times.append(self.allocator, elapsed);
     }
 
-    /// Run benchmark with auto-iteration count
+    /// Run benchmark with auto-iteration count. Earlier samples are discarded; memory statistics
+    /// cover the measured iterations only (warmup and the probe iteration are excluded).
     pub fn run(self: *Benchmark, comptime func: anytype, args: anytype) !Result {
-        // Reset memory tracker if present
-        if (self.memory_tracker) |tracker| {
-            tracker.reset();
-        }
+        // Each run reports only its own samples.
+        self.times.clearRetainingCapacity();
 
         // Warmup
         try self.warmup(func, args);
@@ -311,6 +311,7 @@ pub const Benchmark = struct {
             _ = @call(.auto, func, args);
         }
         const single_iteration_ns = self.timer.read();
+        self.reset_memory_tracker();
 
         const iterations = blk: {
             if (single_iteration_ns == 0) break :blk self.config.max_iterations;
@@ -330,15 +331,15 @@ pub const Benchmark = struct {
         return self.computeResult();
     }
 
-    /// Run benchmark with fixed iteration count
+    /// Run benchmark with fixed iteration count. Earlier samples are discarded; memory statistics
+    /// cover the measured iterations only (warmup is excluded).
     pub fn runIterations(self: *Benchmark, comptime func: anytype, args: anytype, iterations: usize) !Result {
-        // Reset memory tracker if present
-        if (self.memory_tracker) |tracker| {
-            tracker.reset();
-        }
+        // Each run reports only its own samples.
+        self.times.clearRetainingCapacity();
 
         // Warmup
         try self.warmup(func, args);
+        self.reset_memory_tracker();
 
         // Run measured iterations
         var i: usize = 0;
@@ -347,6 +348,11 @@ pub const Benchmark = struct {
         }
 
         return self.computeResult();
+    }
+
+    /// Warmup and probe iterations must not count as measured allocation.
+    fn reset_memory_tracker(self: *Benchmark) void {
+        if (self.memory_tracker) |tracker| tracker.reset();
     }
 
     /// Compute statistics from collected timings
@@ -503,7 +509,9 @@ fn allocateAndFree(allocator: std.mem.Allocator, size: usize) !void {
 
 test "benchmark with memory tracking" {
     var tracker = MemoryTracker.init(std.testing.allocator);
-    var bench = try Benchmark.initWithMemoryTracking(std.testing.io, tracker.allocator(), .{
+    // The benchmark records its samples through its own allocator, so only the workload may use
+    // the tracked one; otherwise the sample array is counted as workload allocation.
+    var bench = try Benchmark.initWithMemoryTracking(std.testing.io, std.testing.allocator, .{
         .min_iterations = 10,
         .max_iterations = 100,
     }, &tracker);
@@ -525,4 +533,46 @@ test "benchmark with memory tracking" {
         // Current should be 0 (all freed)
         try std.testing.expectEqual(@as(usize, 0), mem.current_bytes);
     }
+}
+
+test "benchmark runs do not accumulate samples or warmup allocations" {
+    var tracker = MemoryTracker.init(std.testing.allocator);
+    var bench = try Benchmark.initWithMemoryTracking(std.testing.io, std.testing.allocator, .{
+        .min_iterations = 10,
+        .max_iterations = 100,
+        .warmup_iterations = 3,
+    }, &tracker);
+    defer bench.deinit();
+
+    const args = .{ tracker.allocator(), @as(usize, 64) };
+    const first = try bench.runIterations(allocateAndFree, args, 4);
+    try std.testing.expectEqual(4, first.iterations);
+
+    const second = try bench.runIterations(allocateAndFree, args, 7);
+    try std.testing.expectEqual(7, second.iterations);
+    try std.testing.expectEqual(@as(usize, 7 * 64), second.memory.?.total_allocated);
+}
+
+test "run excludes the probe iteration and keeps memory allocated before a reset freeable" {
+    var tracker = MemoryTracker.init(std.testing.allocator);
+    var bench = try Benchmark.initWithMemoryTracking(std.testing.io, std.testing.allocator, .{
+        .min_iterations = 6,
+        .max_iterations = 6,
+        .warmup_iterations = 2,
+    }, &tracker);
+    defer bench.deinit();
+
+    const args = .{ tracker.allocator(), @as(usize, 32) };
+    for (0..2) |_| {
+        const result = try bench.run(allocateAndFree, args);
+        try std.testing.expectEqual(6, result.iterations);
+        try std.testing.expectEqual(@as(usize, 6 * 32), result.memory.?.total_allocated);
+    }
+
+    // Live memory survives a reset, so freeing it afterwards must not underflow the tracker.
+    const live = try tracker.allocator().alloc(u8, 100);
+    tracker.reset();
+    try std.testing.expectEqual(@as(usize, 100), tracker.stats().current_bytes);
+    tracker.allocator().free(live);
+    try std.testing.expectEqual(@as(usize, 0), tracker.stats().current_bytes);
 }
