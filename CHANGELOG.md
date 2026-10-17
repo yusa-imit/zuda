@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored in a container, and lands on ~18 public functions instead of ~40.
 
 ### Changed
+- Breaking (test harness on Zig 0.16): `internal.testing.initRandomDefault()` seeds from
+  `std.testing.random_seed` instead of the wall clock and returns the seed so a failing run can be
+  reproduced with `initRandom(seed)`; `StressTestConfig.seed` is required (no clock default).
+  `MemoryTracker.reset` keeps live bytes so memory allocated before a reset stays freeable.
 - Breaking (Zig 0.16 unmanaged lists): `BinPackingResult.deinit(gpa)`, `TspResult.deinit(gpa)`;
   results of `approximation`, `greedy` and `graph_coloring` functions are unmanaged `ArrayList`s
   released with `deinit(gpa)`. `vertexCover*` take `edges: []const [2]usize`. `huffmanDecode`
@@ -30,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   item size. Each module exports its error set as `Error`.
 
 ### Fixed
+- `Benchmark.run`/`runIterations` counted warmup (and the probe iteration) in the reported memory
+  statistics and accumulated samples across runs; each run now reports only its own measured
+  iterations. `internal/testing.zig`, `internal/bench.zig` and `utils/perf.zig` now run under
+  `zig build test`.
 - `WorkStealingDeque` (now run by `zig build test`): `push` stored the item and advanced `bottom`
   from an index loaded before a resize, while `resize` had reset the counters, so a deque whose
   `top` had advanced gained a phantom item; resize now keeps the counters. `pop` and `steal`

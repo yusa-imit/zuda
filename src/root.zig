@@ -873,4 +873,7 @@ test {
     _ = @import("algorithms/machine_learning/dqn.zig");
     _ = @import("algorithms/machine_learning/ddpg.zig");
     _ = @import("algorithms/machine_learning/tsne.zig");
+    _ = @import("internal/testing.zig");
+    _ = @import("internal/bench.zig");
+    _ = @import("utils/perf.zig");
 }
