@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored in a container, and lands on ~18 public functions instead of ~40.
 
 ### Changed
+- `RedBlackTree`: `insert` and `remove` assert the size delta and root state, and in Debug builds the tree
+  invariants after every mutation (full `validate` up to 512 nodes, O(1) root and size checks
+  above). `validate` now also rejects a root with a parent, a node count that disagrees with
+  `count()`, and a non-empty size on an empty tree. The file's tests are wired into
+  `zig build test` and gain a seeded model test against `AutoArrayHashMapUnmanaged`.
 - Breaking (test harness on Zig 0.16): `internal.testing.initRandomDefault()` seeds from
   `std.testing.random_seed` instead of the wall clock and returns the seed so a failing run can be
   reproduced with `initRandom(seed)`; `StressTestConfig.seed` is required (no clock default).
