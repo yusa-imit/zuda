@@ -840,6 +840,7 @@ test {
     _ = @import("algorithms/parallel/parallel_sort.zig");
     _ = @import("algorithms/parallel/prefix_sum.zig");
     _ = @import("algorithms/string/aho_corasick.zig");
+    _ = @import("containers/trees/red_black_tree.zig");
     _ = @import("linalg/sparse.zig");
     _ = @import("linalg/preconditioner.zig");
     _ = @import("linalg/iterative.zig");

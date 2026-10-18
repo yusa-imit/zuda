@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 /// Red-Black Tree - Self-balancing binary search tree with O(log n) operations
 ///
@@ -195,6 +196,12 @@ pub fn RedBlackTree(
         /// Insert or update a key-value pair. Returns the old value if key existed.
         /// Time: O(log n) | Space: O(1)
         pub fn insert(self: *Self, key: K, value: V) !?V {
+            const size_before = self.size;
+            defer {
+                std.debug.assert(self.size == size_before or self.size == size_before + 1);
+                self.assertInvariants();
+            }
+
             if (self.root == null) {
                 const node = try self.allocator.create(Node);
                 node.* = Node.init(key, value);
@@ -321,7 +328,14 @@ pub fn RedBlackTree(
         /// Remove a key from the tree. Returns the value if found.
         /// Time: O(log n) | Space: O(1)
         pub fn remove(self: *Self, key: K) ?Entry {
+            const size_before = self.size;
+            defer {
+                std.debug.assert(self.size == size_before or self.size + 1 == size_before);
+                self.assertInvariants();
+            }
+
             const node = self.findNode(key) orelse return null;
+            std.debug.assert(size_before > 0);
             const entry = Entry{ .key = node.key, .value = node.value };
 
             self.deleteNode(node);
@@ -622,7 +636,9 @@ pub fn RedBlackTree(
 
         // -- Debug --
 
-        /// Validate red-black tree invariants.
+        /// Validate red-black tree invariants: BST order, black root without a parent, no red
+        /// node with a red child, equal black height on every path, parent links, and a node
+        /// count equal to `count()`. Returns `error.TreeInvariant` on any violation.
         /// Time: O(n) | Space: O(log n)
         pub fn validate(self: *const Self) !void {
             if (self.root) |root| {
@@ -630,9 +646,37 @@ pub fn RedBlackTree(
                 if (root.color != .black) {
                     return error.TreeInvariant;
                 }
+                if (root.parent != null) return error.TreeInvariant;
 
                 // Validate subtree and check black-height consistency
-                _ = try self.validateSubtree(root, null, null);
+                var node_count: usize = 0;
+                _ = try self.validateSubtree(root, null, null, &node_count);
+                if (node_count != self.size) return error.TreeInvariant;
+            } else if (self.size != 0) {
+                return error.TreeInvariant;
+            }
+        }
+
+        /// Largest tree whose every mutation is followed by a full O(n) `validate`; bigger trees
+        /// get only the O(1) root and size checks so Debug-mode stress tests stay linear-ish.
+        const validate_size_max: usize = 512;
+
+        /// Tripwire for programmer error after a mutating call: the tree is internally
+        /// inconsistent, which only a bug in this file can cause. The O(1) checks follow
+        /// `std.debug.assert` (on in ReleaseSafe); the O(n) walk runs in Debug builds only.
+        fn assertInvariants(self: *const Self) void {
+            if (self.root) |root| {
+                std.debug.assert(self.size > 0);
+                std.debug.assert(root.color == .black);
+                std.debug.assert(root.parent == null);
+            } else {
+                std.debug.assert(self.size == 0);
+            }
+            if (builtin.mode == .Debug and self.size <= validate_size_max) {
+                self.validate() catch |err| switch (err) {
+                    // The tree is corrupt: only a bug in this file can reach here, so trap it.
+                    error.TreeInvariant => unreachable,
+                };
             }
         }
 
@@ -641,7 +685,12 @@ pub fn RedBlackTree(
             node: *Node,
             min_key: ?K,
             max_key: ?K,
+            node_count: *usize,
         ) error{TreeInvariant}!usize {
+            node_count.* += 1;
+            // A node count above the recorded size means a cycle or a stale size; stop walking.
+            if (node_count.* > self.size) return error.TreeInvariant;
+
             // Check BST property
             if (min_key) |min_k| {
                 if (compareFn(self.context, node.key, min_k) != .gt) {
@@ -670,12 +719,12 @@ pub fn RedBlackTree(
 
             if (node.left) |left| {
                 if (left.parent != node) return error.TreeInvariant;
-                left_black_height = try self.validateSubtree(left, min_key, node.key);
+                left_black_height = try self.validateSubtree(left, min_key, node.key, node_count);
             }
 
             if (node.right) |right| {
                 if (right.parent != node) return error.TreeInvariant;
-                right_black_height = try self.validateSubtree(right, node.key, max_key);
+                right_black_height = try self.validateSubtree(right, node.key, max_key, node_count);
             }
 
             if (left_black_height != right_black_height) {
@@ -1469,4 +1518,102 @@ test "RedBlackTree reverseIterator handles empty iteration after removals" {
 
     try std.testing.expect((try iter.next()) == null);
     try std.testing.expectEqual(@as(usize, 0), tree.count());
+}
+
+const TestRbt = RedBlackTree(i32, i32, TestRbtContext, TestRbtContext.compare);
+
+const TestRbtContext = struct {
+    fn compare(_: @This(), a: i32, b: i32) std.math.Order {
+        return std.math.order(a, b);
+    }
+};
+
+test "RedBlackTree validate rejects a size that disagrees with the node count" {
+    var tree = TestRbt.init(std.testing.allocator, .{});
+    defer tree.deinit();
+
+    for (0..5) |i| _ = try tree.insert(@intCast(i), 0);
+    try tree.validate();
+
+    tree.size += 1;
+    try std.testing.expectError(error.TreeInvariant, tree.validate());
+    tree.size -= 2;
+    try std.testing.expectError(error.TreeInvariant, tree.validate());
+    tree.size += 1;
+    try tree.validate();
+}
+
+test "RedBlackTree validate rejects an empty tree with a nonzero size and a root with a parent" {
+    var tree = TestRbt.init(std.testing.allocator, .{});
+    defer tree.deinit();
+
+    tree.size = 1;
+    try std.testing.expectError(error.TreeInvariant, tree.validate());
+    tree.size = 0;
+    try tree.validate();
+
+    _ = try tree.insert(1, 1);
+    _ = try tree.insert(2, 2);
+    const root = tree.root.?;
+    const child = root.right.?;
+    root.parent = child;
+    try std.testing.expectError(error.TreeInvariant, tree.validate());
+    root.parent = null;
+    try tree.validate();
+}
+
+test "RedBlackTree seeded model test keeps invariants after every mutation" {
+    try model_run(std.testing.random_seed, 600, 64);
+}
+
+test "RedBlackTree seeded model test past the full-validate size limit" {
+    try model_run(std.testing.random_seed +% 1, 4000, 1500);
+}
+
+test "RedBlackTree validate rejects a red node with a red child" {
+    var tree = TestRbt.init(std.testing.allocator, .{});
+    defer tree.deinit();
+
+    // Inserting 0 under red 1 with a red uncle recolors: root 2 black, 1 and 3 black, 0 red.
+    for ([_]i32{ 2, 1, 3, 0 }) |key| _ = try tree.insert(key, 0);
+    try tree.validate();
+    const black_parent = tree.root.?.left.?;
+    try std.testing.expect(black_parent.color == .black);
+    try std.testing.expect(black_parent.left.?.color == .red);
+
+    black_parent.color = .red;
+    try std.testing.expectError(error.TreeInvariant, tree.validate());
+    black_parent.color = .black;
+    try tree.validate();
+}
+
+fn model_run(seed: u64, steps_max: u32, key_count: i32) !void {
+    errdefer std.debug.print("RedBlackTree model run failed, seed={d}\n", .{seed});
+    var prng = std.Random.DefaultPrng.init(seed);
+    const random = prng.random();
+
+    var tree = TestRbt.init(std.testing.allocator, .{});
+    defer tree.deinit();
+    var model: std.AutoArrayHashMapUnmanaged(i32, i32) = .empty;
+    defer model.deinit(std.testing.allocator);
+
+    for (0..steps_max) |step| {
+        const key = random.intRangeLessThan(i32, 0, key_count);
+        if (random.boolean()) {
+            const old = try tree.insert(key, @intCast(step));
+            const prev = try model.fetchPut(std.testing.allocator, key, @intCast(step));
+            const model_old: ?i32 = if (prev) |kv| kv.value else null;
+            try std.testing.expectEqual(model_old, old);
+        } else {
+            const removed = tree.remove(key);
+            const model_removed = model.fetchSwapRemove(key);
+            try std.testing.expectEqual(model_removed != null, removed != null);
+            if (removed) |entry| try std.testing.expectEqual(model_removed.?.value, entry.value);
+        }
+        try tree.validate();
+        try std.testing.expectEqual(model.count(), tree.count());
+    }
+    for (model.keys()) |key| {
+        try std.testing.expectEqual(model.get(key).?, tree.get(key).?);
+    }
 }
