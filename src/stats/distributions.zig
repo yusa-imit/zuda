@@ -15161,6 +15161,7 @@ pub fn Triangular(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn sample(self: Self, rng: anytype) T {
             const u = rng.float(T);
+            // Cannot fail: rng.float is in [0, 1); quantile rejects only p outside [0, 1].
             return self.quantile(u) catch unreachable;
         }
 
@@ -44578,6 +44579,7 @@ pub fn RaisedCosine(comptime T: type) type {
         /// Time: O(log(1/ε)) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
             const u = rng.float(T);
+            // Cannot fail: rng.float is in [0, 1); quantile rejects only p outside [0, 1].
             return self.quantile(u) catch unreachable;
         }
 
@@ -45230,6 +45232,7 @@ pub fn GompertzMakeham(comptime T: type) type {
         ///
         /// Time: O(log(1/ε)) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
+            // Cannot fail: rng.float is in [0, 1); quantile rejects only p outside [0, 1].
             return self.quantile(rng.float(T)) catch unreachable;
         }
 
@@ -45935,6 +45938,7 @@ pub fn Muth(comptime T: type) type {
         ///
         /// Time: O(log(1/ε)) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
+            // Cannot fail: rng.float is in [0, 1); quantile rejects only p outside [0, 1].
             return self.quantile(rng.float(T)) catch unreachable;
         }
 
@@ -49570,6 +49574,7 @@ pub fn GeneralizedExtremeValue(comptime T: type) type {
             const u = rng.float(T);
             // Clamp to avoid log(0) edge cases
             const p = @max(@as(T, 1e-15), @min(@as(T, 1.0 - 1e-15), u));
+            // Cannot fail: the clamp keeps p in (0, 1); quantile rejects only p outside [0, 1].
             return self.quantile(p) catch unreachable;
         }
 
@@ -63540,6 +63545,7 @@ pub fn WrappedCauchy(comptime T: type) type {
             const u = rng.float(T);
             // Clamp to (0, 1) to avoid tan(±π/2)
             const u_safe = @max(@as(T, 1e-15), @min(@as(T, 1.0) - @as(T, 1e-15), u));
+            // Cannot fail: the clamp keeps p in (0, 1); quantile rejects only p outside [0, 1].
             const q = self.quantile(u_safe) catch unreachable;
             return wrapAngle(q);
         }
@@ -64179,6 +64185,7 @@ pub fn Epanechnikov(comptime T: type) type {
             const u = rng.float(T);
             // Clamp to [1e-14, 1 - 1e-14] to avoid boundary quantile numerical issues
             const u_safe = @max(@as(T, 1e-14), @min(@as(T, 1.0) - @as(T, 1e-14), u));
+            // Cannot fail: the clamp keeps p in (0, 1); quantile rejects only p outside [0, 1].
             const q = self.quantile(u_safe) catch unreachable;
             return q;
         }
@@ -64863,6 +64870,7 @@ pub fn ShiftedGompertz(comptime T: type) type {
             const u = rng.float(T);
             // Clamp to [1e-14, 1 - 1e-14] to avoid boundary quantile numerical issues
             const u_safe = @max(@as(T, 1e-14), @min(@as(T, 1.0) - @as(T, 1e-14), u));
+            // Cannot fail: the clamp keeps p in (0, 1); quantile rejects only p outside [0, 1].
             const q = self.quantile(u_safe) catch unreachable;
             return q;
         }
@@ -65486,6 +65494,7 @@ pub fn Benini(comptime T: type) type {
         pub fn sample(self: Self, rng: std.Random) T {
             const u = rng.float(T);
             const u_safe = @max(@as(T, 1e-15), @min(@as(T, 1.0) - @as(T, 1e-15), u));
+            // Cannot fail: the clamp keeps p in (0, 1); quantile rejects only p outside [0, 1].
             return self.quantile(u_safe) catch unreachable;
         }
 
@@ -66135,6 +66144,7 @@ pub fn Biweight(comptime T: type) type {
         pub fn sample(self: Self, rng: std.Random) T {
             const u = rng.float(T);
             const u_safe = @max(@as(T, 1e-14), @min(@as(T, 1.0) - @as(T, 1e-14), u));
+            // Cannot fail: the clamp keeps p in (0, 1); quantile rejects only p outside [0, 1].
             return self.quantile(u_safe) catch unreachable;
         }
 
@@ -66825,6 +66835,7 @@ pub fn Triweight(comptime T: type) type {
         pub fn sample(self: Self, rng: std.Random) T {
             const u = rng.float(T);
             const u_safe = @max(@as(T, 1e-14), @min(@as(T, 1.0) - @as(T, 1e-14), u));
+            // Cannot fail: the clamp keeps p in (0, 1); quantile rejects only p outside [0, 1].
             return self.quantile(u_safe) catch unreachable;
         }
 
@@ -67521,6 +67532,7 @@ pub fn MarchenkoPastur(comptime T: type) type {
         pub fn sample(self: Self, rng: std.Random) T {
             const u = rng.float(T);
             const u_safe = @max(@as(T, 1e-14), @min(@as(T, 1.0) - @as(T, 1e-14), u));
+            // Cannot fail: the clamp keeps p in (0, 1); quantile rejects only p outside [0, 1].
             return self.quantile(u_safe) catch unreachable;
         }
 
@@ -69568,6 +69580,7 @@ pub fn UQuadratic(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
             const u = rng.float(T);
+            // Cannot fail: rng.float is in [0, 1); quantile rejects only p outside [0, 1].
             return self.quantile(u) catch unreachable;
         }
 
@@ -69956,6 +69969,7 @@ pub fn GeneralizedRayleigh(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
             const u = rng.float(T);
+            // Cannot fail: rng.float is in [0, 1); quantile rejects only p outside [0, 1].
             return self.quantile(u) catch unreachable;
         }
 
@@ -82221,6 +82235,7 @@ pub fn QExponential(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
             const u = rng.float(T);
+            // Cannot fail: rng.float is in [0, 1); quantile rejects only p outside [0, 1].
             return self.quantile(u) catch unreachable;
         }
 
@@ -90460,6 +90475,7 @@ pub fn MarshallOlkinExponential(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
+            // Cannot fail: rng.float is in [0, 1); quantile rejects only p outside [0, 1].
             return self.quantile(rng.float(T)) catch unreachable;
         }
 
@@ -109731,6 +109747,7 @@ pub fn WrappedExponential(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn median(self: Self) T {
+            // Cannot fail: quantile rejects only p outside [0, 1], and 0.5 is inside it.
             return self.quantile(0.5) catch unreachable;
         }
 
@@ -113319,6 +113336,7 @@ pub fn MarshallOlkinWeibull(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
+            // Cannot fail: rng.float is in [0, 1); quantile rejects only p outside [0, 1].
             return self.quantile(rng.float(T)) catch unreachable;
         }
 
@@ -113962,6 +113980,7 @@ pub fn MarshallOlkinLomax(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
+            // Cannot fail: rng.float is in [0, 1); quantile rejects only p outside [0, 1].
             return self.quantile(rng.float(T)) catch unreachable;
         }
 
@@ -116360,6 +116379,7 @@ pub fn ExponentialLogarithmic(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
+            // Cannot fail: rng.float is in [0, 1); quantile rejects only p outside [0, 1].
             return self.quantile(rng.float(T)) catch unreachable;
         }
 

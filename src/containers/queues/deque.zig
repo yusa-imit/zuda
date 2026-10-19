@@ -33,6 +33,7 @@ pub fn Deque(comptime T: type) type {
                     return null;
                 }
 
+                // Cannot fail: index < length above, and get errors only on index >= length.
                 const value = self.deque.get(self.index) catch unreachable;
                 self.index += 1;
                 return value;
