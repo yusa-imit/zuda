@@ -874,6 +874,11 @@ test {
     _ = @import("algorithms/machine_learning/dqn.zig");
     _ = @import("algorithms/machine_learning/ddpg.zig");
     _ = @import("algorithms/machine_learning/tsne.zig");
+    _ = @import("containers/trees/btree.zig");
+    _ = @import("containers/graphs/adjacency_list.zig");
+    _ = @import("algorithms/graph/topological_sort.zig");
+    _ = @import("compat/silica_btree.zig");
+    _ = @import("compat/zr_dag.zig");
     _ = @import("internal/testing.zig");
     _ = @import("internal/bench.zig");
     _ = @import("utils/perf.zig");

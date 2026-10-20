@@ -167,7 +167,7 @@ pub fn TopologicalSort(
             var rec_stack = std.HashMap(V, void, HashMapContext, std.hash_map.default_max_load_percentage).initContext(allocator, hash_ctx);
             defer rec_stack.deinit();
 
-            var result: std.ArrayList(V) = .{};
+            var result: std.ArrayList(V) = .empty;
             errdefer result.deinit(allocator);
 
             // Visit all vertices
@@ -187,7 +187,7 @@ pub fn TopologicalSort(
                     if (has_cycle) {
                         // Cycle detected
                         return Result{
-                            .order = std.ArrayList(V){},
+                            .order = .empty,
                             .success = false,
                             .cycle_vertices = null,
                             .allocator = allocator,

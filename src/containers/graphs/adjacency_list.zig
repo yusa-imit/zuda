@@ -1295,7 +1295,7 @@ test "initDirected: string large graph memory leak check" {
     var graph = StringDirectedGraph(i32).init(testing.allocator, .{}, true);
     defer graph.deinit();
 
-    var vertices: std.ArrayList([]const u8) = .{};
+    var vertices: std.ArrayList([]const u8) = .empty;
     defer vertices.deinit(testing.allocator);
     defer for (vertices.items) |v| testing.allocator.free(v);
 
@@ -1336,7 +1336,7 @@ test "initUndirected: string large graph memory leak check" {
     var graph = StringUndirectedGraph(void).init(testing.allocator, .{}, false);
     defer graph.deinit();
 
-    var vertices: std.ArrayList([]const u8) = .{};
+    var vertices: std.ArrayList([]const u8) = .empty;
     defer vertices.deinit(testing.allocator);
     defer for (vertices.items) |v| testing.allocator.free(v);
 

@@ -17,6 +17,7 @@
 //! Space complexity: O(n)
 
 const std = @import("std");
+const assert = std.debug.assert;
 
 /// BTree with compile-time order and context-based comparison.
 ///
@@ -38,7 +39,9 @@ pub fn BTree(
     comptime order: comptime_int,
     comptime Context: type,
 ) type {
-    if (order < 3) @compileError("BTree order must be at least 3");
+    if (order < 4) @compileError("BTree order must be at least 4");
+    // With an odd order, merging two minimal siblings plus the separator key overflows a node.
+    if (order % 2 != 0) @compileError("BTree order must be even");
 
     return struct {
         const Self = @This();
@@ -105,17 +108,40 @@ pub fn BTree(
         /// Time: O(n) | Space: O(h) where h is height
         pub fn deinit(self: *Self) void {
             if (self.root) |root| {
-                self.freeNode(root);
+                self.freeNode(root, {}, null);
                 self.root = null;
             }
             self.len = 0;
         }
 
-        fn freeNode(self: *Self, node: *Node) void {
+        /// Like `deinit`, but first passes every stored entry to `release(context, key, value)`
+        /// so a caller that owns heap-allocated keys or values can free them without allocating.
+        /// Time: O(n) | Space: O(h) where h is height
+        pub fn deinitEntries(
+            self: *Self,
+            context: anytype,
+            comptime release: fn (@TypeOf(context), K, V) void,
+        ) void {
+            if (self.root) |root| {
+                self.freeNode(root, context, release);
+                self.root = null;
+            }
+            self.len = 0;
+        }
+
+        fn freeNode(
+            self: *Self,
+            node: *Node,
+            context: anytype,
+            comptime release: ?fn (@TypeOf(context), K, V) void,
+        ) void {
+            if (release) |release_fn| {
+                for (0..node.num_keys) |i| release_fn(context, node.keys[i], node.values[i]);
+            }
             if (!node.is_leaf) {
                 for (node.children[0 .. node.num_keys + 1]) |maybe_child| {
                     if (maybe_child) |child| {
-                        self.freeNode(child);
+                        self.freeNode(child, context, release);
                     }
                 }
             }
@@ -158,6 +184,8 @@ pub fn BTree(
             // If root is full, split it and create new root
             if (root.isFull()) {
                 const new_root = try self.createNode(false);
+                errdefer self.allocator.destroy(new_root);
+
                 new_root.children[0] = root;
                 try self.splitChild(new_root, 0);
                 self.root = new_root;
@@ -566,81 +594,60 @@ pub fn BTree(
             }
         };
 
+        /// Descending iterator. Each stack frame is a node plus the number of items already
+        /// yielded from it; an internal node yields child[n], key[n-1], child[n-1], ..., key[0],
+        /// child[0] (2n + 1 items), a leaf yields key[n-1] ... key[0]. The stack is sized to the
+        /// tree height at creation, so `next` never allocates.
         pub const ReverseIterator = struct {
             tree: *const Self,
             stack: std.ArrayList(*const Node),
-            indices: std.ArrayList(isize), // Signed: tracks position in reverse interleave
+            yielded: std.ArrayList(usize),
             allocator: std.mem.Allocator,
 
             /// Returns next element (in descending order) or null when exhausted.
             /// Time: O(1) amortized | Space: O(1)
             pub fn next(self: *ReverseIterator) ?Entry {
-                while (self.stack.items.len > 0) {
+                assert(self.stack.items.len == self.yielded.items.len);
+
+                // One call pops at most `height` exhausted frames and pushes at most `height` children.
+                for (0..2 * self.stack.capacity + 2) |_| {
+                    if (self.stack.items.len == 0) return null;
+
                     const node = self.stack.items[self.stack.items.len - 1];
-                    const idx_ptr = &self.indices.items[self.indices.items.len - 1];
+                    const position = self.yielded.items[self.yielded.items.len - 1];
+                    const total = if (node.is_leaf) node.num_keys else 2 * node.num_keys + 1;
+                    if (position == total) {
+                        _ = self.stack.pop();
+                        _ = self.yielded.pop();
+                        continue;
+                    }
+                    self.yielded.items[self.yielded.items.len - 1] = position + 1;
 
-                    if (!node.is_leaf) {
-                        // For internal nodes, interleave in reverse order:
-                        // child[num_keys], key[num_keys-1], child[num_keys-1], key[num_keys-2], ..., child[0]
-                        // Sequence positions: 0, 1, 2, 3, 4, 5, ... 2*num_keys
-                        // idx counts DOWN from -(num_keys + 1) toward 0
-                        if (idx_ptr.* < 0) {
-                            // Convert negative index to sequence position
-                            const seq_pos = @as(usize, @intCast(-idx_ptr.* - 1));
-
-                            // Check if within bounds
-                            if (seq_pos <= node.num_keys * 2) {
-                                // seq_pos % 2: even = child, odd = key
-                                if (seq_pos % 2 == 0) {
-                                    // Even: visit child from right to left
-                                    const child_idx = node.num_keys - (seq_pos / 2);
-                                    if (node.childAt(child_idx)) |child| {
-                                        idx_ptr.* -= 1;
-                                        self.stack.append(self.allocator, child) catch return null;
-                                        // Start reverse iteration for the child
-                                        const child_init_idx = if (child.is_leaf)
-                                            0
-                                        else
-                                            -@as(isize, @intCast(child.num_keys + 1));
-                                        self.indices.append(self.allocator, child_init_idx) catch return null;
-                                        continue;
-                                    } else {
-                                        idx_ptr.* -= 1;
-                                        continue;
-                                    }
-                                } else {
-                                    // Odd: return key from right to left
-                                    // seq_pos = 2k + 1 means key at index (num_keys - 1 - k)
-                                    const k = seq_pos / 2;
-                                    const key_idx = node.num_keys - 1 - k;
-                                    idx_ptr.* -= 1;
-                                    if (key_idx < node.num_keys) {
-                                        return Entry{ .key = node.keyAt(key_idx), .value = node.valueAt(key_idx) };
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        // Leaf node: iterate keys from right to left
-                        if (idx_ptr.* >= 0 and idx_ptr.* < @as(isize, @intCast(node.num_keys))) {
-                            const key_idx = @as(usize, @intCast(node.num_keys - 1 - idx_ptr.*));
-                            idx_ptr.* += 1;
-                            return Entry{ .key = node.keyAt(key_idx), .value = node.valueAt(key_idx) };
-                        }
+                    if (node.is_leaf) {
+                        const key_index = node.num_keys - 1 - position;
+                        return Entry{ .key = node.keyAt(key_index), .value = node.valueAt(key_index) };
+                    }
+                    const half = position / 2;
+                    if (position % 2 == 1) {
+                        const key_index = node.num_keys - 1 - half;
+                        return Entry{ .key = node.keyAt(key_index), .value = node.valueAt(key_index) };
                     }
 
-                    // Done with this node, pop
-                    _ = self.stack.pop();
-                    _ = self.indices.pop();
+                    // Descend into child[n - half]; capacity was reserved for the full height.
+                    const child = node.childAt(node.num_keys - half).?;
+                    // Mutating the tree during iteration may grow it past the reserved height.
+                    assert(self.stack.items.len < self.stack.capacity);
+                    self.stack.appendAssumeCapacity(child);
+                    self.yielded.appendAssumeCapacity(0);
                 }
-                return null;
+                unreachable; // The bound above covers every pop-then-descend sequence in one call.
             }
 
             /// Frees iterator resources.
             /// Time: O(1) | Space: O(1)
             pub fn deinit(self: *ReverseIterator) void {
                 self.stack.deinit(self.allocator);
-                self.indices.deinit(self.allocator);
+                self.yielded.deinit(self.allocator);
             }
         };
 
@@ -665,31 +672,28 @@ pub fn BTree(
             };
         }
 
-        /// Create a reverse iterator over all entries in descending order.
+        /// Create a reverse iterator over all entries in descending order. The tree must not be
+        /// mutated while the iterator is live: its stack is sized to the current height.
         /// Time: O(1) to create | Space: O(h) for iterator stack
         pub fn reverseIterator(self: *const Self) !ReverseIterator {
-            var stack = std.ArrayList(*const Node){};
+            var height: usize = 0;
+            var cursor = self.root;
+            while (cursor) |node| : (cursor = node.childAt(0)) height += 1;
+
+            var stack = try std.ArrayList(*const Node).initCapacity(self.allocator, height);
             errdefer stack.deinit(self.allocator);
-            var indices = std.ArrayList(isize){};
-            errdefer indices.deinit(self.allocator);
+            var yielded = try std.ArrayList(usize).initCapacity(self.allocator, height);
+            errdefer yielded.deinit(self.allocator);
 
             if (self.root) |root| {
-                try stack.append(self.allocator, root);
-                // For reverse iteration:
-                // - Leaf nodes: start at -num_keys (will count up to -1, 0)
-                // - Internal nodes: start at -(num_keys + 1)
-                if (root.is_leaf) {
-                    try indices.append(self.allocator, 0);
-                } else {
-                    const init_idx = -@as(isize, @intCast(root.num_keys + 1));
-                    try indices.append(self.allocator, init_idx);
-                }
+                stack.appendAssumeCapacity(root);
+                yielded.appendAssumeCapacity(0);
             }
 
             return ReverseIterator{
                 .tree = self,
                 .stack = stack,
-                .indices = indices,
+                .yielded = yielded,
                 .allocator = self.allocator,
             };
         }
@@ -1023,7 +1027,7 @@ test "BTree: reverse iterator maintains descending order" {
     var it = try tree.reverseIterator();
     defer it.deinit();
 
-    var prev: i32 = i32.max_value;
+    var prev: i32 = std.math.maxInt(i32);
     var count: usize = 0;
     while (it.next()) |entry| {
         try testing.expect(entry.key < prev);
@@ -1180,7 +1184,7 @@ test "BTree: reverse iterator after insertions and removals" {
 
     while (it.next()) |entry| {
         try testing.expect(entry.key < prev);
-        try testing.expect(entry.key % 2 == 1); // Should only see odd numbers
+        try testing.expect(@mod(entry.key, 2) == 1); // Should only see odd numbers
         prev = entry.key;
         count += 1;
     }
@@ -1228,4 +1232,36 @@ test "BTree: reverse iterator consistency with forward iterator" {
         const backward_idx = backward.items.len - 1 - i;
         try testing.expectEqual(forward.items[forward_idx], backward.items[backward_idx]);
     }
+}
+
+test "BTree: deinitEntries releases every entry exactly once" {
+    const Counter = struct {
+        released: usize = 0,
+        key_sum: u64 = 0,
+
+        fn release(self: *@This(), key: u32, value: u32) void {
+            assert(value == key * 2);
+            self.released += 1;
+            self.key_sum += key;
+        }
+    };
+    const Context = struct {
+        pub fn compare(_: @This(), a: u32, b: u32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    };
+    const Tree = BTree(u32, u32, 4, Context);
+
+    var tree = Tree.init(testing.allocator, Context{});
+    for (0..200) |i| {
+        const key: u32 = @intCast(i);
+        _ = try tree.insert(key, key * 2);
+    }
+
+    var counter = Counter{};
+    tree.deinitEntries(&counter, Counter.release);
+
+    try testing.expectEqual(@as(usize, 200), counter.released);
+    try testing.expectEqual(@as(u64, 199 * 200 / 2), counter.key_sum);
+    try testing.expectEqual(@as(usize, 0), tree.count());
 }
