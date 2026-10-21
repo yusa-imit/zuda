@@ -49,9 +49,10 @@ pub fn binaryToGray(comptime T: type, n: T) T {
 /// Space: O(1)
 pub fn grayToBinary(comptime T: type, gray: T) T {
     var binary = gray;
-    var shift: u6 = 1;
-    while (shift < @bitSizeOf(T)) : (shift *= 2) {
-        binary ^= binary >> shift;
+    var shift: u32 = 1;
+    const bits: u32 = @bitSizeOf(T);
+    while (shift < bits) : (shift *= 2) {
+        binary ^= binary >> @intCast(shift);
     }
     return binary;
 }
@@ -64,15 +65,15 @@ pub fn grayToBinary(comptime T: type, gray: T) T {
 /// Space: O(2^n)
 pub fn generateSequence(comptime T: type, allocator: Allocator, n: u8) !std.ArrayList(T) {
     if (n > @bitSizeOf(T)) return error.OutOfRange;
-    
+
     const count = @as(usize, 1) << @intCast(n);
     var result = try std.ArrayList(T).initCapacity(allocator, count);
-    
+
     var i: usize = 0;
     while (i < count) : (i += 1) {
         result.appendAssumeCapacity(binaryToGray(T, @intCast(i)));
     }
-    
+
     return result;
 }
 
@@ -86,11 +87,11 @@ pub fn nextGray(comptime T: type, current: T) struct { value: T, bit_pos: u8 } {
     const binary = grayToBinary(T, current);
     const next_binary = binary +% 1; // wrapping add
     const next = binaryToGray(T, next_binary);
-    
+
     // Find which bit changed
     const diff = current ^ next;
     const bit_pos = @ctz(diff);
-    
+
     return .{ .value = next, .bit_pos = @intCast(bit_pos) };
 }
 
@@ -104,11 +105,11 @@ pub fn previousGray(comptime T: type, current: T) struct { value: T, bit_pos: u8
     const binary = grayToBinary(T, current);
     const prev_binary = binary -% 1; // wrapping subtract
     const prev = binaryToGray(T, prev_binary);
-    
+
     // Find which bit changed
     const diff = current ^ prev;
     const bit_pos = @ctz(diff);
-    
+
     return .{ .value = prev, .bit_pos = @intCast(bit_pos) };
 }
 
@@ -135,19 +136,19 @@ pub fn generateReflected(comptime T: type, allocator: Allocator, n: u8) !std.Arr
         result.appendAssumeCapacity(0);
         return result;
     }
-    
+
     // Get (n-1) bit sequence
     var prev = try generateReflected(T, allocator, n - 1);
-    defer prev.deinit();
-    
+    defer prev.deinit(allocator);
+
     const count = @as(usize, 1) << @intCast(n);
     var result = try std.ArrayList(T).initCapacity(allocator, count);
-    
+
     // First half: prefix 0 (no change needed)
     for (prev.items) |val| {
         result.appendAssumeCapacity(val);
     }
-    
+
     // Second half: prefix 1 (set MSB) and reverse order
     const msb: T = @as(T, 1) << @intCast(n - 1);
     var i = prev.items.len;
@@ -155,7 +156,7 @@ pub fn generateReflected(comptime T: type, allocator: Allocator, n: u8) !std.Arr
         i -= 1;
         result.appendAssumeCapacity(prev.items[i] | msb);
     }
-    
+
     return result;
 }
 
@@ -219,11 +220,11 @@ test "binaryToGray and grayToBinary - roundtrip" {
 
 test "generateSequence - 3 bits" {
     var seq = try generateSequence(u8, testing.allocator, 3);
-    defer seq.deinit();
-    
+    defer seq.deinit(testing.allocator);
+
     const expected = [_]u8{ 0, 1, 3, 2, 6, 7, 5, 4 };
     try testing.expectEqual(expected.len, seq.items.len);
-    
+
     for (expected, 0..) |exp, idx| {
         try testing.expectEqual(exp, seq.items[idx]);
     }
@@ -231,8 +232,8 @@ test "generateSequence - 3 bits" {
 
 test "generateSequence - adjacent values differ by one bit" {
     var seq = try generateSequence(u8, testing.allocator, 4);
-    defer seq.deinit();
-    
+    defer seq.deinit(testing.allocator);
+
     var i: usize = 0;
     while (i < seq.items.len - 1) : (i += 1) {
         const diff = seq.items[i] ^ seq.items[i + 1];
@@ -242,8 +243,8 @@ test "generateSequence - adjacent values differ by one bit" {
 
 test "generateSequence - cyclic property" {
     var seq = try generateSequence(u8, testing.allocator, 4);
-    defer seq.deinit();
-    
+    defer seq.deinit(testing.allocator);
+
     // Last and first should differ by one bit (cyclic)
     const diff = seq.items[seq.items.len - 1] ^ seq.items[0];
     try testing.expectEqual(@as(u8, 1), @popCount(diff));
@@ -252,7 +253,7 @@ test "generateSequence - cyclic property" {
 test "nextGray - basic progression" {
     var current: u8 = 0;
     const expected_sequence = [_]u8{ 0, 1, 3, 2, 6, 7, 5, 4 };
-    
+
     for (expected_sequence[0 .. expected_sequence.len - 1], expected_sequence[1..]) |exp_curr, exp_next| {
         if (current == exp_curr) {
             const result = nextGray(u8, current);
@@ -265,7 +266,7 @@ test "nextGray - basic progression" {
 test "previousGray - basic regression" {
     var current: u8 = 4; // Last in 3-bit sequence
     const expected_sequence = [_]u8{ 4, 5, 7, 6, 2, 3, 1, 0 };
-    
+
     for (expected_sequence[0 .. expected_sequence.len - 1], expected_sequence[1..]) |exp_curr, exp_prev| {
         if (current == exp_curr) {
             const result = previousGray(u8, current);
@@ -301,11 +302,11 @@ test "areAdjacent - invalid cases" {
 
 test "generateReflected - matches iterative" {
     var iterative = try generateSequence(u8, testing.allocator, 4);
-    defer iterative.deinit();
-    
+    defer iterative.deinit(testing.allocator);
+
     var reflected = try generateReflected(u8, testing.allocator, 4);
-    defer reflected.deinit();
-    
+    defer reflected.deinit(testing.allocator);
+
     try testing.expectEqual(iterative.items.len, reflected.items.len);
     for (iterative.items, reflected.items) |iter, refl| {
         try testing.expectEqual(iter, refl);
@@ -336,11 +337,11 @@ test "Gray code - different integer types" {
     // u16
     try testing.expectEqual(@as(u16, 0b0011), binaryToGray(u16, 0b0010));
     try testing.expectEqual(@as(u16, 0b0010), grayToBinary(u16, 0b0011));
-    
+
     // u32
     try testing.expectEqual(@as(u32, 0b0011), binaryToGray(u32, 0b0010));
     try testing.expectEqual(@as(u32, 0b0010), grayToBinary(u32, 0b0011));
-    
+
     // u64
     try testing.expectEqual(@as(u64, 0b0011), binaryToGray(u64, 0b0010));
     try testing.expectEqual(@as(u64, 0b0010), grayToBinary(u64, 0b0011));
@@ -352,10 +353,10 @@ test "generateSequence - error on overflow" {
 
 test "generateSequence - large sequence (5 bits)" {
     var seq = try generateSequence(u8, testing.allocator, 5);
-    defer seq.deinit();
-    
+    defer seq.deinit(testing.allocator);
+
     try testing.expectEqual(@as(usize, 32), seq.items.len);
-    
+
     // Verify all adjacent pairs differ by one bit
     var i: usize = 0;
     while (i < seq.items.len - 1) : (i += 1) {
@@ -367,9 +368,9 @@ test "Gray code - memory safety" {
     var i: usize = 0;
     while (i < 10) : (i += 1) {
         var seq = try generateSequence(u8, testing.allocator, 4);
-        seq.deinit();
-        
+        seq.deinit(testing.allocator);
+
         var refl = try generateReflected(u8, testing.allocator, 4);
-        refl.deinit();
+        refl.deinit(testing.allocator);
     }
 }

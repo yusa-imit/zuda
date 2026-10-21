@@ -129,6 +129,7 @@ pub fn minJumpsGreedy(comptime T: type, nums: []const T) !usize {
 }
 
 /// Count number of distinct ways to reach the last index
+/// The count saturates at maxInt(usize) instead of overflowing.
 /// Time: O(n²) | Space: O(n)
 pub fn countWays(comptime T: type, nums: []const T, allocator: Allocator) !usize {
     if (nums.len == 0) return error.EmptyArray;
@@ -146,7 +147,7 @@ pub fn countWays(comptime T: type, nums: []const T, allocator: Allocator) !usize
         const jump_len = @as(usize, @intCast(nums[i]));
         const max_j = @min(i + jump_len, n - 1);
         for (i + 1..max_j + 1) |j| {
-            dp[j] += dp[i];
+            dp[j] +|= dp[i];
         }
     }
 
@@ -219,10 +220,11 @@ test "jump game - can reach end (greedy)" {
 
     // Can reach end
     try testing.expect(try canJump(u32, &[_]u32{ 2, 3, 1, 1, 4 }));
-    try testing.expect(try canJump(u32, &[_]u32{ 3, 2, 1, 0, 4 })); // Can jump over 0
+    try testing.expect(try canJump(u32, &[_]u32{ 3, 2, 2, 0, 4 })); // Can jump over 0
 
     // Cannot reach end
     try testing.expect(!try canJump(u32, &[_]u32{ 1, 0, 1, 0 }));
+    try testing.expect(!try canJump(u32, &[_]u32{ 3, 2, 1, 0, 4 })); // Stuck at the 0
 
     // Edge cases
     try testing.expect(try canJump(u32, &[_]u32{0})); // Single element
@@ -240,9 +242,9 @@ test "jump game - can reach end (DP)" {
 
     // Can reach end
     try testing.expect(try canJumpDP(u32, &[_]u32{ 2, 3, 1, 1, 4 }, allocator));
-    try testing.expect(try canJumpDP(u32, &[_]u32{ 3, 2, 1, 0, 4 }, allocator));
 
     // Cannot reach end
+    try testing.expect(!try canJumpDP(u32, &[_]u32{ 3, 2, 1, 0, 4 }, allocator));
     try testing.expect(!try canJumpDP(u32, &[_]u32{ 1, 0, 1, 0 }, allocator));
 
     // Edge cases
@@ -292,11 +294,9 @@ test "jump game - count ways" {
     const allocator = testing.allocator;
 
     // Basic examples
-    try testing.expectEqual(@as(usize, 3), try countWays(u32, &[_]u32{ 2, 3, 1, 1, 4 }, allocator));
+    try testing.expectEqual(@as(usize, 4), try countWays(u32, &[_]u32{ 2, 3, 1, 1, 4 }, allocator));
     // From 0: jump to 1 or 2
-    // From 1: can reach 2,3,4 (paths: 0→1→2, 0→1→3, 0→1→4)
-    // From 2: can reach 3 (paths: 0→2→3)
-    // Total: 0→1→4, 0→1→3→4, 0→2→3→4 = 3 ways
+    // Paths: 0→1→4, 0→1→3→4, 0→1→2→3→4, 0→2→3→4 = 4 ways
 
     // All ones (only one way - step by step)
     try testing.expectEqual(@as(usize, 1), try countWays(u32, &[_]u32{ 1, 1, 1, 1 }, allocator));
@@ -358,7 +358,7 @@ test "jump game - large array" {
     const allocator = testing.allocator;
 
     // All ones - should take n-1 jumps
-    var nums = try allocator.alloc(u32, 100);
+    const nums = try allocator.alloc(u32, 100);
     defer allocator.free(nums);
     @memset(nums, 1);
 

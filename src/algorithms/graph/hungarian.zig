@@ -183,7 +183,7 @@ pub fn Hungarian(comptime W: type) type {
             @memset(parent_col, -1);
 
             // BFS from start_row
-            var queue: std.ArrayList(usize) = .{};
+            var queue: std.ArrayList(usize) = .empty;
             defer queue.deinit(allocator);
 
             try queue.append(allocator, start_row);

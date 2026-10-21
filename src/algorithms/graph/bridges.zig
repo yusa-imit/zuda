@@ -108,7 +108,7 @@ fn Context(comptime V: type) type {
                 .discovery = std.AutoHashMap(V, usize).init(allocator),
                 .low_link = std.AutoHashMap(V, usize).init(allocator),
                 .time = 0,
-                .bridges = .{},
+                .bridges = .empty,
             };
         }
 
@@ -184,7 +184,7 @@ test "Bridges: single vertex" {
         while (iter.next()) |list| list.deinit(allocator);
     }
 
-    try graph.put(0, .{});
+    try graph.put(0, .empty);
 
     var finder = Bridges(u32).init(allocator);
     var result = try finder.run(&graph);
@@ -203,11 +203,11 @@ test "Bridges: simple bridge (0-1)" {
     }
 
     // 0 -- 1 (simple bridge)
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try graph.put(1, list1);
 
@@ -233,17 +233,17 @@ test "Bridges: triangle (no bridges)" {
     //           |    |
     //           2 ---+
     // No bridges (all edges are in a cycle)
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try list0.append(allocator, 2);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try list1.append(allocator, 2);
     try graph.put(1, list1);
 
-    var list2: std.ArrayList(u32) = .{};
+    var list2: std.ArrayList(u32) = .empty;
     try list2.append(allocator, 0);
     try list2.append(allocator, 1);
     try graph.put(2, list2);
@@ -269,24 +269,24 @@ test "Bridges: square with diagonal (no bridges)" {
     // |  \ |
     // 3 -- 2
     // No bridges (diagonal provides alternate path)
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try list0.append(allocator, 2);
     try list0.append(allocator, 3);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try list1.append(allocator, 2);
     try graph.put(1, list1);
 
-    var list2: std.ArrayList(u32) = .{};
+    var list2: std.ArrayList(u32) = .empty;
     try list2.append(allocator, 0);
     try list2.append(allocator, 1);
     try list2.append(allocator, 3);
     try graph.put(2, list2);
 
-    var list3: std.ArrayList(u32) = .{};
+    var list3: std.ArrayList(u32) = .empty;
     try list3.append(allocator, 0);
     try list3.append(allocator, 2);
     try graph.put(3, list3);
@@ -309,21 +309,21 @@ test "Bridges: chain (all edges are bridges)" {
 
     // 0 -- 1 -- 2 -- 3
     // All edges are bridges
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try list1.append(allocator, 2);
     try graph.put(1, list1);
 
-    var list2: std.ArrayList(u32) = .{};
+    var list2: std.ArrayList(u32) = .empty;
     try list2.append(allocator, 1);
     try list2.append(allocator, 3);
     try graph.put(2, list2);
 
-    var list3: std.ArrayList(u32) = .{};
+    var list3: std.ArrayList(u32) = .empty;
     try list3.append(allocator, 2);
     try graph.put(3, list3);
 
@@ -349,27 +349,27 @@ test "Bridges: cycle with tail" {
     //     |    |
     //     4 -- 3
     // Bridge: 0-1 (tail connecting to cycle)
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try list1.append(allocator, 2);
     try list1.append(allocator, 4);
     try graph.put(1, list1);
 
-    var list2: std.ArrayList(u32) = .{};
+    var list2: std.ArrayList(u32) = .empty;
     try list2.append(allocator, 1);
     try list2.append(allocator, 3);
     try graph.put(2, list2);
 
-    var list3: std.ArrayList(u32) = .{};
+    var list3: std.ArrayList(u32) = .empty;
     try list3.append(allocator, 2);
     try list3.append(allocator, 4);
     try graph.put(3, list3);
 
-    var list4: std.ArrayList(u32) = .{};
+    var list4: std.ArrayList(u32) = .empty;
     try list4.append(allocator, 1);
     try list4.append(allocator, 3);
     try graph.put(4, list4);
@@ -394,24 +394,24 @@ test "Bridges: disconnected components" {
 
     // Component 1: 0 -- 1 (bridge)
     // Component 2: 2 -- 3 -- 4 (all bridges)
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try graph.put(1, list1);
 
-    var list2: std.ArrayList(u32) = .{};
+    var list2: std.ArrayList(u32) = .empty;
     try list2.append(allocator, 3);
     try graph.put(2, list2);
 
-    var list3: std.ArrayList(u32) = .{};
+    var list3: std.ArrayList(u32) = .empty;
     try list3.append(allocator, 2);
     try list3.append(allocator, 4);
     try graph.put(3, list3);
 
-    var list4: std.ArrayList(u32) = .{};
+    var list4: std.ArrayList(u32) = .empty;
     try list4.append(allocator, 3);
     try graph.put(4, list4);
 
@@ -437,38 +437,38 @@ test "Bridges: complex network" {
     // Bridges: 1-2 (connects biconnected component to chain 2-5-6)
     //          2-5 (connects to chain)
     //          5-6 (chain edge)
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try list0.append(allocator, 3);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try list1.append(allocator, 2);
     try list1.append(allocator, 4);
     try graph.put(1, list1);
 
-    var list2: std.ArrayList(u32) = .{};
+    var list2: std.ArrayList(u32) = .empty;
     try list2.append(allocator, 1);
     try list2.append(allocator, 5);
     try graph.put(2, list2);
 
-    var list3: std.ArrayList(u32) = .{};
+    var list3: std.ArrayList(u32) = .empty;
     try list3.append(allocator, 0);
     try list3.append(allocator, 4);
     try graph.put(3, list3);
 
-    var list4: std.ArrayList(u32) = .{};
+    var list4: std.ArrayList(u32) = .empty;
     try list4.append(allocator, 1);
     try list4.append(allocator, 3);
     try graph.put(4, list4);
 
-    var list5: std.ArrayList(u32) = .{};
+    var list5: std.ArrayList(u32) = .empty;
     try list5.append(allocator, 2);
     try list5.append(allocator, 6);
     try graph.put(5, list5);
 
-    var list6: std.ArrayList(u32) = .{};
+    var list6: std.ArrayList(u32) = .empty;
     try list6.append(allocator, 5);
     try graph.put(6, list6);
 
@@ -490,11 +490,11 @@ test "Bridges: self-loop" {
 
     // 0 -- 1 (with self-loop on 1)
     // Self-loop is not a bridge
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try list1.append(allocator, 1); // self-loop
     try graph.put(1, list1);
@@ -520,7 +520,7 @@ test "Bridges: stress test (large chain)" {
     const n = 100;
     var i: u32 = 0;
     while (i < n) : (i += 1) {
-        var list: std.ArrayList(u32) = .{};
+        var list: std.ArrayList(u32) = .empty;
         if (i > 0) try list.append(allocator, i - 1);
         if (i < n - 1) try list.append(allocator, i + 1);
         try graph.put(i, list);

@@ -187,7 +187,7 @@ pub fn PushRelabel(
             }
 
             // Active vertices queue (FIFO for better complexity)
-            var active: std.ArrayList(V) = .{};
+            var active: std.ArrayList(V) = .empty;
             defer active.deinit(allocator);
 
             // Add all vertices with excess (except source and sink)
@@ -243,7 +243,7 @@ pub fn PushRelabel(
 
                 const result_u = try residual.getOrPut(u);
                 if (!result_u.found_existing) {
-                    result_u.value_ptr.* = .{};
+                    result_u.value_ptr.* = .empty;
                 }
 
                 for (neighbors) |edge| {
@@ -251,7 +251,7 @@ pub fn PushRelabel(
 
                     const result_v = try residual.getOrPut(v);
                     if (!result_v.found_existing) {
-                        result_v.value_ptr.* = .{};
+                        result_v.value_ptr.* = .empty;
                     }
 
                     // Add forward edge and remember its index
@@ -458,7 +458,7 @@ pub fn PushRelabel(
             _: Context,
             zero_capacity: C,
         ) !void {
-            var queue: std.ArrayList(V) = .{};
+            var queue: std.ArrayList(V) = .empty;
             defer queue.deinit(allocator);
 
             try min_cut.put(source, {});
@@ -518,12 +518,12 @@ test "PushRelabel: basic max flow" {
         fn addEdge(self: *@This(), from: Vertex, to: Vertex, capacity: u32) !void {
             const result = try self.adjacencies.getOrPut(from);
             if (!result.found_existing) {
-                result.value_ptr.* = .{ .edges = .{} };
+                result.value_ptr.* = .{ .edges = .empty };
             }
             try result.value_ptr.edges.append(self.adjacencies.allocator, .{ .target = to, .capacity = capacity });
             const result_to = try self.adjacencies.getOrPut(to);
             if (!result_to.found_existing) {
-                result_to.value_ptr.* = .{ .edges = .{} };
+                result_to.value_ptr.* = .{ .edges = .empty };
             }
         }
     };
@@ -580,12 +580,12 @@ test "PushRelabel: single edge" {
         fn addEdge(self: *@This(), from: Vertex, to: Vertex, capacity: u32) !void {
             const result = try self.adjacencies.getOrPut(from);
             if (!result.found_existing) {
-                result.value_ptr.* = .{ .edges = .{} };
+                result.value_ptr.* = .{ .edges = .empty };
             }
             try result.value_ptr.edges.append(self.adjacencies.allocator, .{ .target = to, .capacity = capacity });
             const result_to = try self.adjacencies.getOrPut(to);
             if (!result_to.found_existing) {
-                result_to.value_ptr.* = .{ .edges = .{} };
+                result_to.value_ptr.* = .{ .edges = .empty };
             }
         }
     };
@@ -636,12 +636,12 @@ test "PushRelabel: no path" {
         fn addEdge(self: *@This(), from: Vertex, to: Vertex, capacity: u32) !void {
             const result = try self.adjacencies.getOrPut(from);
             if (!result.found_existing) {
-                result.value_ptr.* = .{ .edges = .{} };
+                result.value_ptr.* = .{ .edges = .empty };
             }
             try result.value_ptr.edges.append(self.adjacencies.allocator, .{ .target = to, .capacity = capacity });
             const result_to = try self.adjacencies.getOrPut(to);
             if (!result_to.found_existing) {
-                result_to.value_ptr.* = .{ .edges = .{} };
+                result_to.value_ptr.* = .{ .edges = .empty };
             }
         }
     };
@@ -734,12 +734,12 @@ test "PushRelabel: complex network" {
         fn addEdge(self: *@This(), from: Vertex, to: Vertex, capacity: u32) !void {
             const result = try self.adjacencies.getOrPut(from);
             if (!result.found_existing) {
-                result.value_ptr.* = .{ .edges = .{} };
+                result.value_ptr.* = .{ .edges = .empty };
             }
             try result.value_ptr.edges.append(self.adjacencies.allocator, .{ .target = to, .capacity = capacity });
             const result_to = try self.adjacencies.getOrPut(to);
             if (!result_to.found_existing) {
-                result_to.value_ptr.* = .{ .edges = .{} };
+                result_to.value_ptr.* = .{ .edges = .empty };
             }
         }
     };
@@ -796,12 +796,12 @@ test "PushRelabel: minimum cut" {
         fn addEdge(self: *@This(), from: Vertex, to: Vertex, capacity: u32) !void {
             const result = try self.adjacencies.getOrPut(from);
             if (!result.found_existing) {
-                result.value_ptr.* = .{ .edges = .{} };
+                result.value_ptr.* = .{ .edges = .empty };
             }
             try result.value_ptr.edges.append(self.adjacencies.allocator, .{ .target = to, .capacity = capacity });
             const result_to = try self.adjacencies.getOrPut(to);
             if (!result_to.found_existing) {
-                result_to.value_ptr.* = .{ .edges = .{} };
+                result_to.value_ptr.* = .{ .edges = .empty };
             }
         }
     };
@@ -856,12 +856,12 @@ test "PushRelabel: path with multiple bottlenecks" {
         fn addEdge(self: *@This(), from: Vertex, to: Vertex, capacity: u32) !void {
             const result = try self.adjacencies.getOrPut(from);
             if (!result.found_existing) {
-                result.value_ptr.* = .{ .edges = .{} };
+                result.value_ptr.* = .{ .edges = .empty };
             }
             try result.value_ptr.edges.append(self.adjacencies.allocator, .{ .target = to, .capacity = capacity });
             const result_to = try self.adjacencies.getOrPut(to);
             if (!result_to.found_existing) {
-                result_to.value_ptr.* = .{ .edges = .{} };
+                result_to.value_ptr.* = .{ .edges = .empty };
             }
         }
     };
@@ -917,12 +917,12 @@ test "PushRelabel: two parallel paths different capacities" {
         fn addEdge(self: *@This(), from: Vertex, to: Vertex, capacity: u32) !void {
             const result = try self.adjacencies.getOrPut(from);
             if (!result.found_existing) {
-                result.value_ptr.* = .{ .edges = .{} };
+                result.value_ptr.* = .{ .edges = .empty };
             }
             try result.value_ptr.edges.append(self.adjacencies.allocator, .{ .target = to, .capacity = capacity });
             const result_to = try self.adjacencies.getOrPut(to);
             if (!result_to.found_existing) {
-                result_to.value_ptr.* = .{ .edges = .{} };
+                result_to.value_ptr.* = .{ .edges = .empty };
             }
         }
     };
@@ -978,12 +978,12 @@ test "PushRelabel: zero capacity edge is ignored" {
         fn addEdge(self: *@This(), from: Vertex, to: Vertex, capacity: u32) !void {
             const result = try self.adjacencies.getOrPut(from);
             if (!result.found_existing) {
-                result.value_ptr.* = .{ .edges = .{} };
+                result.value_ptr.* = .{ .edges = .empty };
             }
             try result.value_ptr.edges.append(self.adjacencies.allocator, .{ .target = to, .capacity = capacity });
             const result_to = try self.adjacencies.getOrPut(to);
             if (!result_to.found_existing) {
-                result_to.value_ptr.* = .{ .edges = .{} };
+                result_to.value_ptr.* = .{ .edges = .empty };
             }
         }
     };
@@ -1037,12 +1037,12 @@ test "PushRelabel: larger network multiple paths" {
         fn addEdge(self: *@This(), from: Vertex, to: Vertex, capacity: u32) !void {
             const result = try self.adjacencies.getOrPut(from);
             if (!result.found_existing) {
-                result.value_ptr.* = .{ .edges = .{} };
+                result.value_ptr.* = .{ .edges = .empty };
             }
             try result.value_ptr.edges.append(self.adjacencies.allocator, .{ .target = to, .capacity = capacity });
             const result_to = try self.adjacencies.getOrPut(to);
             if (!result_to.found_existing) {
-                result_to.value_ptr.* = .{ .edges = .{} };
+                result_to.value_ptr.* = .{ .edges = .empty };
             }
         }
     };
@@ -1099,12 +1099,12 @@ test "PushRelabel: init-deinit loop memory safety" {
         fn addEdge(self: *@This(), from: Vertex, to: Vertex, capacity: u32) !void {
             const result = try self.adjacencies.getOrPut(from);
             if (!result.found_existing) {
-                result.value_ptr.* = .{ .edges = .{} };
+                result.value_ptr.* = .{ .edges = .empty };
             }
             try result.value_ptr.edges.append(self.adjacencies.allocator, .{ .target = to, .capacity = capacity });
             const result_to = try self.adjacencies.getOrPut(to);
             if (!result_to.found_existing) {
-                result_to.value_ptr.* = .{ .edges = .{} };
+                result_to.value_ptr.* = .{ .edges = .empty };
             }
         }
     };
@@ -1125,7 +1125,7 @@ test "PushRelabel: init-deinit loop memory safety" {
         var result = try PR.run(allocator, graph, 0, 3, TestGraph.Context{}, 0);
         defer result.deinit();
 
-        // Max flow should be 5 (2 from path 0->1->3, 3 from path 0->2->3)
-        try testing.expectEqual(@as(u32, 5), result.max_flow);
+        // Max flow is 6: path 0->1->3 is limited by 1->3 (4), path 0->2->3 by 2->3 (2)
+        try testing.expectEqual(@as(u32, 6), result.max_flow);
     }
 }

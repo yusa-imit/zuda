@@ -201,11 +201,11 @@ pub fn grayToBinary(comptime T: type, gray: T) T {
     }
 
     var result = gray;
-    var shift: u8 = 1;
-    const bits = @bitSizeOf(T);
+    var shift: u32 = 1;
+    const bits: u32 = @bitSizeOf(T);
 
     while (shift < bits) : (shift *= 2) {
-        result ^= result >> shift;
+        result ^= result >> @intCast(shift);
     }
 
     return result;
@@ -257,7 +257,8 @@ pub fn extractBitField(comptime T: type, value: T, position: u8, width: u8) T {
     if (position >= bits or width == 0) return 0;
     if (position + width > bits) return 0;
 
-    const mask = (@as(T, 1) << @intCast(width)) - 1;
+    // Shift amount is in [0, bits - 1] because 1 <= width <= bits.
+    const mask = @as(T, std.math.maxInt(T)) >> @intCast(bits - width);
     return (value >> @intCast(position)) & mask;
 }
 
@@ -279,7 +280,8 @@ pub fn setBitField(comptime T: type, value: T, position: u8, width: u8, field_va
     if (position >= bits or width == 0) return value;
     if (position + width > bits) return value;
 
-    const mask = ((@as(T, 1) << @intCast(width)) - 1) << @intCast(position);
+    const width_mask = @as(T, std.math.maxInt(T)) >> @intCast(bits - width);
+    const mask = width_mask << @intCast(position);
     const cleared = value & ~mask;
     const field = (field_value << @intCast(position)) & mask;
     return cleared | field;
@@ -356,7 +358,7 @@ pub fn clearRightmostBit(comptime T: type, value: T) T {
         }
     }
 
-    return value & (value - 1);
+    return value & (value -% 1);
 }
 
 // ============================================================================
@@ -460,19 +462,26 @@ test "Gray code round-trip" {
 
 test "swapBits" {
     try testing.expectEqual(@as(u8, 0b10110100), swapBits(u8, 0b10110100, 0, 0)); // No-op
-    try testing.expectEqual(@as(u8, 0b10100101), swapBits(u8, 0b10110100, 2, 5));
+    // Bits 2 and 5 are both 1, so nothing changes.
+    try testing.expectEqual(@as(u8, 0b10110100), swapBits(u8, 0b10110100, 2, 5));
+    // Bits 2 (1) and 3 (0) differ, so they trade places.
+    try testing.expectEqual(@as(u8, 0b10111000), swapBits(u8, 0b10110100, 2, 3));
     try testing.expectEqual(@as(u8, 0b00110101), swapBits(u8, 0b10110100, 0, 7));
 }
 
 test "extractBitField" {
     try testing.expectEqual(@as(u8, 0b1101), extractBitField(u8, 0b10110100, 2, 4));
-    try testing.expectEqual(@as(u8, 0b101), extractBitField(u8, 0b10110100, 4, 3));
+    try testing.expectEqual(@as(u8, 0b011), extractBitField(u8, 0b10110100, 4, 3));
+    // Full-width field must not overflow the mask shift.
+    try testing.expectEqual(@as(u8, 0b10110100), extractBitField(u8, 0b10110100, 0, 8));
     try testing.expectEqual(@as(u8, 0b0), extractBitField(u8, 0b10110100, 0, 2));
 }
 
 test "setBitField" {
     try testing.expectEqual(@as(u8, 0b10010100), setBitField(u8, 0b10110100, 2, 4, 0b0101));
-    try testing.expectEqual(@as(u8, 0b01110100), setBitField(u8, 0b10110100, 4, 3, 0b011));
+    try testing.expectEqual(@as(u8, 0b11010100), setBitField(u8, 0b10110100, 4, 3, 0b101));
+    // Full-width field replaces the whole value.
+    try testing.expectEqual(@as(u8, 0b01010101), setBitField(u8, 0b10110100, 0, 8, 0b01010101));
 }
 
 test "findMSB" {

@@ -40,7 +40,6 @@ const ArrayList = std.ArrayList;
 /// ## References
 /// - LeetCode #131 (Palindrome Partitioning)
 /// - LeetCode #132 (Palindrome Partitioning II)
-
 /// Find minimum number of cuts needed to partition string into palindromes
 ///
 /// Uses dynamic programming with palindrome memoization table.
@@ -124,12 +123,12 @@ pub const PartitionResult = struct {
     /// Each partition is a list of palindrome strings
     partitions: ArrayList(ArrayList([]const u8)),
 
-    pub fn deinit(self: *PartitionResult) void {
-        for (self.partitions.items) |part| {
+    pub fn deinit(self: *PartitionResult, allocator: Allocator) void {
+        for (self.partitions.items) |*part| {
             // Strings are slices into original, don't free them
-            part.deinit();
+            part.deinit(allocator);
         }
-        self.partitions.deinit();
+        self.partitions.deinit(allocator);
     }
 };
 
@@ -158,7 +157,7 @@ pub const PartitionResult = struct {
 pub fn allPartitions(allocator: Allocator, s: []const u8) !PartitionResult {
     const n = s.len;
     var result = PartitionResult{
-        .partitions = ArrayList(ArrayList([]const u8)).init(allocator),
+        .partitions = .empty,
     };
 
     if (n == 0) {
@@ -193,8 +192,9 @@ pub fn allPartitions(allocator: Allocator, s: []const u8) !PartitionResult {
     }
 
     // Backtrack to find all partitions
-    var current = ArrayList([]const u8).init(allocator);
-    defer current.deinit();
+    var current: ArrayList([]const u8) = .empty;
+    defer current.deinit(allocator);
+    errdefer result.deinit(allocator);
 
     try backtrack(allocator, s, 0, &isPalin, &current, &result.partitions);
 
@@ -211,16 +211,18 @@ fn backtrack(
 ) !void {
     if (start == s.len) {
         // Found complete partition
-        var partition = ArrayList([]const u8).init(allocator);
-        try partition.appendSlice(current.items);
-        try result.append(partition);
+        var partition: ArrayList([]const u8) = .empty;
+        errdefer partition.deinit(allocator);
+
+        try partition.appendSlice(allocator, current.items);
+        try result.append(allocator, partition);
         return;
     }
 
     // Try all possible end positions
     for (start..s.len) |end| {
         if (isPalin.*[start][end]) {
-            try current.append(s[start .. end + 1]);
+            try current.append(allocator, s[start .. end + 1]);
             try backtrack(allocator, s, end + 1, isPalin, current, result);
             _ = current.pop();
         }
@@ -308,13 +310,13 @@ test "palindrome partition - minCuts complex" {
         try std.testing.expectEqual(@as(usize, 0), cuts);
     }
 
-    // "abacabad" → 3 cuts: "aba" | "c" | "aba" | "d"
+    // "abacabad" → 1 cut: "abacaba" | "d"
     {
         const cuts = try minCuts(allocator, "abacabad");
-        try std.testing.expectEqual(@as(usize, 3), cuts);
+        try std.testing.expectEqual(@as(usize, 1), cuts);
     }
 
-    // "abaabcd" → 3 cuts: "aba" | "a" | "b" | "cd" or "abaa" | "b" | "c" | "d"
+    // "abaabcd" → 3 cuts: "a" | "baab" | "c" | "d"
     {
         const cuts = try minCuts(allocator, "abaabcd");
         try std.testing.expectEqual(@as(usize, 3), cuts);
@@ -327,7 +329,7 @@ test "palindrome partition - allPartitions basic" {
     // "aab" → 2 partitions
     {
         var result = try allPartitions(allocator, "aab");
-        defer result.deinit();
+        defer result.deinit(allocator);
 
         try std.testing.expectEqual(@as(usize, 2), result.partitions.items.len);
 
@@ -349,14 +351,15 @@ test "palindrome partition - allPartitions basic" {
 test "palindrome partition - allPartitions single palindrome" {
     const allocator = std.testing.allocator;
 
-    // "aba" → 1 partition: entire string
+    // "aba" → 2 partitions: ["a", "b", "a"] and the entire string
     {
         var result = try allPartitions(allocator, "aba");
-        defer result.deinit();
+        defer result.deinit(allocator);
 
-        try std.testing.expectEqual(@as(usize, 1), result.partitions.items.len);
+        try std.testing.expectEqual(@as(usize, 2), result.partitions.items.len);
+        try std.testing.expectEqual(@as(usize, 3), result.partitions.items[0].items.len);
 
-        const p = result.partitions.items[0];
+        const p = result.partitions.items[1];
         try std.testing.expectEqual(@as(usize, 1), p.items.len);
         try std.testing.expectEqualStrings("aba", p.items[0]);
     }
@@ -368,7 +371,7 @@ test "palindrome partition - allPartitions no palindromes" {
     // "abc" → 1 partition: all chars separate
     {
         var result = try allPartitions(allocator, "abc");
-        defer result.deinit();
+        defer result.deinit(allocator);
 
         try std.testing.expectEqual(@as(usize, 1), result.partitions.items.len);
 
@@ -386,14 +389,14 @@ test "palindrome partition - allPartitions edge cases" {
     // Empty string
     {
         var result = try allPartitions(allocator, "");
-        defer result.deinit();
+        defer result.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 0), result.partitions.items.len);
     }
 
     // Single character
     {
         var result = try allPartitions(allocator, "a");
-        defer result.deinit();
+        defer result.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 1), result.partitions.items.len);
         try std.testing.expectEqual(@as(usize, 1), result.partitions.items[0].items.len);
         try std.testing.expectEqualStrings("a", result.partitions.items[0].items[0]);
@@ -402,7 +405,7 @@ test "palindrome partition - allPartitions edge cases" {
     // Two same characters
     {
         var result = try allPartitions(allocator, "aa");
-        defer result.deinit();
+        defer result.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 2), result.partitions.items.len);
     }
 }
@@ -413,7 +416,7 @@ test "palindrome partition - allPartitions multiple palindromes" {
     // "abaaba" → multiple partitions including full palindrome
     {
         var result = try allPartitions(allocator, "abaaba");
-        defer result.deinit();
+        defer result.deinit(allocator);
 
         // Should have multiple partitions
         try std.testing.expect(result.partitions.items.len > 1);
@@ -453,14 +456,14 @@ test "palindrome partition - allPartitions count validation" {
     // "aa" → 2 partitions: ["a", "a"] and ["aa"]
     {
         var result = try allPartitions(allocator, "aa");
-        defer result.deinit();
+        defer result.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 2), result.partitions.items.len);
     }
 
     // "aaa" → 4 partitions: ["a","a","a"], ["aa","a"], ["a","aa"], ["aaa"]
     {
         var result = try allPartitions(allocator, "aaa");
-        defer result.deinit();
+        defer result.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 4), result.partitions.items.len);
     }
 }
@@ -471,7 +474,7 @@ test "palindrome partition - minCuts long string" {
     // Alternating pattern
     {
         const cuts = try minCuts(allocator, "abababab");
-        try std.testing.expect(cuts >= 3); // At least some cuts needed
+        try std.testing.expectEqual(@as(usize, 1), cuts); // "abababa" | "b"
     }
 
     // All same character → 0 cuts
@@ -486,7 +489,7 @@ test "palindrome partition - allPartitions palindrome validation" {
 
     // Verify all partitions contain only palindromes
     var result = try allPartitions(allocator, "aab");
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     for (result.partitions.items) |partition| {
         for (partition.items) |substr| {
@@ -507,6 +510,6 @@ test "palindrome partition - memory safety" {
     // Test allPartitions doesn't leak
     {
         var result = try allPartitions(allocator, "abab");
-        defer result.deinit();
+        defer result.deinit(allocator);
     }
 }

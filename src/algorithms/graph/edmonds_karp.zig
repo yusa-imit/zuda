@@ -197,7 +197,7 @@ pub fn EdmondsKarp(
 
                 const result_u = try residual.getOrPut(u);
                 if (!result_u.found_existing) {
-                    result_u.value_ptr.* = .{};
+                    result_u.value_ptr.* = .empty;
                 }
 
                 for (neighbors) |edge| {
@@ -213,7 +213,7 @@ pub fn EdmondsKarp(
                     // Backward edge (zero capacity initially)
                     const result_v = try residual.getOrPut(v);
                     if (!result_v.found_existing) {
-                        result_v.value_ptr.* = .{};
+                        result_v.value_ptr.* = .empty;
                     }
                     try result_v.value_ptr.append(allocator, .{
                         .target = u,
@@ -247,7 +247,7 @@ pub fn EdmondsKarp(
             var capacity_to = std.HashMap(V, C, HashMapContext, std.hash_map.default_max_load_percentage).init(allocator);
             defer capacity_to.deinit();
 
-            var queue: std.ArrayList(V) = .{};
+            var queue: std.ArrayList(V) = .empty;
             defer queue.deinit(allocator);
 
             try queue.append(allocator, source);
@@ -298,7 +298,7 @@ pub fn EdmondsKarp(
             }
 
             // Reconstruct path
-            var path: std.ArrayList(V) = .{};
+            var path: std.ArrayList(V) = .empty;
             errdefer path.deinit(allocator);
 
             var current = sink;
@@ -343,7 +343,7 @@ pub fn EdmondsKarp(
             // Increase backward edge capacity
             const result_v = try residual.getOrPut(v);
             if (!result_v.found_existing) {
-                result_v.value_ptr.* = .{};
+                result_v.value_ptr.* = .empty;
             }
 
             var found = false;
@@ -375,7 +375,7 @@ pub fn EdmondsKarp(
             var visited = std.HashMap(V, void, HashMapContext, std.hash_map.default_max_load_percentage).init(allocator);
             defer visited.deinit();
 
-            var stack: std.ArrayList(V) = .{};
+            var stack: std.ArrayList(V) = .empty;
             defer stack.deinit(allocator);
 
             try stack.append(allocator, source);

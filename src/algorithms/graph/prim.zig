@@ -112,7 +112,7 @@ pub fn Prim(comptime V: type, comptime W: type) type {
             defer pq.deinit(self.allocator);
 
             // MST edges
-            var mst_edges: std.ArrayList(Edge) = .{};
+            var mst_edges: std.ArrayList(Edge) = .empty;
             errdefer mst_edges.deinit(self.allocator);
 
             var total_weight: W = 0;
@@ -201,19 +201,19 @@ test "Prim: basic MST" {
     }
 
     // Vertex 0
-    var v0_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v0_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v0_neighbors.append(testing.allocator, .{ .neighbor = 1, .weight = 5 });
     try v0_neighbors.append(testing.allocator, .{ .neighbor = 2, .weight = 3 });
     try adjacency_list.put(0, v0_neighbors);
 
     // Vertex 1
-    var v1_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v1_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v1_neighbors.append(testing.allocator, .{ .neighbor = 0, .weight = 5 });
     try v1_neighbors.append(testing.allocator, .{ .neighbor = 2, .weight = 2 });
     try adjacency_list.put(1, v1_neighbors);
 
     // Vertex 2
-    var v2_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v2_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v2_neighbors.append(testing.allocator, .{ .neighbor = 0, .weight = 3 });
     try v2_neighbors.append(testing.allocator, .{ .neighbor = 1, .weight = 2 });
     try adjacency_list.put(2, v2_neighbors);
@@ -233,7 +233,7 @@ test "Prim: single vertex" {
     defer adjacency_list.deinit();
 
     // Single vertex with no edges
-    var v0_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v0_neighbors: std.ArrayList(P.Neighbor) = .empty;
     defer v0_neighbors.deinit(testing.allocator);
     try adjacency_list.put(0, v0_neighbors);
 
@@ -258,11 +258,11 @@ test "Prim: two vertices" {
     }
 
     // 0 -- 10 -- 1
-    var v0_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v0_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v0_neighbors.append(testing.allocator, .{ .neighbor = 1, .weight = 10 });
     try adjacency_list.put(0, v0_neighbors);
 
-    var v1_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v1_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v1_neighbors.append(testing.allocator, .{ .neighbor = 0, .weight = 10 });
     try adjacency_list.put(1, v1_neighbors);
 
@@ -288,28 +288,28 @@ test "Prim: complete graph K4" {
 
     // Complete graph on 4 vertices with same weights as Kruskal test
     // Vertex 0
-    var v0_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v0_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v0_neighbors.append(testing.allocator, .{ .neighbor = 1, .weight = 1 });
     try v0_neighbors.append(testing.allocator, .{ .neighbor = 2, .weight = 4 });
     try v0_neighbors.append(testing.allocator, .{ .neighbor = 3, .weight = 3 });
     try adjacency_list.put(0, v0_neighbors);
 
     // Vertex 1
-    var v1_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v1_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v1_neighbors.append(testing.allocator, .{ .neighbor = 0, .weight = 1 });
     try v1_neighbors.append(testing.allocator, .{ .neighbor = 2, .weight = 2 });
     try v1_neighbors.append(testing.allocator, .{ .neighbor = 3, .weight = 5 });
     try adjacency_list.put(1, v1_neighbors);
 
     // Vertex 2
-    var v2_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v2_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v2_neighbors.append(testing.allocator, .{ .neighbor = 0, .weight = 4 });
     try v2_neighbors.append(testing.allocator, .{ .neighbor = 1, .weight = 2 });
     try v2_neighbors.append(testing.allocator, .{ .neighbor = 3, .weight = 6 });
     try adjacency_list.put(2, v2_neighbors);
 
     // Vertex 3
-    var v3_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v3_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v3_neighbors.append(testing.allocator, .{ .neighbor = 0, .weight = 3 });
     try v3_neighbors.append(testing.allocator, .{ .neighbor = 1, .weight = 5 });
     try v3_neighbors.append(testing.allocator, .{ .neighbor = 2, .weight = 6 });
@@ -336,21 +336,21 @@ test "Prim: zero weight edges" {
     }
 
     // 0 -0- 1 -0- 2 -1- 3
-    var v0_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v0_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v0_neighbors.append(testing.allocator, .{ .neighbor = 1, .weight = 0 });
     try adjacency_list.put(0, v0_neighbors);
 
-    var v1_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v1_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v1_neighbors.append(testing.allocator, .{ .neighbor = 0, .weight = 0 });
     try v1_neighbors.append(testing.allocator, .{ .neighbor = 2, .weight = 0 });
     try adjacency_list.put(1, v1_neighbors);
 
-    var v2_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v2_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v2_neighbors.append(testing.allocator, .{ .neighbor = 1, .weight = 0 });
     try v2_neighbors.append(testing.allocator, .{ .neighbor = 3, .weight = 1 });
     try adjacency_list.put(2, v2_neighbors);
 
-    var v3_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v3_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v3_neighbors.append(testing.allocator, .{ .neighbor = 2, .weight = 1 });
     try adjacency_list.put(3, v3_neighbors);
 
@@ -375,17 +375,17 @@ test "Prim: negative weights" {
     }
 
     // Triangle with negative weight
-    var v0_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v0_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v0_neighbors.append(testing.allocator, .{ .neighbor = 1, .weight = -5 });
     try v0_neighbors.append(testing.allocator, .{ .neighbor = 2, .weight = 2 });
     try adjacency_list.put(0, v0_neighbors);
 
-    var v1_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v1_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v1_neighbors.append(testing.allocator, .{ .neighbor = 0, .weight = -5 });
     try v1_neighbors.append(testing.allocator, .{ .neighbor = 2, .weight = 3 });
     try adjacency_list.put(1, v1_neighbors);
 
-    var v2_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v2_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v2_neighbors.append(testing.allocator, .{ .neighbor = 0, .weight = 2 });
     try v2_neighbors.append(testing.allocator, .{ .neighbor = 1, .weight = 3 });
     try adjacency_list.put(2, v2_neighbors);
@@ -410,17 +410,17 @@ test "Prim: floating point weights" {
         adjacency_list.deinit();
     }
 
-    var v0_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v0_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v0_neighbors.append(testing.allocator, .{ .neighbor = 1, .weight = 1.5 });
     try v0_neighbors.append(testing.allocator, .{ .neighbor = 2, .weight = 3.7 });
     try adjacency_list.put(0, v0_neighbors);
 
-    var v1_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v1_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v1_neighbors.append(testing.allocator, .{ .neighbor = 0, .weight = 1.5 });
     try v1_neighbors.append(testing.allocator, .{ .neighbor = 2, .weight = 2.3 });
     try adjacency_list.put(1, v1_neighbors);
 
-    var v2_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v2_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v2_neighbors.append(testing.allocator, .{ .neighbor = 0, .weight = 3.7 });
     try v2_neighbors.append(testing.allocator, .{ .neighbor = 1, .weight = 2.3 });
     try adjacency_list.put(2, v2_neighbors);
@@ -446,21 +446,21 @@ test "Prim: start from different vertex" {
     }
 
     // Linear chain: 0-5-1-2-2-3
-    var v0_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v0_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v0_neighbors.append(testing.allocator, .{ .neighbor = 1, .weight = 5 });
     try adjacency_list.put(0, v0_neighbors);
 
-    var v1_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v1_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v1_neighbors.append(testing.allocator, .{ .neighbor = 0, .weight = 5 });
     try v1_neighbors.append(testing.allocator, .{ .neighbor = 2, .weight = 2 });
     try adjacency_list.put(1, v1_neighbors);
 
-    var v2_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v2_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v2_neighbors.append(testing.allocator, .{ .neighbor = 1, .weight = 2 });
     try v2_neighbors.append(testing.allocator, .{ .neighbor = 3, .weight = 3 });
     try adjacency_list.put(2, v2_neighbors);
 
-    var v3_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v3_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v3_neighbors.append(testing.allocator, .{ .neighbor = 2, .weight = 3 });
     try adjacency_list.put(3, v3_neighbors);
 
@@ -493,20 +493,20 @@ test "Prim: disconnected graph" {
     }
 
     // Component 1: 0-1 (weight 5)
-    var v0_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v0_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v0_neighbors.append(testing.allocator, .{ .neighbor = 1, .weight = 5 });
     try adjacency_list.put(0, v0_neighbors);
 
-    var v1_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v1_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v1_neighbors.append(testing.allocator, .{ .neighbor = 0, .weight = 5 });
     try adjacency_list.put(1, v1_neighbors);
 
     // Component 2: 2-3 (weight 3)
-    var v2_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v2_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v2_neighbors.append(testing.allocator, .{ .neighbor = 3, .weight = 3 });
     try adjacency_list.put(2, v2_neighbors);
 
-    var v3_neighbors: std.ArrayList(P.Neighbor) = .{};
+    var v3_neighbors: std.ArrayList(P.Neighbor) = .empty;
     try v3_neighbors.append(testing.allocator, .{ .neighbor = 2, .weight = 3 });
     try adjacency_list.put(3, v3_neighbors);
 
@@ -534,7 +534,7 @@ test "Prim: stress test (100 vertices chain)" {
     // Create chain: 0-1-2-...-99
     var i: u32 = 0;
     while (i < 100) : (i += 1) {
-        var neighbors: std.ArrayList(P.Neighbor) = .{};
+        var neighbors: std.ArrayList(P.Neighbor) = .empty;
         if (i > 0) {
             try neighbors.append(testing.allocator, .{ .neighbor = i - 1, .weight = @intCast(i) });
         }

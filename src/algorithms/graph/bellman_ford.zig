@@ -90,7 +90,7 @@ pub fn BellmanFord(
                     return null;
                 }
 
-                var path: std.ArrayList(V) = .{};
+                var path: std.ArrayList(V) = .empty;
                 errdefer path.deinit(self.allocator);
 
                 var current = target;
@@ -167,7 +167,7 @@ pub fn BellmanFord(
 
             // Check for negative cycles
             var negative_cycle_vertices: ?[]V = null;
-            var affected_vertices: std.ArrayList(V) = .{};
+            var affected_vertices: std.ArrayList(V) = .empty;
             defer affected_vertices.deinit(allocator);
 
             for (edges) |edge| {

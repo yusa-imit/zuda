@@ -102,7 +102,7 @@ pub fn Johnson(
                     return null;
                 }
 
-                var path: std.ArrayList(V) = .{};
+                var path: std.ArrayList(V) = .empty;
                 errdefer path.deinit(self.allocator);
 
                 var current = target;
@@ -144,7 +144,7 @@ pub fn Johnson(
 
             // Step 1: Add a new source vertex (we'll use a separate edge list for Bellman-Ford)
             // We need to create edges from new source (represented by null internally) to all vertices
-            var bf_edges: std.ArrayList(BFEdge) = .{};
+            var bf_edges: std.ArrayList(BFEdge) = .empty;
             defer bf_edges.deinit(allocator);
 
             // Add original edges
@@ -166,7 +166,7 @@ pub fn Johnson(
             }
 
             // Create vertex list including new source
-            var bf_vertices: std.ArrayList(ExtendedVertex) = .{};
+            var bf_vertices: std.ArrayList(ExtendedVertex) = .empty;
             defer bf_vertices.deinit(allocator);
             try bf_vertices.append(allocator, .new_source);
             for (vertices) |v| {
@@ -227,7 +227,7 @@ pub fn Johnson(
 
                 const entry = try reweighted_graph.getOrPut(edge.from);
                 if (!entry.found_existing) {
-                    entry.value_ptr.* = .{};
+                    entry.value_ptr.* = .empty;
                 }
                 try entry.value_ptr.append(allocator, .{
                     .target = edge.to,
@@ -757,7 +757,7 @@ test "Johnson: sparse vs dense graph performance characteristics" {
 
     // Small sparse graph (chain)
     const n = 10;
-    var edges: std.ArrayList(J.Edge) = .{};
+    var edges: std.ArrayList(J.Edge) = .empty;
     defer edges.deinit(allocator);
 
     var i: u32 = 0;

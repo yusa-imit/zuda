@@ -144,7 +144,7 @@ pub fn optimalStrategyOptimized(comptime T: type, allocator: Allocator, arr: []c
             const j = i + length - 1;
 
             const pick_left = arr[i] - (if (i + 1 <= j) prev[i + 1] else 0);
-            const pick_right = arr[j] - (if (i <= j - 1) curr[i] else 0);
+            const pick_right = arr[j] - (if (i <= j - 1) prev[i] else 0);
 
             curr[i] = @max(pick_left, pick_right);
         }
@@ -192,15 +192,13 @@ test "optimal game strategy - basic examples" {
     const allocator = std.testing.allocator;
 
     // Example 1: [1, 5, 2]
-    // Player 1 picks 2, Player 2 picks 5, Player 1 picks 1
-    // Player 1: 2+1=3, Player 2: 5
-    // But optimal: Player 1 picks 5, Player 2 picks 2, Player 1 picks 1
-    // Player 1: 5+1=6, Player 2: 2
+    // Only the two ends can be taken. Player 1 takes 2 (or 1), Player 2 takes 5,
+    // Player 1 gets the remaining 1 (or 2). Player 1: 3, Player 2: 5.
     const arr1 = [_]i32{ 1, 5, 2 };
     const result1 = try optimalStrategy(i32, allocator, &arr1);
-    try std.testing.expectEqual(@as(i32, 6), result1.player1_score);
-    try std.testing.expectEqual(@as(i32, 2), result1.player2_score);
-    try std.testing.expect(result1.player1_wins);
+    try std.testing.expectEqual(@as(i32, 3), result1.player1_score);
+    try std.testing.expectEqual(@as(i32, 5), result1.player2_score);
+    try std.testing.expect(!result1.player1_wins);
 
     // Example 2: [1, 5, 233, 7]
     const arr2 = [_]i32{ 1, 5, 233, 7 };
@@ -255,16 +253,23 @@ test "optimal game strategy - even split" {
 test "optimal game strategy - player 1 loses" {
     const allocator = std.testing.allocator;
 
-    // [1, 100, 1, 1]
-    // P1 picks 1 → [100,1,1]
-    // P2 picks 100 → [1,1]
-    // P1 picks 1 → [1]
-    // P2 picks 1
-    // P1: 1+1=2, P2: 100+1=101
-    const arr = [_]i32{ 1, 100, 1, 1 };
+    // [1, 5, 2]: whatever end Player 1 takes, Player 2 then takes the 5
+    const arr = [_]i32{ 1, 5, 2 };
     const result = try optimalStrategy(i32, allocator, &arr);
     try std.testing.expect(!result.player1_wins);
     try std.testing.expect(result.player1_score < result.player2_score);
+}
+
+test "optimal game strategy - player 1 wins by forcing the opponent" {
+    const allocator = std.testing.allocator;
+
+    // [1, 100, 1, 1]: Player 1 takes the right 1, leaving [1, 100, 1];
+    // Player 2 must expose the 100 to Player 1. Player 1: 101, Player 2: 2.
+    const arr = [_]i32{ 1, 100, 1, 1 };
+    const result = try optimalStrategy(i32, allocator, &arr);
+    try std.testing.expect(result.player1_wins);
+    try std.testing.expectEqual(@as(i32, 101), result.player1_score);
+    try std.testing.expectEqual(@as(i32, 2), result.player2_score);
 }
 
 test "optimal game strategy - large values" {
@@ -315,8 +320,11 @@ test "optimal game strategy - convenience functions" {
     const can_win = try canPlayer1Win(i32, allocator, &arr);
     const max_score = try maxPlayer1Score(i32, allocator, &arr);
 
-    try std.testing.expect(can_win);
-    try std.testing.expectEqual(@as(i32, 6), max_score);
+    try std.testing.expect(!can_win);
+    try std.testing.expectEqual(@as(i32, 3), max_score);
+
+    const arr_win = [_]i32{ 1, 5, 233, 7 };
+    try std.testing.expect(try canPlayer1Win(i32, allocator, &arr_win));
 }
 
 test "optimal game strategy - negative values" {
@@ -326,11 +334,11 @@ test "optimal game strategy - negative values" {
     const arr = [_]i32{ -1, -5, -2 };
     const result = try optimalStrategy(i32, allocator, &arr);
     try std.testing.expectEqual(@as(i32, -8), result.player1_score + result.player2_score);
-    // P1 minimizes loss: picks -1, P2 picks -2, P1 picks -5
+    // P1 picks -1, P2 picks -2, P1 is left with -5
     // P1: -1 + -5 = -6, P2: -2
-    try std.testing.expectEqual(@as(i32, -3), result.player1_score);
-    try std.testing.expectEqual(@as(i32, -5), result.player2_score);
-    try std.testing.expect(result.player1_wins); // Less negative wins
+    try std.testing.expectEqual(@as(i32, -6), result.player1_score);
+    try std.testing.expectEqual(@as(i32, -2), result.player2_score);
+    try std.testing.expect(!result.player1_wins); // Advantage is -4
 }
 
 test "optimal game strategy - mixed signs" {
@@ -362,9 +370,10 @@ test "optimal game strategy - f64 support" {
 
     const arr = [_]f64{ 1.5, 5.5, 2.5 };
     const result = try optimalStrategy(f64, allocator, &arr);
-    try std.testing.expectApproxEqAbs(@as(f64, 7.0), result.player1_score, 0.01);
-    try std.testing.expectApproxEqAbs(@as(f64, 2.5), result.player2_score, 0.01);
-    try std.testing.expect(result.player1_wins);
+    // Player 2 always gets the 5.5: Player 1 gets 2.5 + 1.5
+    try std.testing.expectApproxEqAbs(@as(f64, 4.0), result.player1_score, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f64, 5.5), result.player2_score, 0.01);
+    try std.testing.expect(!result.player1_wins);
 }
 
 test "optimal game strategy - empty array error" {
@@ -405,5 +414,5 @@ test "optimal game strategy - advantage calculation" {
 
     const arr = [_]i32{ 1, 5, 2 };
     const result = try optimalStrategy(i32, allocator, &arr);
-    try std.testing.expectEqual(@as(i32, 4), result.max_advantage); // 6 - 2 = 4
+    try std.testing.expectEqual(@as(i32, -2), result.max_advantage); // 3 - 5 = -2
 }

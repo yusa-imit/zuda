@@ -68,7 +68,7 @@ pub fn BFS(
                     return null;
                 }
 
-                var path: std.ArrayList(V) = .{};
+                var path: std.ArrayList(V) = .empty;
                 errdefer path.deinit(self.allocator);
 
                 var current = target;
@@ -104,10 +104,10 @@ pub fn BFS(
             var parents = std.HashMap(V, V, HashMapContext, std.hash_map.default_max_load_percentage).initContext(allocator, hm_ctx);
             errdefer parents.deinit();
 
-            var visit_order: std.ArrayList(V) = .{};
+            var visit_order: std.ArrayList(V) = .empty;
             errdefer visit_order.deinit(allocator);
 
-            var queue: std.ArrayList(V) = .{};
+            var queue: std.ArrayList(V) = .empty;
             defer queue.deinit(allocator);
 
             // Initialize start vertex
@@ -167,10 +167,10 @@ pub fn BFS(
             var parents = std.HashMap(V, V, HashMapContext, std.hash_map.default_max_load_percentage).initContext(allocator, hm_ctx);
             errdefer parents.deinit();
 
-            var visit_order: std.ArrayList(V) = .{};
+            var visit_order: std.ArrayList(V) = .empty;
             errdefer visit_order.deinit(allocator);
 
-            var queue: std.ArrayList(V) = .{};
+            var queue: std.ArrayList(V) = .empty;
             defer queue.deinit(allocator);
 
             // Initialize start vertex

@@ -164,7 +164,7 @@ pub fn Kruskal(comptime V: type, comptime W: type) type {
             }
 
             // Greedily add edges
-            var mst_edges: std.ArrayList(Edge) = .{};
+            var mst_edges: std.ArrayList(Edge) = .empty;
             errdefer mst_edges.deinit(self.allocator);
 
             var total_weight: W = 0;
@@ -374,7 +374,7 @@ test "Kruskal: stress test (100 vertices)" {
     var kruskal = K.init(testing.allocator);
 
     // Create a simple chain: 0-1-2-3-...-99
-    var edges: std.ArrayList(K.Edge) = .{};
+    var edges: std.ArrayList(K.Edge) = .empty;
     defer edges.deinit(testing.allocator);
 
     var i: u32 = 0;

@@ -27,7 +27,6 @@ const testing = std.testing;
 /// const len = longestBitonicSubsequence(i32, &arr);
 /// // Returns 6: subsequence is {1, 2, 10, 4, 2, 1}
 /// ```
-
 /// Finds the length of the longest bitonic subsequence
 ///
 /// A bitonic sequence first increases then decreases. Both parts must be non-empty.
@@ -232,7 +231,7 @@ pub fn longestBitonicSubsequenceWithPath(comptime T: type, arr: []const T, alloc
 
     // Trace back increasing part
     var curr: isize = @intCast(peak_idx);
-    var inc_part: std.ArrayList(usize) = .{};
+    var inc_part: std.ArrayList(usize) = .empty;
     defer inc_part.deinit(allocator);
 
     while (curr != -1) {
