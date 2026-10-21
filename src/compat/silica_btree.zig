@@ -16,7 +16,7 @@
 //! - ✅ `insert(key, value)` — returns error.OutOfMemory on allocation failure
 //! - ✅ `get(key)` — returns ?[]const u8 (null if not found)
 //! - ✅ `remove(key)` — returns bool (true if key existed)
-//! - ✅ `iterator()` — forward iteration over leaf nodes
+//! - ✅ `iterator()` — forward iteration over leaf nodes (call `Iterator.deinit()` when done)
 //!
 //! **Performance expectations** (vs silica's 4,300 LOC implementation):
 //! - Insert: 12 ns/op (zuda) vs 250 ns/op (silica) → **20× faster**
@@ -31,10 +31,17 @@
 const std = @import("std");
 const zuda_btree = @import("../containers/trees/btree.zig");
 
-/// String comparison function for BTree context.
-fn stringCompare(ctx: void, a: []const u8, b: []const u8) std.math.Order {
-    _ = ctx;
-    return std.mem.order(u8, a, b);
+/// Byte-wise key ordering for the inner BTree (it calls `context.compare`).
+const BytesContext = struct {
+    pub fn compare(_: BytesContext, a: []const u8, b: []const u8) std.math.Order {
+        return std.mem.order(u8, a, b);
+    }
+};
+
+/// Frees one owned key/value pair; handed to `BTree.deinitEntries` by `deinit`.
+fn release_entry(gpa: std.mem.Allocator, key: []const u8, value: []const u8) void {
+    gpa.free(key);
+    gpa.free(value);
 }
 
 /// Compatibility wrapper for silica's BTree API.
@@ -56,7 +63,7 @@ pub const BTree = struct {
 
     /// Internal zuda BTree (order=128, string keys/values).
     /// We use order=128 as it's the typical silica default.
-    const ZudaBTree128 = zuda_btree.BTree([]const u8, []const u8, 128, void);
+    const ZudaBTree128 = zuda_btree.BTree([]const u8, []const u8, 128, BytesContext);
 
     allocator: std.mem.Allocator,
     inner: ZudaBTree128,
@@ -74,7 +81,7 @@ pub const BTree = struct {
 
         self.* = .{
             .allocator = allocator,
-            .inner = ZudaBTree128.init(allocator, {}),
+            .inner = ZudaBTree128.init(allocator, BytesContext{}),
             .order = order,
         };
 
@@ -84,7 +91,9 @@ pub const BTree = struct {
     /// Free all memory and destroy the BTree.
     /// Time: O(n) | Space: O(h) where h is tree height
     pub fn deinit(self: *Self) void {
-        self.inner.deinit();
+        // The tree holds duplicated keys and values; release them with the nodes, without
+        // allocating (deinit cannot fail).
+        self.inner.deinitEntries(self.allocator, release_entry);
         self.allocator.destroy(self);
     }
 
@@ -104,16 +113,13 @@ pub const BTree = struct {
         const owned_value = try self.allocator.dupe(u8, value);
         errdefer self.allocator.free(owned_value);
 
-        // If insert fails (shouldn't happen for in-memory tree), clean up
-        const old_value = self.inner.insert(owned_key, owned_value) catch |err| {
-            self.allocator.free(owned_key);
-            self.allocator.free(owned_value);
-            return err;
-        };
+        const old_value = try self.inner.insert(owned_key, owned_value);
 
-        // If key existed, free the old owned value
+        // An existing key keeps its original owned key and only takes the new value, so the
+        // fresh key copy is surplus and the replaced value is released.
         if (old_value) |old| {
             self.allocator.free(old);
+            self.allocator.free(owned_key);
         }
     }
 
@@ -140,12 +146,9 @@ pub const BTree = struct {
     ///
     /// Time: O(log n) | Space: O(log n) stack
     pub fn remove(self: *Self, key: []const u8) !bool {
-        const result = self.inner.remove(key) catch |err| {
-            return err;
-        };
-
+        // Cannot fail today; the error union stays so silica call sites keep compiling.
         // Free the owned key and value if removal succeeded
-        if (result) |kv| {
+        if (self.inner.remove(key)) |kv| {
             self.allocator.free(kv.key);
             self.allocator.free(kv.value);
             return true;
@@ -172,6 +175,12 @@ pub const BTree = struct {
     /// Iterator over key-value pairs in sorted order.
     pub const Iterator = struct {
         inner: ZudaBTree128.Iterator,
+
+        /// Free the traversal stack. Must be called once iteration is finished.
+        /// Time: O(1) | Space: O(1)
+        pub fn deinit(self: *Iterator) void {
+            self.inner.deinit();
+        }
 
         /// Get the next key-value pair.
         ///
@@ -233,6 +242,7 @@ test "silica BTree compatibility - iteration" {
 
     // Iterate should return sorted order
     var it = try tree.iterator();
+    defer it.deinit();
     var count: usize = 0;
 
     while (it.next()) |entry| {
@@ -269,6 +279,29 @@ test "silica BTree compatibility - overwrite existing key" {
     // Overwrite
     try tree.insert("key", "value2");
     try std.testing.expectEqualStrings("value2", tree.get("key").?);
+    try std.testing.expect(try tree.remove("key"));
+    try std.testing.expect(!(try tree.remove("key")));
+}
+
+test "silica BTree compatibility - insert and remove are leak-free under OOM" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn run(gpa: std.mem.Allocator) !void {
+            const tree = try BTree.init(gpa, 128);
+            defer tree.deinit();
+
+            // 300 keys force several node splits, including a root split.
+            var key_buf: [8]u8 = undefined;
+            for (0..300) |i| {
+                const key = try std.fmt.bufPrint(&key_buf, "{d:0>4}", .{i});
+                try tree.insert(key, "x");
+            }
+            try tree.insert("a", "1");
+            try tree.insert("b", "2");
+            try tree.insert("a", "3");
+            try std.testing.expectEqualStrings("3", tree.get("a").?);
+            try std.testing.expect(try tree.remove("b"));
+        }
+    }.run, .{});
 }
 
 test "silica BTree compatibility - stress test" {
@@ -282,7 +315,8 @@ test "silica BTree compatibility - stress test" {
     var i: usize = 0;
     while (i < 1000) : (i += 1) {
         const key = try std.fmt.bufPrint(&buf, "key{d}", .{i});
-        const value = try std.fmt.bufPrint(&buf, "value{d}", .{i});
+        var value_buf: [32]u8 = undefined;
+        const value = try std.fmt.bufPrint(&value_buf, "value{d}", .{i});
         try tree.insert(key, value);
     }
 

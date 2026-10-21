@@ -69,7 +69,6 @@ pub const DAG = struct {
     allocator: std.mem.Allocator,
     graph: Graph,
 
-
     /// Initialize an empty DAG.
     /// Time: O(1) | Space: O(1)
     pub fn init(allocator: std.mem.Allocator) Self {
@@ -112,7 +111,11 @@ pub const DAG = struct {
     ///
     /// Time: O(1) amortized | Space: O(1)
     pub fn addEdge(self: *Self, from: []const u8, to: []const u8) !void {
-        try self.graph.addEdge(from, to, {});
+        // Edges must reference the owned vertex keys, never the caller's buffers, which may be
+        // reused or freed after this call returns.
+        const from_owned = self.graph.adjacencies.getKey(from) orelse return error.VertexNotFound;
+        const to_owned = self.graph.adjacencies.getKey(to) orelse return error.VertexNotFound;
+        try self.graph.addEdge(from_owned, to_owned, {});
     }
 
     /// Get a node by name.
@@ -146,7 +149,7 @@ pub const DAG = struct {
     ///
     /// Time: O(V + E) | Space: O(V)
     pub fn getEntryNodes(self: *const Self, allocator: std.mem.Allocator) !std.ArrayList([]const u8) {
-        var result = std.ArrayList([]const u8){};
+        var result: std.ArrayList([]const u8) = .empty;
         errdefer result.deinit(allocator);
 
         var vertex_it = self.graph.vertexIterator();
@@ -436,6 +439,16 @@ test "zr DAG compatibility - stress test" {
         const expected = try std.fmt.bufPrint(&buf, "task{d}", .{i});
         try std.testing.expectEqualStrings(expected, sorted[i]);
     }
+}
+
+test "zr DAG compatibility - addEdge rejects unknown nodes" {
+    var dag = DAG.init(std.testing.allocator);
+    defer dag.deinit();
+
+    try dag.addNode("known");
+    try std.testing.expectError(error.VertexNotFound, dag.addEdge("known", "missing"));
+    try std.testing.expectError(error.VertexNotFound, dag.addEdge("missing", "known"));
+    try std.testing.expectEqual(@as(usize, 1), dag.nodeCount());
 }
 
 test "zr DAG compatibility - nodeCount" {

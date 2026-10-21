@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored in a container, and lands on ~18 public functions instead of ~40.
 
 ### Changed
+- `BTree.ReverseIterator` visited only part of the tree (263 of 1000 keys); rewritten with a
+  per-node position counter and a stack sized to the tree height at creation, so `next` never
+  allocates. New `BTree.deinitEntries(context, release)` frees nodes while handing each entry to
+  a release callback. `compat.silica_btree`: the key context was `void` (no comparison could
+  run), `deinit` leaked every stored key and value, and an overwriting `insert` leaked the new
+  key; `Iterator` gains `deinit` (now mandatory). Breaking: `BTree` order below 4 or odd is a compile
+  error (odd orders corrupted the tree on `remove`); `insert` no longer leaks the new root when a
+  root split runs out of memory. `compat.zr_dag`: `addEdge` stored the caller's slice instead of
+  the owned vertex key (dangling once the caller reused its buffer) and now returns
+  `error.VertexNotFound` for an unknown node, as documented. These files compile on Zig 0.16 and
+  their tests are wired into `zig build test`.
 - `RedBlackTree`: `insert` and `remove` assert the size delta and root state, and in Debug builds the tree
   invariants after every mutation (full `validate` up to 512 nodes, O(1) root and size checks
   above). `validate` now also rejects a root with a parent, a node count that disagrees with
