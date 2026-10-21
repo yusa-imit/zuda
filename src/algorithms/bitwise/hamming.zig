@@ -15,7 +15,7 @@ const testing = std.testing;
 ///
 /// Example:
 /// ```zig
-/// const dist = hammingDistance(u8, 0b10110100, 0b10010110); // Returns 3
+/// const dist = hammingDistance(u8, 0b10110100, 0b10010110); // Returns 2
 /// // Positions differ at: ___X__X_  ______X_  = 3 differences
 /// ```
 pub fn hammingDistance(comptime T: type, a: T, b: T) u8 {
@@ -155,7 +155,7 @@ pub fn hammingDistanceBytes(a: []const u8, b: []const u8) !usize {
 /// ```zig
 /// const a = [_]u8{ 0b10110100, 0b11001100 };
 /// const b = [_]u8{ 0b10010110, 0b11101100 };
-/// const dist = try hammingDistanceBitwise(&a, &b); // Returns 4 (3 + 1 bits differ)
+/// const dist = try hammingDistanceBitwise(&a, &b); // Returns 3 (2 + 1 bits differ)
 /// ```
 pub fn hammingDistanceBitwise(a: []const u8, b: []const u8) !usize {
     if (a.len != b.len) return error.LengthMismatch;
@@ -176,7 +176,7 @@ test "hammingDistance - basic examples" {
     try testing.expectEqual(0, hammingDistance(u8, 0b10110100, 0b10110100));
 
     // Example from docstring
-    try testing.expectEqual(3, hammingDistance(u8, 0b10110100, 0b10010110));
+    try testing.expectEqual(2, hammingDistance(u8, 0b10110100, 0b10010110));
 
     // All bits differ
     try testing.expectEqual(8, hammingDistance(u8, 0b11111111, 0b00000000));
@@ -187,7 +187,7 @@ test "hammingDistance - basic examples" {
 
 test "hammingDistance - different types" {
     try testing.expectEqual(0, hammingDistance(u16, 0xFFFF, 0xFFFF));
-    try testing.expectEqual(8, hammingDistance(u16, 0xFF00, 0x00FF));
+    try testing.expectEqual(16, hammingDistance(u16, 0xFF00, 0x00FF));
     try testing.expectEqual(16, hammingDistance(u16, 0xFFFF, 0x0000));
 
     try testing.expectEqual(0, hammingDistance(u32, 0xDEADBEEF, 0xDEADBEEF));
@@ -223,8 +223,8 @@ test "findNearestHamming - basic examples" {
     // Target 0b1000: distances are [1, 2, 3] -> index 0
     try testing.expectEqual(0, try findNearestHamming(u8, &values, 0b1000));
 
-    // Target 0b1111: distances are [2, 1, 2] -> index 1
-    try testing.expectEqual(1, try findNearestHamming(u8, &values, 0b1111));
+    // Target 0b0111: distances are [3, 3, 1] -> index 2
+    try testing.expectEqual(2, try findNearestHamming(u8, &values, 0b0111));
 
     // Target 0b0000: distances are [2, 2, 2] -> index 0 (first)
     try testing.expectEqual(0, try findNearestHamming(u8, &values, 0b0000));
@@ -286,8 +286,8 @@ test "hammingDistanceBytes - length mismatch error" {
 test "hammingDistanceBitwise - basic examples" {
     const a1 = [_]u8{ 0b10110100, 0b11001100 };
     const b1 = [_]u8{ 0b10010110, 0b11101100 };
-    // First byte: 3 bits differ, Second byte: 1 bit differs
-    try testing.expectEqual(4, try hammingDistanceBitwise(&a1, &b1));
+    // First byte: 2 bits differ, Second byte: 1 bit differs
+    try testing.expectEqual(3, try hammingDistanceBitwise(&a1, &b1));
 
     const a2 = [_]u8{ 0xFF, 0xFF };
     const b2 = [_]u8{ 0xFF, 0xFF };

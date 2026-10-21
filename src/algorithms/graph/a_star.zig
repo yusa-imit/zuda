@@ -87,7 +87,7 @@ pub fn AStar(
                     return null;
                 }
 
-                var path: std.ArrayList(V) = .{};
+                var path: std.ArrayList(V) = .empty;
                 errdefer path.deinit(self.allocator);
 
                 var current = target;
@@ -174,7 +174,7 @@ pub fn AStar(
                 const current_g = g_scores.get(current).?;
 
                 // Get neighbors
-                var neighbors_list: std.ArrayList(struct { neighbor: V, weight: W }) = .{};
+                var neighbors_list: std.ArrayList(struct { neighbor: V, weight: W }) = .empty;
                 defer neighbors_list.deinit(allocator);
 
                 try neighbors_fn(neighbors_ctx, current, &neighbors_list);

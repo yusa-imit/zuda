@@ -76,45 +76,29 @@ pub fn longestPalindromicSubsequenceOptimized(allocator: Allocator, s: []const u
 
     const n = s.len;
 
-    // Use two rows: current and previous
-    var prev = try allocator.alloc(usize, n);
-    defer allocator.free(prev);
-    var curr = try allocator.alloc(usize, n);
-    defer allocator.free(curr);
+    // Single row: row[j] holds dp[i][j] for the current i (i descending).
+    // Before updating row[j] it still holds dp[i + 1][j]; `diag` carries dp[i + 1][j - 1].
+    const row = try allocator.alloc(usize, n);
+    defer allocator.free(row);
 
-    // Initialize diagonal
-    for (0..n) |i| {
-        prev[i] = 1;
-    }
-
-    // Fill DP table bottom-up
-    var len: usize = 2;
-    while (len <= n) : (len += 1) {
-        @memset(curr, 0);
-        var i: usize = 0;
-        while (i + len - 1 < n) : (i += 1) {
-            const j = i + len - 1;
-
+    var i: usize = n;
+    while (i > 0) {
+        i -= 1;
+        row[i] = 1;
+        var diag: usize = 0;
+        var j: usize = i + 1;
+        while (j < n) : (j += 1) {
+            const below = row[j];
             if (s[i] == s[j]) {
-                if (len == 2) {
-                    curr[i] = 2;
-                } else {
-                    curr[i] = prev[i + 1] + 2;
-                }
+                row[j] = diag + 2;
             } else {
-                curr[i] = @max(prev[i], curr[i]);
-                if (i + 1 < n) {
-                    curr[i] = @max(curr[i], prev[i + 1]);
-                }
+                row[j] = @max(below, row[j - 1]);
             }
+            diag = below;
         }
-        // Swap rows
-        const temp = prev;
-        prev = curr;
-        curr = temp;
     }
 
-    return prev[0];
+    return row[n - 1];
 }
 
 /// Find the actual longest palindromic subsequence (not just length)
@@ -399,12 +383,12 @@ test "LPS - minimum insertions" {
 test "LPS - large string" {
     const s = "abcdefghijklmnopqrstuvwxyz" ++ "zyxwvutsrqponmlkjihgfedcba";
     const len = try longestPalindromicSubsequence(testing.allocator, s);
-    try testing.expectEqual(@as(usize, 51), len); // Almost entire string forms palindrome
+    try testing.expectEqual(@as(usize, 52), len); // The whole string is a palindrome
 }
 
 test "LPS - repeated characters" {
     const len = try longestPalindromicSubsequence(testing.allocator, "aaabbbccc");
-    try testing.expectEqual(@as(usize, 5), len); // Any 5 same chars like "aaaaa" or "bbbbb"
+    try testing.expectEqual(@as(usize, 3), len); // "aaa", "bbb" or "ccc"
 }
 
 test "LPS - memory safety" {

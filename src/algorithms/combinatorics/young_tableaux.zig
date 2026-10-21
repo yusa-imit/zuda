@@ -23,7 +23,6 @@ const testing = std.testing;
 /// - Robinson-Schensted correspondence (permutations ↔ tableau pairs)
 /// - Schur functions in algebraic combinatorics
 /// - Knuth equivalence and plactic monoid
-
 /// Represents a Young Tableau as a 2D array with irregular row lengths
 pub const Tableau = struct {
     rows: [][]u32,
@@ -209,7 +208,7 @@ pub fn countStandardTableaux(comptime T: type, shape: []const usize) !T {
 ///
 /// Time: O(n) worst case | Space: O(n)
 pub fn insertRobinsonSchensted(allocator: Allocator, tab: Tableau, val: u32) !Tableau {
-    var result = try tab.clone(allocator);
+    var result = try clone(tab, allocator);
     errdefer result.deinit();
 
     var current_val = val;
@@ -217,14 +216,16 @@ pub fn insertRobinsonSchensted(allocator: Allocator, tab: Tableau, val: u32) !Ta
 
     while (true) {
         if (row_idx >= result.rows.len) {
-            // Create new row with current_val
+            // Create new row with current_val (allocate both before mutating result)
+            const new_row = try allocator.alloc(u32, 1);
+            errdefer allocator.free(new_row);
+
             const new_rows = try allocator.alloc([]u32, result.rows.len + 1);
+            new_row[0] = current_val;
             @memcpy(new_rows[0..result.rows.len], result.rows);
+            new_rows[row_idx] = new_row;
             allocator.free(result.rows);
             result.rows = new_rows;
-
-            result.rows[row_idx] = try allocator.alloc(u32, 1);
-            result.rows[row_idx][0] = current_val;
             break;
         }
 
@@ -296,15 +297,15 @@ pub fn robinsonSchenstedP(allocator: Allocator, perm: []const u32) !Tableau {
 ///
 /// Time: O(SYT(λ) × n) | Space: O(n)
 pub fn generateStandardTableaux(allocator: Allocator, shape: []const usize) !ArrayList(Tableau) {
-    var result = ArrayList(Tableau).init(allocator);
+    var result: ArrayList(Tableau) = .empty;
     errdefer {
         for (result.items) |*t| t.deinit();
-        result.deinit();
+        result.deinit(allocator);
     }
 
     if (shape.len == 0) {
         const empty = Tableau.init(allocator);
-        try result.append(empty);
+        try result.append(allocator, empty);
         return result;
     }
 
@@ -316,7 +317,7 @@ pub fn generateStandardTableaux(allocator: Allocator, shape: []const usize) !Arr
 
     if (n == 0) {
         const empty = Tableau.init(allocator);
-        try result.append(empty);
+        try result.append(allocator, empty);
         return result;
     }
 
@@ -330,8 +331,13 @@ pub fn generateStandardTableaux(allocator: Allocator, shape: []const usize) !Arr
 fn generateHelper(allocator: Allocator, tab: *Tableau, next_val: u32, n: u32, result: *ArrayList(Tableau)) !void {
     if (next_val > n) {
         // Found complete tableau
-        const t = try tab.clone(allocator);
-        try result.append(t);
+        const t = try clone(tab.*, allocator);
+        errdefer {
+            var t_owned = t;
+            t_owned.deinit();
+        }
+
+        try result.append(allocator, t);
         return;
     }
 
@@ -516,15 +522,16 @@ test "Robinson-Schensted insertion - basic" {
     try testing.expectEqual(@as(usize, 1), t1.rows[0].len);
     try testing.expectEqual(@as(u32, 3), t1.rows[0][0]);
 
-    // Insert 1 (should go before 3)
+    // Insert 1 (replaces 3 in the first row and bumps it to a new second row)
     var t2 = try insertRobinsonSchensted(allocator, t1, 1);
     defer t2.deinit();
-    try testing.expectEqual(@as(usize, 1), t2.rows.len);
-    try testing.expectEqual(@as(usize, 2), t2.rows[0].len);
+    try testing.expectEqual(@as(usize, 2), t2.rows.len);
+    try testing.expectEqual(@as(usize, 1), t2.rows[0].len);
+    try testing.expectEqual(@as(usize, 1), t2.rows[1].len);
     try testing.expectEqual(@as(u32, 1), t2.rows[0][0]);
-    try testing.expectEqual(@as(u32, 3), t2.rows[0][1]);
+    try testing.expectEqual(@as(u32, 3), t2.rows[1][0]);
 
-    // Insert 2 (should bump 3 to second row)
+    // Insert 2 (nothing in row 0 exceeds 2, so it is appended there)
     var t3 = try insertRobinsonSchensted(allocator, t2, 2);
     defer t3.deinit();
     try testing.expectEqual(@as(usize, 2), t3.rows.len);
@@ -564,7 +571,7 @@ test "Generate all SYT - small shapes" {
     var syts1 = try generateStandardTableaux(allocator, &[_]usize{ 2, 1 });
     defer {
         for (syts1.items) |*t| t.deinit();
-        syts1.deinit();
+        syts1.deinit(testing.allocator);
     }
     try testing.expectEqual(@as(usize, 2), syts1.items.len);
     for (syts1.items) |t| {
@@ -575,7 +582,7 @@ test "Generate all SYT - small shapes" {
     var syts2 = try generateStandardTableaux(allocator, &[_]usize{ 2, 2 });
     defer {
         for (syts2.items) |*t| t.deinit();
-        syts2.deinit();
+        syts2.deinit(testing.allocator);
     }
     try testing.expectEqual(@as(usize, 2), syts2.items.len);
     for (syts2.items) |t| {
@@ -599,7 +606,7 @@ test "Generate all SYT - verify count matches hook formula" {
         var syts = try generateStandardTableaux(allocator, shape);
         defer {
             for (syts.items) |*t| t.deinit();
-            syts.deinit();
+            syts.deinit(testing.allocator);
         }
         try testing.expectEqual(expected_count, syts.items.len);
     }
@@ -647,7 +654,7 @@ test "Memory safety - multiple allocations" {
         var syts = try generateStandardTableaux(allocator, &[_]usize{ 2, 1 });
         defer {
             for (syts.items) |*t| t.deinit();
-            syts.deinit();
+            syts.deinit(testing.allocator);
         }
     }
 }

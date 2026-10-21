@@ -150,7 +150,7 @@ pub fn HopcroftKarp(
             dist: *std.HashMap(V, usize, HashMapContext, std.hash_map.default_max_load_percentage),
             _: Context,
         ) !bool {
-            var queue: std.ArrayList(V) = .{};
+            var queue: std.ArrayList(V) = .empty;
             defer queue.deinit(allocator);
 
             const inf = std.math.maxInt(usize);

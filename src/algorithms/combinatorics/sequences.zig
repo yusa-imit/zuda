@@ -23,7 +23,6 @@ const ArrayList = std.ArrayList;
 /// - OEIS (Online Encyclopedia of Integer Sequences): https://oeis.org/
 /// - Sloane, N. J. A., "The On-Line Encyclopedia of Integer Sequences"
 /// - Graham, Knuth, Patashnik, "Concrete Mathematics" (1994)
-
 /// Fibonacci number F(n) using iterative algorithm
 ///
 /// Sequence: 0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, ...
@@ -204,7 +203,7 @@ pub fn polygonal(comptime T: type, s: T, n: T) T {
 /// Time: O(n)
 /// Space: O(n)
 pub fn generateFibonacci(comptime T: type, allocator: Allocator, n: usize) !ArrayList(T) {
-    var result = ArrayList(T){};
+    var result: ArrayList(T) = .empty;
     errdefer result.deinit(allocator);
 
     if (n == 0) {
@@ -231,7 +230,7 @@ pub fn generateFibonacci(comptime T: type, allocator: Allocator, n: usize) !Arra
 /// Time: O(n)
 /// Space: O(n)
 pub fn generateLucas(comptime T: type, allocator: Allocator, n: usize) !ArrayList(T) {
-    var result = ArrayList(T){};
+    var result: ArrayList(T) = .empty;
     errdefer result.deinit(allocator);
 
     if (n == 0) {
@@ -258,7 +257,7 @@ pub fn generateLucas(comptime T: type, allocator: Allocator, n: usize) !ArrayLis
 /// Time: O(n)
 /// Space: O(n)
 pub fn generateTriangular(comptime T: type, allocator: Allocator, n: usize) !ArrayList(T) {
-    var result = ArrayList(T){};
+    var result: ArrayList(T) = .empty;
     errdefer result.deinit(allocator);
 
     var i: usize = 0;

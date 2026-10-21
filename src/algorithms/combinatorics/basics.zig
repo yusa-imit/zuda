@@ -47,7 +47,7 @@
 //! const perms = try combinatorics.generatePermutations(u8, allocator, &items);
 //! defer {
 //!     for (perms.items) |perm| allocator.free(perm);
-//!     perms.deinit();
+//!     perms.deinit(allocator);
 //! }
 //! // perms contains: [1,2,3], [1,3,2], [2,1,3], [2,3,1], [3,1,2], [3,2,1]
 //! ```
@@ -143,10 +143,10 @@ pub fn catalanNumber(comptime T: type, n: T) !T {
 ///
 /// Time: O(n! × n) | Space: O(n! × n)
 pub fn generatePermutations(comptime T: type, allocator: Allocator, items: []const T) !ArrayList([]T) {
-    var result = ArrayList([]T).init(allocator);
+    var result: ArrayList([]T) = .empty;
     errdefer {
         for (result.items) |perm| allocator.free(perm);
-        result.deinit();
+        result.deinit(allocator);
     }
 
     if (items.len == 0) return result;
@@ -163,7 +163,9 @@ fn generatePermutationsHelper(comptime T: type, allocator: Allocator, current: [
     if (start == current.len) {
         // Found a complete permutation, save a copy
         const perm_copy = try allocator.dupe(T, current);
-        try result.append(perm_copy);
+        errdefer allocator.free(perm_copy);
+
+        try result.append(allocator, perm_copy);
         return;
     }
 
@@ -193,10 +195,10 @@ fn generatePermutationsHelper(comptime T: type, allocator: Allocator, current: [
 ///
 /// Time: O(C(n,k) × k) | Space: O(C(n,k) × k)
 pub fn generateCombinations(comptime T: type, allocator: Allocator, items: []const T, k: usize) !ArrayList([]T) {
-    var result = ArrayList([]T).init(allocator);
+    var result: ArrayList([]T) = .empty;
     errdefer {
         for (result.items) |comb| allocator.free(comb);
-        result.deinit();
+        result.deinit(allocator);
     }
 
     if (k == 0) return result;
@@ -223,7 +225,9 @@ fn generateCombinationsHelper(
     if (depth == k) {
         // Found a complete combination, save a copy
         const comb_copy = try allocator.dupe(T, current);
-        try result.append(comb_copy);
+        errdefer allocator.free(comb_copy);
+
+        try result.append(allocator, comb_copy);
         return;
     }
 
@@ -421,10 +425,10 @@ test "Catalan numbers: specific values" {
 test "generatePermutations: empty input" {
     const allocator = testing.allocator;
     const items = [_]u8{};
-    const perms = try generatePermutations(u8, allocator, &items);
+    var perms = try generatePermutations(u8, allocator, &items);
     defer {
         for (perms.items) |perm| allocator.free(perm);
-        perms.deinit();
+        perms.deinit(allocator);
     }
 
     try testing.expectEqual(@as(usize, 0), perms.items.len);
@@ -433,10 +437,10 @@ test "generatePermutations: empty input" {
 test "generatePermutations: single element" {
     const allocator = testing.allocator;
     const items = [_]u8{42};
-    const perms = try generatePermutations(u8, allocator, &items);
+    var perms = try generatePermutations(u8, allocator, &items);
     defer {
         for (perms.items) |perm| allocator.free(perm);
-        perms.deinit();
+        perms.deinit(allocator);
     }
 
     try testing.expectEqual(@as(usize, 1), perms.items.len);
@@ -446,10 +450,10 @@ test "generatePermutations: single element" {
 test "generatePermutations: two elements" {
     const allocator = testing.allocator;
     const items = [_]u8{ 1, 2 };
-    const perms = try generatePermutations(u8, allocator, &items);
+    var perms = try generatePermutations(u8, allocator, &items);
     defer {
         for (perms.items) |perm| allocator.free(perm);
-        perms.deinit();
+        perms.deinit(allocator);
     }
 
     try testing.expectEqual(@as(usize, 2), perms.items.len);
@@ -470,10 +474,10 @@ test "generatePermutations: two elements" {
 test "generatePermutations: three elements" {
     const allocator = testing.allocator;
     const items = [_]u8{ 1, 2, 3 };
-    const perms = try generatePermutations(u8, allocator, &items);
+    var perms = try generatePermutations(u8, allocator, &items);
     defer {
         for (perms.items) |perm| allocator.free(perm);
-        perms.deinit();
+        perms.deinit(allocator);
     }
 
     try testing.expectEqual(@as(usize, 6), perms.items.len); // 3! = 6
@@ -505,18 +509,18 @@ test "generateCombinations: empty or invalid input" {
     const items = [_]u8{ 1, 2, 3 };
 
     // k = 0 should give empty result
-    const combs_k0 = try generateCombinations(u8, allocator, &items, 0);
+    var combs_k0 = try generateCombinations(u8, allocator, &items, 0);
     defer {
         for (combs_k0.items) |comb| allocator.free(comb);
-        combs_k0.deinit();
+        combs_k0.deinit(allocator);
     }
     try testing.expectEqual(@as(usize, 0), combs_k0.items.len);
 
     // k > n should give empty result
-    const combs_k5 = try generateCombinations(u8, allocator, &items, 5);
+    var combs_k5 = try generateCombinations(u8, allocator, &items, 5);
     defer {
         for (combs_k5.items) |comb| allocator.free(comb);
-        combs_k5.deinit();
+        combs_k5.deinit(allocator);
     }
     try testing.expectEqual(@as(usize, 0), combs_k5.items.len);
 }
@@ -524,10 +528,10 @@ test "generateCombinations: empty or invalid input" {
 test "generateCombinations: C(5, 2) = 10" {
     const allocator = testing.allocator;
     const items = [_]u8{ 1, 2, 3, 4, 5 };
-    const combs = try generateCombinations(u8, allocator, &items, 2);
+    var combs = try generateCombinations(u8, allocator, &items, 2);
     defer {
         for (combs.items) |comb| allocator.free(comb);
-        combs.deinit();
+        combs.deinit(allocator);
     }
 
     try testing.expectEqual(@as(usize, 10), combs.items.len);
@@ -554,10 +558,10 @@ test "generateCombinations: C(5, 2) = 10" {
 test "generateCombinations: C(4, 3) = 4" {
     const allocator = testing.allocator;
     const items = [_]u8{ 1, 2, 3, 4 };
-    const combs = try generateCombinations(u8, allocator, &items, 3);
+    var combs = try generateCombinations(u8, allocator, &items, 3);
     defer {
         for (combs.items) |comb| allocator.free(comb);
-        combs.deinit();
+        combs.deinit(allocator);
     }
 
     try testing.expectEqual(@as(usize, 4), combs.items.len);
@@ -639,10 +643,10 @@ test "memory safety: generate permutations with allocator" {
     var i: usize = 0;
     while (i < 5) : (i += 1) {
         const items = [_]u8{ 1, 2, 3, 4 };
-        const perms = try generatePermutations(u8, allocator, &items);
+        var perms = try generatePermutations(u8, allocator, &items);
         defer {
             for (perms.items) |perm| allocator.free(perm);
-            perms.deinit();
+            perms.deinit(allocator);
         }
 
         try testing.expectEqual(@as(usize, 24), perms.items.len); // 4! = 24
@@ -655,10 +659,10 @@ test "memory safety: generate combinations with allocator" {
     var i: usize = 0;
     while (i < 5) : (i += 1) {
         const items = [_]u8{ 1, 2, 3, 4, 5 };
-        const combs = try generateCombinations(u8, allocator, &items, 3);
+        var combs = try generateCombinations(u8, allocator, &items, 3);
         defer {
             for (combs.items) |comb| allocator.free(comb);
-            combs.deinit();
+            combs.deinit(allocator);
         }
 
         try testing.expectEqual(@as(usize, 10), combs.items.len); // C(5, 3) = 10

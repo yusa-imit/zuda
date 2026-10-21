@@ -70,7 +70,7 @@ pub fn KosarajuSCC(comptime V: type) type {
             var visited = std.AutoHashMap(V, void).init(self.allocator);
             defer visited.deinit();
 
-            var finish_stack: std.ArrayList(V) = .{};
+            var finish_stack: std.ArrayList(V) = .empty;
             defer finish_stack.deinit(self.allocator);
 
             var vertex_iter = adjacency_list.keyIterator();
@@ -93,7 +93,7 @@ pub fn KosarajuSCC(comptime V: type) type {
             // Initialize empty adjacency lists for all vertices
             vertex_iter = adjacency_list.keyIterator();
             while (vertex_iter.next()) |vertex| {
-                const empty_list: std.ArrayList(V) = .{};
+                const empty_list: std.ArrayList(V) = .empty;
                 try transposed.put(vertex.*, empty_list);
             }
 
@@ -106,7 +106,7 @@ pub fn KosarajuSCC(comptime V: type) type {
                 for (neighbors.items) |to| {
                     // Ensure vertex exists in transposed graph
                     if (!transposed.contains(to)) {
-                        const new_list: std.ArrayList(V) = .{};
+                        const new_list: std.ArrayList(V) = .empty;
                         try transposed.put(to, new_list);
                     }
                     var to_list = transposed.getPtr(to).?;
@@ -117,7 +117,7 @@ pub fn KosarajuSCC(comptime V: type) type {
             // Phase 3: Second DFS on transposed graph in reverse finish order
             visited.clearRetainingCapacity();
 
-            var components: std.ArrayList(Component) = .{};
+            var components: std.ArrayList(Component) = .empty;
             defer {
                 if (components.items.len > 0) {
                     for (components.items) |component| {
@@ -134,7 +134,7 @@ pub fn KosarajuSCC(comptime V: type) type {
                 const vertex = finish_stack.items[i];
 
                 if (!visited.contains(vertex)) {
-                    var component: std.ArrayList(V) = .{};
+                    var component: std.ArrayList(V) = .empty;
                     errdefer component.deinit(self.allocator);
 
                     try self.dfsCollect(vertex, &transposed, &visited, &component);
@@ -202,7 +202,7 @@ test "KosarajuSCC: single vertex" {
     var adjacency_list = std.AutoHashMap(u32, std.ArrayList(u32)).init(testing.allocator);
     defer adjacency_list.deinit();
 
-    var v0_neighbors: std.ArrayList(u32) = .{};
+    var v0_neighbors: std.ArrayList(u32) = .empty;
     defer v0_neighbors.deinit(testing.allocator);
     try adjacency_list.put(0, v0_neighbors);
 
@@ -227,10 +227,10 @@ test "KosarajuSCC: two vertices, no edges" {
         adjacency_list.deinit();
     }
 
-    const v0_neighbors: std.ArrayList(u32) = .{};
+    const v0_neighbors: std.ArrayList(u32) = .empty;
     try adjacency_list.put(0, v0_neighbors);
 
-    const v1_neighbors: std.ArrayList(u32) = .{};
+    const v1_neighbors: std.ArrayList(u32) = .empty;
     try adjacency_list.put(1, v1_neighbors);
 
     var result = try kosaraju.run(&adjacency_list);
@@ -257,15 +257,15 @@ test "KosarajuSCC: simple cycle" {
     }
 
     // Cycle: 0 -> 1 -> 2 -> 0
-    var v0_neighbors: std.ArrayList(u32) = .{};
+    var v0_neighbors: std.ArrayList(u32) = .empty;
     try v0_neighbors.append(testing.allocator, 1);
     try adjacency_list.put(0, v0_neighbors);
 
-    var v1_neighbors: std.ArrayList(u32) = .{};
+    var v1_neighbors: std.ArrayList(u32) = .empty;
     try v1_neighbors.append(testing.allocator, 2);
     try adjacency_list.put(1, v1_neighbors);
 
-    var v2_neighbors: std.ArrayList(u32) = .{};
+    var v2_neighbors: std.ArrayList(u32) = .empty;
     try v2_neighbors.append(testing.allocator, 0);
     try adjacency_list.put(2, v2_neighbors);
 
@@ -300,19 +300,19 @@ test "KosarajuSCC: linear chain (DAG)" {
     }
 
     // Chain: 0 -> 1 -> 2 -> 3 (no cycles)
-    var v0_neighbors: std.ArrayList(u32) = .{};
+    var v0_neighbors: std.ArrayList(u32) = .empty;
     try v0_neighbors.append(testing.allocator, 1);
     try adjacency_list.put(0, v0_neighbors);
 
-    var v1_neighbors: std.ArrayList(u32) = .{};
+    var v1_neighbors: std.ArrayList(u32) = .empty;
     try v1_neighbors.append(testing.allocator, 2);
     try adjacency_list.put(1, v1_neighbors);
 
-    var v2_neighbors: std.ArrayList(u32) = .{};
+    var v2_neighbors: std.ArrayList(u32) = .empty;
     try v2_neighbors.append(testing.allocator, 3);
     try adjacency_list.put(2, v2_neighbors);
 
-    const v3_neighbors: std.ArrayList(u32) = .{};
+    const v3_neighbors: std.ArrayList(u32) = .empty;
     try adjacency_list.put(3, v3_neighbors);
 
     var result = try kosaraju.run(&adjacency_list);
@@ -339,20 +339,20 @@ test "KosarajuSCC: two separate cycles" {
     }
 
     // Cycle 1: 0 -> 1 -> 0
-    var v0_neighbors: std.ArrayList(u32) = .{};
+    var v0_neighbors: std.ArrayList(u32) = .empty;
     try v0_neighbors.append(testing.allocator, 1);
     try adjacency_list.put(0, v0_neighbors);
 
-    var v1_neighbors: std.ArrayList(u32) = .{};
+    var v1_neighbors: std.ArrayList(u32) = .empty;
     try v1_neighbors.append(testing.allocator, 0);
     try adjacency_list.put(1, v1_neighbors);
 
     // Cycle 2: 2 -> 3 -> 2
-    var v2_neighbors: std.ArrayList(u32) = .{};
+    var v2_neighbors: std.ArrayList(u32) = .empty;
     try v2_neighbors.append(testing.allocator, 3);
     try adjacency_list.put(2, v2_neighbors);
 
-    var v3_neighbors: std.ArrayList(u32) = .{};
+    var v3_neighbors: std.ArrayList(u32) = .empty;
     try v3_neighbors.append(testing.allocator, 2);
     try adjacency_list.put(3, v3_neighbors);
 
@@ -385,29 +385,29 @@ test "KosarajuSCC: complex graph" {
     // SCC3: 5 (alone)
     // Edges between SCCs: 1 -> 2, 4 -> 5
 
-    var v0_neighbors: std.ArrayList(u32) = .{};
+    var v0_neighbors: std.ArrayList(u32) = .empty;
     try v0_neighbors.append(testing.allocator, 1);
     try adjacency_list.put(0, v0_neighbors);
 
-    var v1_neighbors: std.ArrayList(u32) = .{};
+    var v1_neighbors: std.ArrayList(u32) = .empty;
     try v1_neighbors.append(testing.allocator, 0);
     try v1_neighbors.append(testing.allocator, 2);
     try adjacency_list.put(1, v1_neighbors);
 
-    var v2_neighbors: std.ArrayList(u32) = .{};
+    var v2_neighbors: std.ArrayList(u32) = .empty;
     try v2_neighbors.append(testing.allocator, 3);
     try adjacency_list.put(2, v2_neighbors);
 
-    var v3_neighbors: std.ArrayList(u32) = .{};
+    var v3_neighbors: std.ArrayList(u32) = .empty;
     try v3_neighbors.append(testing.allocator, 4);
     try adjacency_list.put(3, v3_neighbors);
 
-    var v4_neighbors: std.ArrayList(u32) = .{};
+    var v4_neighbors: std.ArrayList(u32) = .empty;
     try v4_neighbors.append(testing.allocator, 2);
     try v4_neighbors.append(testing.allocator, 5);
     try adjacency_list.put(4, v4_neighbors);
 
-    const v5_neighbors: std.ArrayList(u32) = .{};
+    const v5_neighbors: std.ArrayList(u32) = .empty;
     try adjacency_list.put(5, v5_neighbors);
 
     var result = try kosaraju.run(&adjacency_list);
@@ -416,7 +416,7 @@ test "KosarajuSCC: complex graph" {
     try testing.expectEqual(@as(usize, 3), result.components.len);
 
     // Find SCC sizes
-    var sizes: std.ArrayList(usize) = .{};
+    var sizes: std.ArrayList(usize) = .empty;
     defer sizes.deinit(testing.allocator);
     for (result.components) |component| {
         try sizes.append(testing.allocator, component.len);
@@ -444,7 +444,7 @@ test "KosarajuSCC: self-loop" {
     }
 
     // Vertex 0 has a self-loop
-    var v0_neighbors: std.ArrayList(u32) = .{};
+    var v0_neighbors: std.ArrayList(u32) = .empty;
     try v0_neighbors.append(testing.allocator, 0);
     try adjacency_list.put(0, v0_neighbors);
 
@@ -472,7 +472,7 @@ test "KosarajuSCC: stress test (100 vertices chain)" {
     // Chain: 0 -> 1 -> 2 -> ... -> 99 (no cycles, all separate SCCs)
     var i: u32 = 0;
     while (i < 100) : (i += 1) {
-        var neighbors: std.ArrayList(u32) = .{};
+        var neighbors: std.ArrayList(u32) = .empty;
         if (i < 99) {
             try neighbors.append(testing.allocator, i + 1);
         }
@@ -505,7 +505,7 @@ test "KosarajuSCC: stress test (100 vertex cycle)" {
     // Cycle: 0 -> 1 -> 2 -> ... -> 99 -> 0 (one giant SCC)
     var i: u32 = 0;
     while (i < 100) : (i += 1) {
-        var neighbors: std.ArrayList(u32) = .{};
+        var neighbors: std.ArrayList(u32) = .empty;
         try neighbors.append(testing.allocator, (i + 1) % 100);
         try adjacency_list.put(i, neighbors);
     }
@@ -532,11 +532,11 @@ test "KosarajuSCC: vertices only in edges (not explicit)" {
 
     // Graph: 0 -> 1, 1 -> 2
     // Vertex 2 exists only as a target, not in key set initially
-    var v0_neighbors: std.ArrayList(u32) = .{};
+    var v0_neighbors: std.ArrayList(u32) = .empty;
     try v0_neighbors.append(testing.allocator, 1);
     try adjacency_list.put(0, v0_neighbors);
 
-    var v1_neighbors: std.ArrayList(u32) = .{};
+    var v1_neighbors: std.ArrayList(u32) = .empty;
     try v1_neighbors.append(testing.allocator, 2);
     try adjacency_list.put(1, v1_neighbors);
 

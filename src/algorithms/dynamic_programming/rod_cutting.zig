@@ -48,7 +48,7 @@ pub fn RodCutting(comptime T: type) type {
             /// Returns: ArrayList of piece lengths (e.g., [2, 6] for cuts at positions 2 and 6)
             pub fn getPieces(self: *const Result, allocator: Allocator, rod_length: usize) !std.ArrayList(usize) {
                 var pieces = try std.ArrayList(usize).initCapacity(allocator, 8);
-                errdefer pieces.deinit();
+                errdefer pieces.deinit(allocator);
 
                 if (self.cuts.len == 0) {
                     // No cuts — sell whole rod
@@ -57,11 +57,11 @@ pub fn RodCutting(comptime T: type) type {
                 }
 
                 var positions = try std.ArrayList(usize).initCapacity(allocator, self.cuts.len);
-                defer positions.deinit();
+                defer positions.deinit(allocator);
 
                 // Collect cut positions
                 for (self.cuts) |cut| {
-                    try positions.append(cut);
+                    try positions.append(allocator, cut);
                 }
 
                 // Sort positions
@@ -71,12 +71,12 @@ pub fn RodCutting(comptime T: type) type {
                 var prev: usize = 0;
                 for (positions.items) |pos| {
                     if (pos > prev) {
-                        try pieces.append(pos - prev);
+                        try pieces.append(allocator, pos - prev);
                         prev = pos;
                     }
                 }
                 if (prev < rod_length) {
-                    try pieces.append(rod_length - prev);
+                    try pieces.append(allocator, rod_length - prev);
                 }
 
                 return pieces;
@@ -128,7 +128,7 @@ pub fn RodCutting(comptime T: type) type {
 
             // Reconstruct cuts
             var cuts = try std.ArrayList(usize).initCapacity(allocator, 8);
-            errdefer cuts.deinit();
+            errdefer cuts.deinit(allocator);
 
             var remaining = rod_length;
             var position: usize = 0;
@@ -138,7 +138,7 @@ pub fn RodCutting(comptime T: type) type {
 
                 position += cut;
                 if (position < rod_length) {
-                    try cuts.append(position);
+                    try cuts.append(allocator, position);
                 }
 
                 remaining -= cut;
@@ -146,7 +146,7 @@ pub fn RodCutting(comptime T: type) type {
 
             return Result{
                 .max_revenue = revenue[rod_length],
-                .cuts = try cuts.toOwnedSlice(),
+                .cuts = try cuts.toOwnedSlice(allocator),
                 .allocator = allocator,
             };
         }
@@ -216,7 +216,7 @@ test "RodCutting: basic 8-length rod" {
 
     // Verify pieces (should cut into optimal segments)
     var pieces = try result.getPieces(allocator, 8);
-    defer pieces.deinit();
+    defer pieces.deinit(allocator);
 
     var total_revenue: i32 = 0;
     for (pieces.items) |length| {
@@ -236,7 +236,7 @@ test "RodCutting: no cuts optimal" {
     try testing.expectEqual(@as(usize, 0), result.cuts.len);
 
     var pieces = try result.getPieces(allocator, 5);
-    defer pieces.deinit();
+    defer pieces.deinit(allocator);
     try testing.expectEqual(@as(usize, 1), pieces.items.len);
     try testing.expectEqual(@as(usize, 5), pieces.items[0]);
 }
@@ -262,7 +262,7 @@ test "RodCutting: all unit cuts optimal" {
     try testing.expectEqual(@as(i32, 40), result.max_revenue);
 
     var pieces = try result.getPieces(allocator, 4);
-    defer pieces.deinit();
+    defer pieces.deinit(allocator);
     try testing.expectEqual(@as(usize, 4), pieces.items.len);
 }
 
@@ -325,7 +325,7 @@ test "RodCutting: large rod (stress)" {
     const allocator = testing.allocator;
 
     var prices_list = try std.ArrayList(i32).initCapacity(allocator, 100);
-    defer prices_list.deinit();
+    defer prices_list.deinit(allocator);
 
     for (0..100) |i| {
         prices_list.appendAssumeCapacity(@intCast(i + 1));
@@ -354,7 +354,7 @@ test "RodCutting: getPieces correctness" {
     defer result.deinit();
 
     var pieces = try result.getPieces(allocator, 8);
-    defer pieces.deinit();
+    defer pieces.deinit(allocator);
 
     // Verify total length
     var total_length: usize = 0;

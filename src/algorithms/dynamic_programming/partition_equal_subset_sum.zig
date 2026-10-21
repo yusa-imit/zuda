@@ -24,6 +24,24 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+/// Convert a non-negative element (integer or float) to i64.
+fn asI64(comptime T: type, num: T) i64 {
+    std.debug.assert(num >= 0);
+    return switch (@typeInfo(T)) {
+        .float => @intFromFloat(num),
+        else => @intCast(num),
+    };
+}
+
+/// Convert a non-negative element (integer or float) to usize.
+fn asUsize(comptime T: type, num: T) usize {
+    std.debug.assert(num >= 0);
+    return switch (@typeInfo(T)) {
+        .float => @intFromFloat(num),
+        else => @intCast(num),
+    };
+}
+
 /// Determines if array can be partitioned into two equal-sum subsets.
 /// Uses dynamic programming with space optimization.
 ///
@@ -45,11 +63,11 @@ pub fn canPartition(comptime T: type, nums: []const T) bool {
     var total: i64 = 0;
     for (nums) |num| {
         if (num < 0) return false; // negative numbers not allowed
-        total += @as(i64, @intCast(num));
+        total += asI64(T, num);
     }
 
     // If sum is odd, cannot partition equally
-    if (total % 2 != 0) return false;
+    if (@rem(total, 2) != 0) return false;
 
     const target = @divTrunc(total, 2);
     return subsetSumExists(T, nums, @intCast(target));
@@ -66,8 +84,8 @@ pub fn canPartition(comptime T: type, nums: []const T) bool {
 /// Example:
 /// ```zig
 /// var result = try findPartition(i32, allocator, &nums);
-/// defer result.subset1.deinit();
-/// defer result.subset2.deinit();
+/// defer result.subset1.deinit(allocator);
+/// defer result.subset2.deinit(allocator);
 /// ```
 pub fn findPartition(comptime T: type, allocator: Allocator, nums: []const T) !struct {
     subset1: std.ArrayList(T),
@@ -75,8 +93,8 @@ pub fn findPartition(comptime T: type, allocator: Allocator, nums: []const T) !s
 } {
     if (nums.len == 0) {
         return .{
-            .subset1 = std.ArrayList(T).init(allocator),
-            .subset2 = std.ArrayList(T).init(allocator),
+            .subset1 = .empty,
+            .subset2 = .empty,
         };
     }
     if (nums.len == 1) return error.NoPartition;
@@ -85,26 +103,27 @@ pub fn findPartition(comptime T: type, allocator: Allocator, nums: []const T) !s
     var total: i64 = 0;
     for (nums) |num| {
         if (num < 0) return error.NegativeNumber;
-        total += @as(i64, @intCast(num));
+        total += asI64(T, num);
     }
 
-    if (total % 2 != 0) return error.NoPartition;
+    if (@rem(total, 2) != 0) return error.NoPartition;
 
     const target = @divTrunc(total, 2);
     const path = try subsetSumPath(T, allocator, nums, @intCast(target));
     defer allocator.free(path);
 
     // Build subsets from path
-    var subset1 = std.ArrayList(T).init(allocator);
-    errdefer subset1.deinit();
-    var subset2 = std.ArrayList(T).init(allocator);
-    errdefer subset2.deinit();
+    var subset1: std.ArrayList(T) = .empty;
+    errdefer subset1.deinit(allocator);
+
+    var subset2: std.ArrayList(T) = .empty;
+    errdefer subset2.deinit(allocator);
 
     for (nums, 0..) |num, i| {
         if (path[i]) {
-            try subset1.append(num);
+            try subset1.append(allocator, num);
         } else {
-            try subset2.append(num);
+            try subset2.append(allocator, num);
         }
     }
 
@@ -124,7 +143,7 @@ fn subsetSumExists(comptime T: type, nums: []const T, target: usize) bool {
 
     // Process each number
     for (nums) |num| {
-        const n = @as(usize, @intCast(num));
+        const n = asUsize(T, num);
         if (n > target) continue;
 
         // Traverse backwards to avoid using same element twice
@@ -146,7 +165,7 @@ fn subsetSumExists(comptime T: type, nums: []const T, target: usize) bool {
 /// Time: O(n × sum) | Space: O(n × sum)
 fn subsetSumPath(comptime T: type, allocator: Allocator, nums: []const T, target: usize) ![]bool {
     const n = nums.len;
-    
+
     // DP table: dp[i][j] = can we make sum j using first i elements?
     const dp = try allocator.alloc([]bool, n + 1);
     defer {
@@ -162,11 +181,11 @@ fn subsetSumPath(comptime T: type, allocator: Allocator, nums: []const T, target
 
     // Fill DP table
     for (1..n + 1) |i| {
-        const num = @as(usize, @intCast(nums[i - 1]));
+        const num = asUsize(T, nums[i - 1]);
         for (0..target + 1) |j| {
             // Exclude current number
             dp[i][j] = dp[i - 1][j];
-            
+
             // Include current number if possible
             if (j >= num and dp[i - 1][j - num]) {
                 dp[i][j] = true;
@@ -184,7 +203,7 @@ fn subsetSumPath(comptime T: type, allocator: Allocator, nums: []const T, target
     var i = n;
     while (i > 0 and j > 0) {
         // If dp[i][j] came from including nums[i-1]
-        const num = @as(usize, @intCast(nums[i - 1]));
+        const num = asUsize(T, nums[i - 1]);
         if (j >= num and dp[i - 1][j - num] and !dp[i - 1][j]) {
             path[i - 1] = true;
             j -= num;
@@ -208,10 +227,10 @@ pub fn canPartitionKSubsets(comptime T: type, allocator: Allocator, nums: []cons
     var total: i64 = 0;
     for (nums) |num| {
         if (num < 0) return error.NegativeNumber;
-        total += @as(i64, @intCast(num));
+        total += asI64(T, num);
     }
 
-    if (total % @as(i64, @intCast(k)) != 0) return false;
+    if (@rem(total, @as(i64, @intCast(k))) != 0) return false;
     const target = @divTrunc(total, @as(i64, @intCast(k)));
 
     // Sort descending for better pruning
@@ -220,7 +239,7 @@ pub fn canPartitionKSubsets(comptime T: type, allocator: Allocator, nums: []cons
     std.mem.sort(T, sorted, {}, std.sort.desc(T));
 
     // Early exit if largest element exceeds target
-    if (@as(i64, @intCast(sorted[0])) > target) return false;
+    if (asI64(T, sorted[0]) > target) return false;
 
     // Backtracking with visited bitmask
     const visited = try allocator.alloc(bool, nums.len);
@@ -247,7 +266,7 @@ fn canPartitionKSubsetsHelper(
 
     for (start_idx..nums.len) |i| {
         if (visited[i]) continue;
-        const num = @as(i64, @intCast(nums[i]));
+        const num = asI64(T, nums[i]);
         if (current_sum + num > target) continue;
 
         visited[i] = true;
@@ -343,8 +362,8 @@ test "Partition Equal Subset Sum - findPartition" {
     // Example: [1,5,11,5]
     const nums = [_]i32{ 1, 5, 11, 5 };
     var result = try findPartition(i32, allocator, &nums);
-    defer result.subset1.deinit();
-    defer result.subset2.deinit();
+    defer result.subset1.deinit(allocator);
+    defer result.subset2.deinit(allocator);
 
     // Calculate sums
     var sum1: i32 = 0;
@@ -369,8 +388,8 @@ test "Partition Equal Subset Sum - findPartition empty" {
 
     const nums = [_]i32{};
     var result = try findPartition(i32, allocator, &nums);
-    defer result.subset1.deinit();
-    defer result.subset2.deinit();
+    defer result.subset1.deinit(allocator);
+    defer result.subset2.deinit(allocator);
 
     try expectEqual(@as(usize, 0), result.subset1.items.len);
     try expectEqual(@as(usize, 0), result.subset2.items.len);
@@ -458,8 +477,8 @@ test "Partition Equal Subset Sum - memory safety" {
 
     const nums = [_]i32{ 1, 2, 3, 4 };
     var result = try findPartition(i32, allocator, &nums);
-    defer result.subset1.deinit();
-    defer result.subset2.deinit();
+    defer result.subset1.deinit(allocator);
+    defer result.subset2.deinit(allocator);
 
     // Verify no leaks (testing.allocator will catch this)
     try expect(result.subset1.items.len > 0);

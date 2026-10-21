@@ -201,8 +201,8 @@ pub fn longestCommonSubstringOptimized(allocator: Allocator, s1: []const u8, s2:
 /// Time: O(n×m + k×L) where k = number of results, L = average substring length
 /// Space: O(n×m + k)
 pub fn allCommonSubstrings(allocator: Allocator, s1: []const u8, s2: []const u8, minLength: usize) !std.ArrayList(SubstringResult) {
-    var results = std.ArrayList(SubstringResult).init(allocator);
-    errdefer results.deinit();
+    var results: std.ArrayList(SubstringResult) = .empty;
+    errdefer results.deinit(allocator);
 
     if (s1.len == 0 or s2.len == 0 or minLength == 0) {
         return results;
@@ -247,8 +247,8 @@ pub fn allCommonSubstrings(allocator: Allocator, s1: []const u8, s2: []const u8,
         for (1..m + 1) |j| {
             const len = table[i][j];
             if (len >= minLength) {
-                // Check if this is an endpoint (next cells are 0 or out of bounds)
-                const isEnd = (i == n or j == m or table[i + 1][j] == 0 or table[i][j + 1] == 0);
+                // Maximal match: the diagonal successor does not extend it
+                const isEnd = (i == n or j == m or table[i + 1][j + 1] == 0);
                 if (isEnd) {
                     const start1 = i - len;
                     const substr = s1[start1..i];
@@ -257,7 +257,7 @@ pub fn allCommonSubstrings(allocator: Allocator, s1: []const u8, s2: []const u8,
                     const gop = try seen.getOrPut(substr);
                     if (!gop.found_existing) {
                         const start2 = std.mem.find(u8, s2, substr) orelse continue;
-                        try results.append(SubstringResult{
+                        try results.append(allocator, SubstringResult{
                             .length = len,
                             .start1 = start1,
                             .start2 = start2,
@@ -287,10 +287,10 @@ test "longest common substring - multiple matches" {
     const allocator = testing.allocator;
 
     const result = try longestCommonSubstring(allocator, "abcxyzabc", "xyzabcxyz");
-    try testing.expectEqual(@as(usize, 3), result.length);
-    // Should find "abc" or "xyz" (both length 3)
+    // "abcxyz" and "xyzabc" both occur in both strings (length 6)
+    try testing.expectEqual(@as(usize, 6), result.length);
     const substr = result.substring1("abcxyzabc");
-    try testing.expect(std.mem.eql(u8, substr, "abc") or std.mem.eql(u8, substr, "xyz"));
+    try testing.expect(std.mem.eql(u8, substr, "abcxyz") or std.mem.eql(u8, substr, "xyzabc"));
 }
 
 test "longest common substring - no match" {
@@ -393,45 +393,37 @@ test "longest common substring - all common (min length 2)" {
     const allocator = testing.allocator;
 
     var results = try allCommonSubstrings(allocator, "abcabc", "xabcy", 2);
-    defer results.deinit();
+    defer results.deinit(allocator);
 
-    try testing.expect(results.items.len >= 1);
-    // Should find "ab" and "bc" (both length 2)
-    var foundAb = false;
-    var foundBc = false;
-    for (results.items) |r| {
-        const substr = r.substring1("abcabc");
-        if (std.mem.eql(u8, substr, "ab")) foundAb = true;
-        if (std.mem.eql(u8, substr, "bc")) foundBc = true;
-    }
-    try testing.expect(foundAb);
-    try testing.expect(foundBc);
+    // Only the maximal match "abc" is reported; its sub-matches "ab" and "bc" are not
+    try testing.expectEqual(@as(usize, 1), results.items.len);
+    try testing.expectEqualStrings("abc", results.items[0].substring1("abcabc"));
 }
 
 test "longest common substring - all common (min length 3)" {
     const allocator = testing.allocator;
 
     var results = try allCommonSubstrings(allocator, "abcxyzabc", "xyzabcxyz", 3);
-    defer results.deinit();
+    defer results.deinit(allocator);
 
     try testing.expect(results.items.len >= 2);
-    // Should find "abc" and "xyz" (both length 3)
-    var foundAbc = false;
-    var foundXyz = false;
+    // Maximal matches: "abcxyz" and "xyzabc" (their length-3 parts are not reported)
+    var found_abcxyz = false;
+    var found_xyzabc = false;
     for (results.items) |r| {
         const substr = r.substring1("abcxyzabc");
-        if (std.mem.eql(u8, substr, "abc")) foundAbc = true;
-        if (std.mem.eql(u8, substr, "xyz")) foundXyz = true;
+        if (std.mem.eql(u8, substr, "abcxyz")) found_abcxyz = true;
+        if (std.mem.eql(u8, substr, "xyzabc")) found_xyzabc = true;
     }
-    try testing.expect(foundAbc);
-    try testing.expect(foundXyz);
+    try testing.expect(found_abcxyz);
+    try testing.expect(found_xyzabc);
 }
 
 test "longest common substring - all common empty" {
     const allocator = testing.allocator;
 
     var results = try allCommonSubstrings(allocator, "abc", "def", 1);
-    defer results.deinit();
+    defer results.deinit(allocator);
 
     try testing.expectEqual(@as(usize, 0), results.items.len);
 }
@@ -440,7 +432,7 @@ test "longest common substring - all common no duplicates" {
     const allocator = testing.allocator;
 
     var results = try allCommonSubstrings(allocator, "aaaa", "aaaa", 2);
-    defer results.deinit();
+    defer results.deinit(allocator);
 
     // Should find "aa", "aaa", "aaaa" but deduplicate same substrings
     try testing.expect(results.items.len <= 3); // At most 3 unique substrings
@@ -467,7 +459,7 @@ test "longest common substring - memory safety" {
         try testing.expectEqual(@as(usize, 6), result.length);
 
         var results = try allCommonSubstrings(allocator, "abc", "xabc", 1);
-        defer results.deinit();
+        defer results.deinit(allocator);
         try testing.expect(results.items.len > 0);
     }
 }

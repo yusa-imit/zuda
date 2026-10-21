@@ -99,7 +99,7 @@ fn Context(comptime V: type) type {
                 .discovery = std.AutoHashMap(V, usize).init(allocator),
                 .low_link = std.AutoHashMap(V, usize).init(allocator),
                 .time = 0,
-                .articulation_points = .{},
+                .articulation_points = .empty,
             };
         }
 
@@ -198,7 +198,7 @@ test "ArticulationPoints: single vertex" {
         while (iter.next()) |list| list.deinit(allocator);
     }
 
-    try graph.put(0, .{});
+    try graph.put(0, .empty);
 
     var finder = ArticulationPoints(u32).init(allocator);
     var result = try finder.run(&graph);
@@ -218,16 +218,16 @@ test "ArticulationPoints: simple bridge (0-1-2)" {
 
     // 0 -- 1 -- 2
     // Articulation point: 1 (removing 1 disconnects 0 and 2)
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try list1.append(allocator, 2);
     try graph.put(1, list1);
 
-    var list2: std.ArrayList(u32) = .{};
+    var list2: std.ArrayList(u32) = .empty;
     try list2.append(allocator, 1);
     try graph.put(2, list2);
 
@@ -252,17 +252,17 @@ test "ArticulationPoints: triangle (no articulation points)" {
     //           |    |
     //           2 ---+
     // No articulation points (all vertices have alternate paths)
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try list0.append(allocator, 2);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try list1.append(allocator, 2);
     try graph.put(1, list1);
 
-    var list2: std.ArrayList(u32) = .{};
+    var list2: std.ArrayList(u32) = .empty;
     try list2.append(allocator, 0);
     try list2.append(allocator, 1);
     try graph.put(2, list2);
@@ -289,26 +289,26 @@ test "ArticulationPoints: star graph (center is articulation point)" {
     //     |
     //     4
     // Articulation point: 0 (center - removing it disconnects all leaves)
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try list0.append(allocator, 2);
     try list0.append(allocator, 3);
     try list0.append(allocator, 4);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try graph.put(1, list1);
 
-    var list2: std.ArrayList(u32) = .{};
+    var list2: std.ArrayList(u32) = .empty;
     try list2.append(allocator, 0);
     try graph.put(2, list2);
 
-    var list3: std.ArrayList(u32) = .{};
+    var list3: std.ArrayList(u32) = .empty;
     try list3.append(allocator, 0);
     try graph.put(3, list3);
 
-    var list4: std.ArrayList(u32) = .{};
+    var list4: std.ArrayList(u32) = .empty;
     try list4.append(allocator, 0);
     try graph.put(4, list4);
 
@@ -331,21 +331,21 @@ test "ArticulationPoints: chain (all internal vertices are articulation points)"
 
     // 0 -- 1 -- 2 -- 3
     // Articulation points: 1, 2 (internal vertices)
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try list1.append(allocator, 2);
     try graph.put(1, list1);
 
-    var list2: std.ArrayList(u32) = .{};
+    var list2: std.ArrayList(u32) = .empty;
     try list2.append(allocator, 1);
     try list2.append(allocator, 3);
     try graph.put(2, list2);
 
-    var list3: std.ArrayList(u32) = .{};
+    var list3: std.ArrayList(u32) = .empty;
     try list3.append(allocator, 2);
     try graph.put(3, list3);
 
@@ -379,27 +379,27 @@ test "ArticulationPoints: cycle with tail" {
     //     |    |
     //     4 -- 3
     // Articulation point: 1 (connects tail 0 to cycle)
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try list1.append(allocator, 2);
     try list1.append(allocator, 4);
     try graph.put(1, list1);
 
-    var list2: std.ArrayList(u32) = .{};
+    var list2: std.ArrayList(u32) = .empty;
     try list2.append(allocator, 1);
     try list2.append(allocator, 3);
     try graph.put(2, list2);
 
-    var list3: std.ArrayList(u32) = .{};
+    var list3: std.ArrayList(u32) = .empty;
     try list3.append(allocator, 2);
     try list3.append(allocator, 4);
     try graph.put(3, list3);
 
-    var list4: std.ArrayList(u32) = .{};
+    var list4: std.ArrayList(u32) = .empty;
     try list4.append(allocator, 1);
     try list4.append(allocator, 3);
     try graph.put(4, list4);
@@ -425,34 +425,34 @@ test "ArticulationPoints: two cycles connected by bridge" {
     // Bridge: 2-3
     // Cycle 2: 3-4-5-3
     // Articulation points: 2, 3 (endpoints of bridge)
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try list0.append(allocator, 2);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try list1.append(allocator, 2);
     try graph.put(1, list1);
 
-    var list2: std.ArrayList(u32) = .{};
+    var list2: std.ArrayList(u32) = .empty;
     try list2.append(allocator, 0);
     try list2.append(allocator, 1);
     try list2.append(allocator, 3);
     try graph.put(2, list2);
 
-    var list3: std.ArrayList(u32) = .{};
+    var list3: std.ArrayList(u32) = .empty;
     try list3.append(allocator, 2);
     try list3.append(allocator, 4);
     try list3.append(allocator, 5);
     try graph.put(3, list3);
 
-    var list4: std.ArrayList(u32) = .{};
+    var list4: std.ArrayList(u32) = .empty;
     try list4.append(allocator, 3);
     try list4.append(allocator, 5);
     try graph.put(4, list4);
 
-    var list5: std.ArrayList(u32) = .{};
+    var list5: std.ArrayList(u32) = .empty;
     try list5.append(allocator, 3);
     try list5.append(allocator, 4);
     try graph.put(5, list5);
@@ -483,24 +483,24 @@ test "ArticulationPoints: disconnected components" {
 
     // Component 1: 0 -- 1 (no articulation points)
     // Component 2: 2 -- 3 -- 4 (3 is articulation point)
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try graph.put(1, list1);
 
-    var list2: std.ArrayList(u32) = .{};
+    var list2: std.ArrayList(u32) = .empty;
     try list2.append(allocator, 3);
     try graph.put(2, list2);
 
-    var list3: std.ArrayList(u32) = .{};
+    var list3: std.ArrayList(u32) = .empty;
     try list3.append(allocator, 2);
     try list3.append(allocator, 4);
     try graph.put(3, list3);
 
-    var list4: std.ArrayList(u32) = .{};
+    var list4: std.ArrayList(u32) = .empty;
     try list4.append(allocator, 3);
     try graph.put(4, list4);
 
@@ -527,38 +527,38 @@ test "ArticulationPoints: complex network" {
     // Articulation points: 1 (separates {0,3,4} from {2,5,6}),
     //                      2 (separates biconnected component from tail 5-6),
     //                      5 (separates everything from 6)
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try list0.append(allocator, 3);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try list1.append(allocator, 2);
     try list1.append(allocator, 4);
     try graph.put(1, list1);
 
-    var list2: std.ArrayList(u32) = .{};
+    var list2: std.ArrayList(u32) = .empty;
     try list2.append(allocator, 1);
     try list2.append(allocator, 5);
     try graph.put(2, list2);
 
-    var list3: std.ArrayList(u32) = .{};
+    var list3: std.ArrayList(u32) = .empty;
     try list3.append(allocator, 0);
     try list3.append(allocator, 4);
     try graph.put(3, list3);
 
-    var list4: std.ArrayList(u32) = .{};
+    var list4: std.ArrayList(u32) = .empty;
     try list4.append(allocator, 1);
     try list4.append(allocator, 3);
     try graph.put(4, list4);
 
-    var list5: std.ArrayList(u32) = .{};
+    var list5: std.ArrayList(u32) = .empty;
     try list5.append(allocator, 2);
     try list5.append(allocator, 6);
     try graph.put(5, list5);
 
-    var list6: std.ArrayList(u32) = .{};
+    var list6: std.ArrayList(u32) = .empty;
     try list6.append(allocator, 5);
     try graph.put(6, list6);
 
@@ -590,17 +590,17 @@ test "ArticulationPoints: self-loop" {
 
     // 0 -- 1 -- 2 (with self-loop on 1)
     // Articulation point: 1 (self-loop doesn't change connectivity)
-    var list0: std.ArrayList(u32) = .{};
+    var list0: std.ArrayList(u32) = .empty;
     try list0.append(allocator, 1);
     try graph.put(0, list0);
 
-    var list1: std.ArrayList(u32) = .{};
+    var list1: std.ArrayList(u32) = .empty;
     try list1.append(allocator, 0);
     try list1.append(allocator, 1); // self-loop
     try list1.append(allocator, 2);
     try graph.put(1, list1);
 
-    var list2: std.ArrayList(u32) = .{};
+    var list2: std.ArrayList(u32) = .empty;
     try list2.append(allocator, 1);
     try graph.put(2, list2);
 
@@ -626,7 +626,7 @@ test "ArticulationPoints: stress test (large chain)" {
     const n = 100;
     var i: u32 = 0;
     while (i < n) : (i += 1) {
-        var list: std.ArrayList(u32) = .{};
+        var list: std.ArrayList(u32) = .empty;
         if (i > 0) try list.append(allocator, i - 1);
         if (i < n - 1) try list.append(allocator, i + 1);
         try graph.put(i, list);

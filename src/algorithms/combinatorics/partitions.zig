@@ -38,7 +38,7 @@
 //! const parts = try partitions.generatePartitions(u32, allocator, 4);
 //! defer {
 //!     for (parts.items) |part| allocator.free(part);
-//!     parts.deinit();
+//!     parts.deinit(allocator);
 //! }
 //!
 //! // Count derangements of n=3: !3 = 2 (permutations with no fixed points)
@@ -54,60 +54,39 @@ const testing = std.testing;
 
 /// Count the number of ways to partition integer n into exactly k parts
 ///
-/// Uses dynamic programming with state dp[i][j] = partitions of i into j parts.
-/// Recurrence: dp[i][j] = dp[i-1][j-1] + dp[i-j][j]
-/// - dp[i-1][j-1]: add new part of size 1
-/// - dp[i-j][j]: increment all existing parts by 1
+/// Uses conjugation: partitions of n into exactly k parts correspond one-to-one to
+/// partitions of n - k into parts of size at most k. The latter is counted with the
+/// classic unbounded-knapsack recurrence ways[s] += ways[s - part] over part = 1..k.
 ///
 /// Returns the count of partitions, or error.Overflow if result exceeds type T.
 ///
-/// Time: O(n×k) | Space: O(k) (rolling array optimization)
+/// Time: O(k×(n-k)) | Space: O(n-k)
 pub fn countPartitions(comptime T: type, allocator: Allocator, n: T, k: T) !T {
     if (n < 0 or k < 0) return error.NegativeInput;
     if (k == 0) return if (n == 0) 1 else 0;
     if (k > n) return 0;
     if (k == 1 or k == n) return 1;
 
-    // Rolling array: keep only current and previous row
-    var prev = try allocator.alloc(T, @intCast(k + 1));
-    defer allocator.free(prev);
-    var curr = try allocator.alloc(T, @intCast(k + 1));
-    defer allocator.free(curr);
+    const sum_max: usize = @intCast(n - k);
+    const part_max: usize = @intCast(k);
+    std.debug.assert(sum_max >= 1);
+    std.debug.assert(part_max >= 2);
 
-    @memset(prev, 0);
-    @memset(curr, 0);
-    prev[0] = 1;
+    const ways = try allocator.alloc(T, sum_max + 1);
+    defer allocator.free(ways);
 
-    var i: T = 1;
-    while (i <= n) : (i += 1) {
-        @memset(curr, 0);
-        curr[0] = 1; // Empty partition
+    @memset(ways, 0);
+    ways[0] = 1;
 
-        var j: T = 1;
-        while (j <= @min(i, k)) : (j += 1) {
-            // Add new part of size 1: dp[i-1][j-1]
-            if (j <= i) {
-                curr[@intCast(j)] = prev[@intCast(j - 1)];
-            }
-
-            // Increment all parts: dp[i-j][j]
-            if (i >= j) {
-                const idx_curr: usize = @intCast(j);
-                const idx_prev: usize = @intCast(j);
-                const offset: usize = @intCast(i - j);
-                if (offset < prev.len) {
-                    curr[idx_curr] = math.add(T, curr[idx_curr], if (offset < prev.len) prev[idx_prev] else 0) catch return error.Overflow;
-                }
-            }
+    var part: usize = 1;
+    while (part <= part_max) : (part += 1) {
+        var s: usize = part;
+        while (s <= sum_max) : (s += 1) {
+            ways[s] = math.add(T, ways[s], ways[s - part]) catch return error.Overflow;
         }
-
-        // Swap buffers
-        const tmp = prev;
-        prev = curr;
-        curr = tmp;
     }
 
-    return prev[@intCast(k)];
+    return ways[sum_max];
 }
 
 /// Generate all integer partitions of n
@@ -117,27 +96,29 @@ pub fn countPartitions(comptime T: type, allocator: Allocator, n: T, k: T) !T {
 ///
 /// Example: partitions of 4 = [[4], [3,1], [2,2], [2,1,1], [1,1,1,1]]
 ///
-/// Caller must free each partition slice and call deinit() on the returned list.
+/// Caller must free each partition slice and call deinit(allocator) on the returned list.
 ///
 /// Time: O(p(n)) where p(n) is the partition function | Space: O(p(n))
 pub fn generatePartitions(comptime T: type, allocator: Allocator, n: T) !ArrayList([]T) {
     if (n < 0) return error.NegativeInput;
 
-    var result = ArrayList([]T).init(allocator);
+    var result: ArrayList([]T) = .empty;
     errdefer {
         for (result.items) |part| allocator.free(part);
-        result.deinit();
+        result.deinit(allocator);
     }
 
     if (n == 0) {
         // Empty partition
         const empty = try allocator.alloc(T, 0);
-        try result.append(empty);
+        errdefer allocator.free(empty);
+
+        try result.append(allocator, empty);
         return result;
     }
 
-    var current = ArrayList(T).init(allocator);
-    defer current.deinit();
+    var current: ArrayList(T) = .empty;
+    defer current.deinit(allocator);
 
     try generatePartitionsHelper(T, allocator, n, n, &current, &result);
     return result;
@@ -155,14 +136,16 @@ fn generatePartitionsHelper(
     if (remaining == 0) {
         // Found a complete partition
         const partition = try allocator.dupe(T, current.items);
-        try result.append(partition);
+        errdefer allocator.free(partition);
+
+        try result.append(allocator, partition);
         return;
     }
 
     // Try all values from max_value down to 1
     var value = @min(remaining, max_value);
     while (value >= 1) : (value -= 1) {
-        try current.append(value);
+        try current.append(allocator, value);
         try generatePartitionsHelper(T, allocator, remaining - value, value, current, result);
         _ = current.pop();
     }
@@ -180,27 +163,32 @@ pub fn bellNumber(comptime T: type, allocator: Allocator, n: T) !T {
     if (n < 0) return error.NegativeInput;
     if (n == 0) return 1;
 
-    // Use Bell triangle: B[i][j] where B[i][0] = B[i-1][i-1]
-    // and B[i][j] = B[i-1][j-1] + B[i][j-1]
-    var triangle = try allocator.alloc(T, @intCast(n + 1));
-    defer allocator.free(triangle);
+    // Bell triangle: row 0 is [1]; row i starts with the last element of row i-1 and
+    // each next element is its left neighbour plus the element above-left.
+    // B(n) is the last element of row n-1, so B(n+1) is never computed.
+    const row_max: usize = @intCast(n);
+    std.debug.assert(row_max >= 1);
 
-    triangle[0] = 1;
+    const rows = try allocator.alloc(T, 2 * row_max);
+    defer allocator.free(rows);
 
-    var i: T = 1;
-    while (i <= n) : (i += 1) {
-        // First element is last element of previous row
-        const prev_last = triangle[@intCast(i - 1)];
+    var prev = rows[0..row_max];
+    var curr = rows[row_max..];
+    prev[0] = 1;
 
-        // Fill row from left to right
-        var j: T = i - 1;
-        while (j >= 1) : (j -= 1) {
-            triangle[@intCast(j)] = math.add(T, triangle[@intCast(j - 1)], triangle[@intCast(j)]) catch return error.Overflow;
+    var i: usize = 1;
+    while (i < row_max) : (i += 1) {
+        curr[0] = prev[i - 1];
+        var j: usize = 1;
+        while (j <= i) : (j += 1) {
+            curr[j] = math.add(T, curr[j - 1], prev[j - 1]) catch return error.Overflow;
         }
-        triangle[0] = prev_last;
+        const tmp = prev;
+        prev = curr;
+        curr = tmp;
     }
 
-    return triangle[0];
+    return prev[row_max - 1];
 }
 
 /// Count derangements of n elements (!n)
@@ -297,15 +285,38 @@ test "countPartitions: partitions of 6 into 3 parts" {
 test "countPartitions: partitions of 10 into 4 parts" {
     // Multiple ways, verify count
     const count = try countPartitions(u32, testing.allocator, 10, 4);
-    try testing.expect(count > 0);
+    try testing.expectEqual(@as(u32, 9), count);
+}
+
+test "countPartitions: matches enumeration for every k" {
+    const gpa = testing.allocator;
+    const n_max: u32 = 9;
+
+    var n: u32 = 1;
+    while (n <= n_max) : (n += 1) {
+        var parts = try generatePartitions(u32, gpa, n);
+        defer {
+            for (parts.items) |part| gpa.free(part);
+            parts.deinit(gpa);
+        }
+
+        var k: u32 = 1;
+        while (k <= n) : (k += 1) {
+            var expected: u32 = 0;
+            for (parts.items) |part| {
+                if (part.len == k) expected += 1;
+            }
+            try testing.expectEqual(expected, try countPartitions(u32, gpa, n, k));
+        }
+    }
 }
 
 test "generatePartitions: empty partition" {
     const allocator = testing.allocator;
-    const parts = try generatePartitions(u32, allocator, 0);
+    var parts = try generatePartitions(u32, allocator, 0);
     defer {
         for (parts.items) |part| allocator.free(part);
-        parts.deinit();
+        parts.deinit(allocator);
     }
 
     try testing.expectEqual(@as(usize, 1), parts.items.len);
@@ -314,10 +325,10 @@ test "generatePartitions: empty partition" {
 
 test "generatePartitions: n=1" {
     const allocator = testing.allocator;
-    const parts = try generatePartitions(u32, allocator, 1);
+    var parts = try generatePartitions(u32, allocator, 1);
     defer {
         for (parts.items) |part| allocator.free(part);
-        parts.deinit();
+        parts.deinit(allocator);
     }
 
     try testing.expectEqual(@as(usize, 1), parts.items.len);
@@ -326,10 +337,10 @@ test "generatePartitions: n=1" {
 
 test "generatePartitions: n=4" {
     const allocator = testing.allocator;
-    const parts = try generatePartitions(u32, allocator, 4);
+    var parts = try generatePartitions(u32, allocator, 4);
     defer {
         for (parts.items) |part| allocator.free(part);
-        parts.deinit();
+        parts.deinit(allocator);
     }
 
     // Expected: [4], [3,1], [2,2], [2,1,1], [1,1,1,1]
@@ -345,10 +356,10 @@ test "generatePartitions: n=4" {
 
 test "generatePartitions: n=5" {
     const allocator = testing.allocator;
-    const parts = try generatePartitions(u32, allocator, 5);
+    var parts = try generatePartitions(u32, allocator, 5);
     defer {
         for (parts.items) |part| allocator.free(part);
-        parts.deinit();
+        parts.deinit(allocator);
     }
 
     // p(5) = 7 partitions
@@ -369,6 +380,12 @@ test "bellNumber: small values" {
     try testing.expectEqual(@as(u32, 5), try bellNumber(u32, testing.allocator, 3)); // B(3) = 5
     try testing.expectEqual(@as(u32, 15), try bellNumber(u32, testing.allocator, 4)); // B(4) = 15
     try testing.expectEqual(@as(u32, 52), try bellNumber(u32, testing.allocator, 5)); // B(5) = 52
+}
+
+test "bellNumber: overflow is reported, not wrapped" {
+    // B(7) = 877 does not fit in u8.
+    try testing.expectError(error.Overflow, bellNumber(u8, testing.allocator, 7));
+    try testing.expectEqual(@as(u32, 877), try bellNumber(u32, testing.allocator, 7));
 }
 
 test "bellNumber: B(6) = 203" {
@@ -409,11 +426,8 @@ test "multinomial: basic cases" {
 
 test "multinomial: with zeros" {
     // Zeros should be ignored
-    try testing.expectEqual(@as(u32, 6), try multinomial(u32, &[_]u32{ 0, 3, 0 })); // 3!/3! = 1, wait that's wrong
-    // Actually: n=3, groups=(0,3,0) => 3!/(0!*3!*0!) = 6/6 = 1
-    // Let me recalculate: multinomial(0,3,0) should be multinomial(3) = 3!/(3!) = 1
-    // But my implementation computes incrementally... let me trace through
-    // Actually for (0,3,0): we only process the 3, so we get C(3,3) = 1
+    // n = 3, groups (0, 3, 0): 3! / (0! * 3! * 0!) = 1
+    try testing.expectEqual(@as(u32, 1), try multinomial(u32, &[_]u32{ 0, 3, 0 }));
 }
 
 test "multinomial: four groups" {
@@ -449,9 +463,9 @@ test "partitions: memory safety" {
     // Multiple generations without leaks
     var i: u32 = 1;
     while (i <= 6) : (i += 1) {
-        const parts = try generatePartitions(u32, allocator, i);
+        var parts = try generatePartitions(u32, allocator, i);
         for (parts.items) |part| allocator.free(part);
-        parts.deinit();
+        parts.deinit(allocator);
     }
 }
 
