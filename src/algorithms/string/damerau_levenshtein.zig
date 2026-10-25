@@ -128,13 +128,13 @@ pub fn findMostSimilar(allocator: Allocator, target: []const u8, candidates: []c
 /// Caller owns returned ArrayList
 /// Time: O(k*m*n) where k = candidates.len | Space: O(k + m*n)
 pub fn findAllSimilar(allocator: Allocator, target: []const u8, candidates: []const []const u8, threshold: usize) !std.ArrayList(usize) {
-    var result = std.ArrayList(usize).init(allocator);
-    errdefer result.deinit();
+    var result = std.ArrayList(usize).empty;
+    errdefer result.deinit(allocator);
 
     for (candidates, 0..) |candidate, i| {
         const dist = try distance(allocator, target, candidate);
         if (dist <= threshold) {
-            try result.append(i);
+            try result.append(allocator, i);
         }
     }
 
@@ -273,7 +273,7 @@ test "damerau_levenshtein: find all similar" {
     const candidates = [_][]const u8{ "hello", "helo", "help", "world", "helo" };
 
     var result = try findAllSimilar(allocator, "hello", &candidates, 1);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     // "hello" (exact), "helo" (del), "help" (sub), "helo" (del)
     try std.testing.expectEqual(4, result.items.len);
@@ -358,6 +358,6 @@ test "damerau_levenshtein: memory safety" {
         _ = try findMostSimilar(allocator, "test", &candidates);
 
         var result = try findAllSimilar(allocator, "test", &candidates, 3);
-        result.deinit();
+        result.deinit(allocator);
     }
 }

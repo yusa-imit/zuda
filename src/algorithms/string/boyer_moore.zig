@@ -95,7 +95,7 @@ pub fn BoyerMoore(comptime T: type) type {
         /// Find all occurrences of pattern in text
         /// Time: O(n * m) worst | Space: O(k)
         pub fn findAll(self: *const Self, text: []const T, allocator: Allocator) !std.ArrayList(usize) {
-            var matches: std.ArrayList(usize) = .{};
+            var matches: std.ArrayList(usize) = .empty;
             errdefer matches.deinit(allocator);
 
             if (text.len < self.pattern.len) return matches;
@@ -181,7 +181,7 @@ pub fn BoyerMoore(comptime T: type) type {
             // Compute shifts for each position
             var i: usize = m;
             var j: usize = m + 1;
-            var border: std.ArrayList(usize) = .{};
+            var border: std.ArrayList(usize) = .empty;
             defer border.deinit(allocator);
             try border.appendNTimes(allocator, 0, m + 1);
 

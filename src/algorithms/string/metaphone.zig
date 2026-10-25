@@ -28,8 +28,8 @@ const testing = std.testing;
 pub fn metaphone(allocator: Allocator, word: []const u8, max_length: usize) ![]u8 {
     if (word.len == 0) return try allocator.dupe(u8, "");
 
-    var result = std.ArrayList(u8).init(allocator);
-    errdefer result.deinit();
+    var result = std.ArrayList(u8).empty;
+    errdefer result.deinit(allocator);
 
     var i: usize = 0;
     const len = word.len;
@@ -61,12 +61,12 @@ pub fn metaphone(allocator: Allocator, word: []const u8, max_length: usize) ![]u
 
     // Initial WH -> W
     if (i + 1 < len and upper[i] == 'W' and upper[i + 1] == 'H') {
-        try result.append('W');
+        try result.append(allocator, 'W');
         i += 2;
     }
     // Initial X -> S
     else if (i < len and upper[i] == 'X') {
-        try result.append('S');
+        try result.append(allocator, 'S');
         i += 1;
     }
 
@@ -83,7 +83,7 @@ pub fn metaphone(allocator: Allocator, word: []const u8, max_length: usize) ![]u
             'A', 'E', 'I', 'O', 'U' => {
                 // Vowels only encoded at the beginning
                 if (i == 0 or (i > 0 and result.items.len == 0)) {
-                    try result.append(c);
+                    try result.append(allocator, c);
                 }
                 i += 1;
             },
@@ -92,29 +92,29 @@ pub fn metaphone(allocator: Allocator, word: []const u8, max_length: usize) ![]u
                 if (i == len - 1 and i > 0 and upper[i - 1] == 'M') {
                     // skip
                 } else {
-                    try result.append('B');
+                    try result.append(allocator, 'B');
                 }
                 i += 1;
             },
             'C' => {
                 // CH -> X
                 if (i + 1 < len and upper[i + 1] == 'H') {
-                    try result.append('X');
+                    try result.append(allocator, 'X');
                     i += 2;
                 }
                 // CIA -> X
                 else if (i + 2 < len and upper[i + 1] == 'I' and upper[i + 2] == 'A') {
-                    try result.append('X');
+                    try result.append(allocator, 'X');
                     i += 3;
                 }
                 // CE, CI, CY -> S
                 else if (i + 1 < len and (upper[i + 1] == 'E' or upper[i + 1] == 'I' or upper[i + 1] == 'Y')) {
-                    try result.append('S');
+                    try result.append(allocator, 'S');
                     i += 2;
                 }
                 // Else -> K
                 else {
-                    try result.append('K');
+                    try result.append(allocator, 'K');
                     i += 1;
                 }
             },
@@ -123,10 +123,10 @@ pub fn metaphone(allocator: Allocator, word: []const u8, max_length: usize) ![]u
                 if (i + 2 < len and upper[i + 1] == 'G' and
                     (upper[i + 2] == 'E' or upper[i + 2] == 'I' or upper[i + 2] == 'Y'))
                 {
-                    try result.append('J');
+                    try result.append(allocator, 'J');
                     i += 3;
                 } else {
-                    try result.append('T');
+                    try result.append(allocator, 'T');
                     i += 1;
                 }
             },
@@ -137,7 +137,7 @@ pub fn metaphone(allocator: Allocator, word: []const u8, max_length: usize) ![]u
                         // silent
                         i += 2;
                     } else if (i > 0 and !isVowel(upper[i - 1])) {
-                        try result.append('F');
+                        try result.append(allocator, 'F');
                         i += 2;
                     } else {
                         i += 2;
@@ -145,15 +145,15 @@ pub fn metaphone(allocator: Allocator, word: []const u8, max_length: usize) ![]u
                 }
                 // GN -> N
                 else if (i + 1 < len and upper[i + 1] == 'N') {
-                    try result.append('N');
+                    try result.append(allocator, 'N');
                     i += 2;
                 }
                 // GE, GI, GY -> J
                 else if (i + 1 < len and (upper[i + 1] == 'E' or upper[i + 1] == 'I' or upper[i + 1] == 'Y')) {
-                    try result.append('J');
+                    try result.append(allocator, 'J');
                     i += 2;
                 } else {
-                    try result.append('K');
+                    try result.append(allocator, 'K');
                     i += 1;
                 }
             },
@@ -162,7 +162,7 @@ pub fn metaphone(allocator: Allocator, word: []const u8, max_length: usize) ![]u
                 if (i > 0 and isVowel(upper[i - 1]) and (i + 1 >= len or !isVowel(upper[i + 1]))) {
                     // silent
                 } else {
-                    try result.append('H');
+                    try result.append(allocator, 'H');
                 }
                 i += 1;
             },
@@ -171,88 +171,88 @@ pub fn metaphone(allocator: Allocator, word: []const u8, max_length: usize) ![]u
                 if (i > 0 and upper[i - 1] == 'C') {
                     // skip duplicate
                 } else {
-                    try result.append('K');
+                    try result.append(allocator, 'K');
                 }
                 i += 1;
             },
             'P' => {
                 // PH -> F
                 if (i + 1 < len and upper[i + 1] == 'H') {
-                    try result.append('F');
+                    try result.append(allocator, 'F');
                     i += 2;
                 } else {
-                    try result.append('P');
+                    try result.append(allocator, 'P');
                     i += 1;
                 }
             },
             'Q' => {
-                try result.append('K');
+                try result.append(allocator, 'K');
                 i += 1;
             },
             'S' => {
                 // SH -> X
                 if (i + 1 < len and upper[i + 1] == 'H') {
-                    try result.append('X');
+                    try result.append(allocator, 'X');
                     i += 2;
                 }
                 // SIO, SIA -> X
                 else if (i + 2 < len and upper[i + 1] == 'I' and (upper[i + 2] == 'O' or upper[i + 2] == 'A')) {
-                    try result.append('X');
+                    try result.append(allocator, 'X');
                     i += 3;
                 } else {
-                    try result.append('S');
+                    try result.append(allocator, 'S');
                     i += 1;
                 }
             },
             'T' => {
                 // TH -> 0 (theta)
                 if (i + 1 < len and upper[i + 1] == 'H') {
-                    try result.append('0');
+                    try result.append(allocator, '0');
                     i += 2;
                 }
                 // TIO, TIA -> X
                 else if (i + 2 < len and upper[i + 1] == 'I' and (upper[i + 2] == 'O' or upper[i + 2] == 'A')) {
-                    try result.append('X');
+                    try result.append(allocator, 'X');
                     i += 3;
                 }
                 // TCH -> CH (but encode as X)
                 else if (i + 2 < len and upper[i + 1] == 'C' and upper[i + 2] == 'H') {
-                    try result.append('X');
+                    try result.append(allocator, 'X');
                     i += 3;
                 } else {
-                    try result.append('T');
+                    try result.append(allocator, 'T');
                     i += 1;
                 }
             },
             'V' => {
-                try result.append('F');
+                try result.append(allocator, 'F');
                 i += 1;
             },
             'W', 'Y' => {
                 // W, Y only encoded if followed by vowel
                 if (i + 1 < len and isVowel(upper[i + 1])) {
-                    try result.append(c);
+                    try result.append(allocator, c);
                 }
                 i += 1;
             },
             'X' => {
-                try result.append('K');
-                try result.append('S');
+                try result.append(allocator, 'K');
+                try result.append(allocator, 'S');
                 i += 1;
             },
             'Z' => {
-                try result.append('S');
+                try result.append(allocator, 'S');
                 i += 1;
             },
             else => {
                 // F, J, L, M, N, R
-                try result.append(c);
+                try result.append(allocator, c);
                 i += 1;
             },
         }
     }
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 /// Check if two words match using Metaphone encoding

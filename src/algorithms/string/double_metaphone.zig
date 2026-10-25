@@ -52,9 +52,9 @@ pub fn doubleMetaphone(allocator: Allocator, word: []const u8, max_length: usize
         };
     }
 
-    var primary = std.ArrayList(u8){};
+    var primary = std.ArrayList(u8).empty;
     errdefer primary.deinit(allocator);
-    var alternative = std.ArrayList(u8){};
+    var alternative = std.ArrayList(u8).empty;
     errdefer alternative.deinit(allocator);
 
     // Normalize input to uppercase
