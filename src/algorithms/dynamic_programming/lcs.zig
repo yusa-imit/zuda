@@ -4,7 +4,6 @@ const Allocator = std.mem.Allocator;
 /// Longest Common Subsequence (LCS)
 ///
 /// Provides algorithms for finding the longest common subsequence between two sequences.
-
 /// Find LCS length using dynamic programming
 /// Time: O(m*n) | Space: O(m*n)
 pub fn length(comptime T: type, allocator: Allocator, a: []const T, b: []const T) !usize {
@@ -161,7 +160,7 @@ pub fn findAllSequences(comptime T: type, allocator: Allocator, a: []const T, b:
     }
 
     // Reconstruct all LCS using backtracking
-    var results: std.ArrayList([]T) = .{};
+    var results: std.ArrayList([]T) = .empty;
     defer results.deinit(allocator);
 
     const lcs_len = dp[m][n];

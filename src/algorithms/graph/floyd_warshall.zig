@@ -113,7 +113,7 @@ pub fn FloydWarshall(
                 const source_dist_map = self.distances.get(source) orelse return null;
                 _ = source_dist_map.get(target) orelse return null;
 
-                var path: std.ArrayList(V) = .{};
+                var path: std.ArrayList(V) = .empty;
                 errdefer path.deinit(self.allocator);
 
                 // Reconstruct path backwards

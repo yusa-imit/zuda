@@ -151,7 +151,7 @@ pub fn Dinic(
 
                 const result_u = try residual.getOrPut(u);
                 if (!result_u.found_existing) {
-                    result_u.value_ptr.* = .{};
+                    result_u.value_ptr.* = .empty;
                 }
 
                 for (neighbors) |edge| {
@@ -160,7 +160,7 @@ pub fn Dinic(
                     // Ensure target vertex exists in residual graph
                     const result_v = try residual.getOrPut(v);
                     if (!result_v.found_existing) {
-                        result_v.value_ptr.* = .{};
+                        result_v.value_ptr.* = .empty;
                     }
 
                     // Forward edge index
@@ -199,7 +199,7 @@ pub fn Dinic(
         ) !bool {
             level.clearRetainingCapacity();
 
-            var queue: std.ArrayList(V) = .{};
+            var queue: std.ArrayList(V) = .empty;
             defer queue.deinit(allocator);
 
             try level.put(source, 0);

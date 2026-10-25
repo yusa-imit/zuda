@@ -22,7 +22,7 @@ const testing = std.testing;
 ///   n = 12 → 3 (4 + 4 + 4)
 ///   n = 13 → 2 (4 + 9)
 pub fn numSquares(comptime T: type, allocator: Allocator, n: T) !T {
-    if (@typeInfo(T) != .Int or @typeInfo(T).Int.signedness != .unsigned) {
+    if (@typeInfo(T) != .int or @typeInfo(T).int.signedness != .unsigned) {
         @compileError("numSquares requires unsigned integer type");
     }
 
@@ -35,7 +35,7 @@ pub fn numSquares(comptime T: type, allocator: Allocator, n: T) !T {
 
     // DP array: dp[i] = minimum count for sum i
     var dp = try std.ArrayList(T).initCapacity(allocator, n + 1);
-    defer dp.deinit();
+    defer dp.deinit(allocator);
 
     // Initialize with max values
     var i: T = 0;
@@ -65,7 +65,7 @@ pub fn numSquares(comptime T: type, allocator: Allocator, n: T) !T {
 /// Time: O(n × √n) for DP + O(result_count) for backtracking
 /// Space: O(n) for DP array + O(result_count) for result
 pub fn numSquaresWithPath(comptime T: type, allocator: Allocator, n: T) !struct { count: T, squares: []T } {
-    if (@typeInfo(T) != .Int or @typeInfo(T).Int.signedness != .unsigned) {
+    if (@typeInfo(T) != .int or @typeInfo(T).int.signedness != .unsigned) {
         @compileError("numSquaresWithPath requires unsigned integer type");
     }
 
@@ -89,11 +89,11 @@ pub fn numSquaresWithPath(comptime T: type, allocator: Allocator, n: T) !struct 
 
     // DP array: dp[i] = minimum count for sum i
     var dp = try std.ArrayList(T).initCapacity(allocator, n + 1);
-    defer dp.deinit();
+    defer dp.deinit(allocator);
 
     // Parent array: parent[i] = the perfect square used to reach i optimally
     var parent = try std.ArrayList(T).initCapacity(allocator, n + 1);
-    defer parent.deinit();
+    defer parent.deinit(allocator);
 
     // Initialize
     var i: T = 0;
@@ -130,7 +130,7 @@ pub fn numSquaresWithPath(comptime T: type, allocator: Allocator, n: T) !struct 
         current -= square_used;
     }
 
-    return .{ .count = count, .squares = try squares.toOwnedSlice() };
+    return .{ .count = count, .squares = try squares.toOwnedSlice(allocator) };
 }
 
 /// Check if n can be expressed as sum of exactly k perfect squares.
@@ -138,7 +138,7 @@ pub fn numSquaresWithPath(comptime T: type, allocator: Allocator, n: T) !struct 
 /// Time: O(n × k × √n)
 /// Space: O(n × k)
 pub fn canSumSquares(comptime T: type, allocator: Allocator, n: T, k: T) !bool {
-    if (@typeInfo(T) != .Int or @typeInfo(T).Int.signedness != .unsigned) {
+    if (@typeInfo(T) != .int or @typeInfo(T).int.signedness != .unsigned) {
         @compileError("canSumSquares requires unsigned integer type");
     }
 
@@ -185,7 +185,7 @@ pub fn canSumSquares(comptime T: type, allocator: Allocator, n: T, k: T) !bool {
 /// Time: O(n × √n) worst case, often faster in practice
 /// Space: O(n) for visited set
 pub fn numSquaresBFS(comptime T: type, allocator: Allocator, n: T) !T {
-    if (@typeInfo(T) != .Int or @typeInfo(T).Int.signedness != .unsigned) {
+    if (@typeInfo(T) != .int or @typeInfo(T).int.signedness != .unsigned) {
         @compileError("numSquaresBFS requires unsigned integer type");
     }
 
@@ -199,10 +199,10 @@ pub fn numSquaresBFS(comptime T: type, allocator: Allocator, n: T) !T {
     var visited = std.AutoHashMap(T, void).init(allocator);
     defer visited.deinit();
 
-    var queue = std.ArrayList(T).init(allocator);
-    defer queue.deinit();
+    var queue: std.ArrayList(T) = .empty;
+    defer queue.deinit(allocator);
 
-    try queue.append(n);
+    try queue.append(allocator, n);
     try visited.put(n, {});
 
     var level: T = 0;
@@ -223,7 +223,7 @@ pub fn numSquaresBFS(comptime T: type, allocator: Allocator, n: T) !T {
                 if (next == 0) return level;
 
                 if (!visited.contains(next)) {
-                    try queue.append(next);
+                    try queue.append(allocator, next);
                     try visited.put(next, {});
                 }
             }

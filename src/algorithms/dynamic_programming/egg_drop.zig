@@ -18,7 +18,6 @@
 /// - We try all possible floors and take the minimum over all choices
 ///
 /// Reference: Cormen et al., "Introduction to Algorithms" (2009)
-
 const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
@@ -84,7 +83,7 @@ pub fn minTrials(allocator: Allocator, eggs: usize, floors: usize) !usize {
     // Fill DP table
     for (2..eggs + 1) |i| {
         for (2..floors + 1) |j| {
-            var min_result = std.math.maxInt(usize);
+            var min_result: usize = std.math.maxInt(usize);
 
             // Try dropping from each floor x
             for (1..j + 1) |x| {
@@ -136,7 +135,7 @@ pub fn minTrialsOptimized(allocator: Allocator, eggs: usize, floors: usize) !usi
         curr[1] = 1;
 
         for (2..floors + 1) |j| {
-            var min_result = std.math.maxInt(usize);
+            var min_result: usize = std.math.maxInt(usize);
 
             for (1..j + 1) |x| {
                 const breaks = prev[x - 1];
@@ -218,7 +217,7 @@ pub fn minTrialsWithStrategy(
     // Fill DP table
     for (2..eggs + 1) |i| {
         for (2..floors + 1) |j| {
-            var min_result = std.math.maxInt(usize);
+            var min_result: usize = std.math.maxInt(usize);
             var best_floor: usize = 1;
 
             for (1..j + 1) |x| {
@@ -239,8 +238,8 @@ pub fn minTrialsWithStrategy(
     }
 
     // Backtrack to get the strategy
-    var strategy_list = std.ArrayList(usize).init(allocator);
-    errdefer strategy_list.deinit();
+    var strategy_list: std.ArrayList(usize) = .empty;
+    errdefer strategy_list.deinit(allocator);
 
     var curr_eggs = eggs;
     var curr_floors = floors;
@@ -248,7 +247,7 @@ pub fn minTrialsWithStrategy(
 
     while (curr_floors > 0 and curr_eggs > 0) {
         const drop_floor = choice[curr_eggs][curr_floors];
-        try strategy_list.append(floor_offset + drop_floor);
+        try strategy_list.append(allocator, floor_offset + drop_floor);
 
         // Assume worst case for demonstration (egg breaks)
         if (curr_eggs > 1) {
@@ -265,7 +264,7 @@ pub fn minTrialsWithStrategy(
 
     return .{
         .trials = dp[eggs][floors],
-        .strategy = try strategy_list.toOwnedSlice(),
+        .strategy = try strategy_list.toOwnedSlice(allocator),
     };
 }
 
@@ -307,8 +306,8 @@ test "egg drop: multiple eggs" {
     // 3 eggs, 14 floors → 4 trials
     try testing.expectEqual(4, try minTrials(allocator, 3, 14));
 
-    // 4 eggs, 16 floors → 4 trials
-    try testing.expectEqual(4, try minTrials(allocator, 4, 16));
+    // 4 eggs, 16 floors → 5 trials (4 trials cover only C(4,1)+C(4,2)+C(4,3)+C(4,4) = 15)
+    try testing.expectEqual(5, try minTrials(allocator, 4, 16));
 
     // Many eggs → binary search (log₂ floors)
     // 10 eggs, 100 floors → 7 trials (close to log₂ 100 ≈ 6.64)

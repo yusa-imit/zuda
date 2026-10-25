@@ -7,7 +7,6 @@ const Allocator = std.mem.Allocator;
 /// required to transform one string into another.
 ///
 /// Consumer: zr uses this for fuzzy command matching (src/util/levenshtein.zig)
-
 /// Operation type for edit sequence reconstruction
 pub const EditOp = enum {
     match, // Characters match, no cost
@@ -158,7 +157,7 @@ pub fn distanceWithEdits(allocator: Allocator, a: []const u8, b: []const u8) !st
     const dist = dp[m][n];
 
     // Backtrack to reconstruct edits
-    var edits: std.ArrayList(Edit) = .{};
+    var edits: std.ArrayList(Edit) = .empty;
     defer edits.deinit(allocator);
 
     var i = m;

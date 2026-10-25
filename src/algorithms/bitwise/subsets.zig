@@ -122,9 +122,9 @@ pub fn subsetSize(mask: u64) u8 {
 /// ```zig
 /// const has_element = isInSubset(0b10110100, 2); // Returns true (bit 2 is set)
 /// ```
-pub fn isInSubset(mask: u64, index: u6) bool {
+pub fn isInSubset(mask: u64, index: u8) bool {
     if (index >= 64) return false;
-    return (mask & (@as(u64, 1) << @intCast(index))) != 0;
+    return (mask & (@as(u64, 1) << @as(u6, @intCast(index)))) != 0;
 }
 
 /// Generate all subsets and collect them into an ArrayList.
@@ -135,7 +135,7 @@ pub fn isInSubset(mask: u64, index: u6) bool {
 /// Example:
 /// ```zig
 /// const subsets = try generateAllSubsets(allocator, 3);
-/// defer subsets.deinit();
+/// defer subsets.deinit(testing.allocator);
 /// // subsets.items = [0b000, 0b001, 0b010, 0b011, 0b100, 0b101, 0b110, 0b111]
 /// ```
 pub fn generateAllSubsets(allocator: Allocator, n: u6) !ArrayList(u64) {
@@ -143,7 +143,7 @@ pub fn generateAllSubsets(allocator: Allocator, n: u6) !ArrayList(u64) {
 
     const total = @as(usize, 1) << @intCast(n);
     var result = try ArrayList(u64).initCapacity(allocator, total);
-    errdefer result.deinit();
+    errdefer result.deinit(allocator);
 
     var iter = SubsetIterator.init(n);
     while (iter.next()) |mask| {
@@ -161,7 +161,7 @@ pub fn generateAllSubsets(allocator: Allocator, n: u6) !ArrayList(u64) {
 /// Example:
 /// ```zig
 /// const subsets = try generateSubsetsOfSize(allocator, 5, 3);
-/// defer subsets.deinit();
+/// defer subsets.deinit(testing.allocator);
 /// // subsets.items = all 10 ways to choose 3 elements from 5
 /// ```
 pub fn generateSubsetsOfSize(allocator: Allocator, n: u6, k: u6) !ArrayList(u64) {
@@ -171,12 +171,12 @@ pub fn generateSubsetsOfSize(allocator: Allocator, n: u6, k: u6) !ArrayList(u64)
     const estimate = estimateBinomial(n, k);
     if (estimate > 1_000_000) return error.TooManyElements;
 
-    var result = ArrayList(u64).init(allocator);
-    errdefer result.deinit();
+    var result: ArrayList(u64) = .empty;
+    errdefer result.deinit(allocator);
 
     var iter = try SubsetOfSizeIterator.init(n, k);
     while (iter.next()) |mask| {
-        try result.append(mask);
+        try result.append(allocator, mask);
     }
 
     return result;
@@ -288,11 +288,11 @@ test "SubsetIterator - reset" {
 test "SubsetOfSizeIterator - k=2, n=4" {
     var iter = try SubsetOfSizeIterator.init(4, 2);
 
-    var masks = ArrayList(u64).init(testing.allocator);
-    defer masks.deinit();
+    var masks: ArrayList(u64) = .empty;
+    defer masks.deinit(testing.allocator);
 
     while (iter.next()) |mask| {
-        try masks.append(mask);
+        try masks.append(testing.allocator, mask);
         try testing.expectEqual(2, @popCount(mask));
     }
 
@@ -346,8 +346,8 @@ test "isInSubset - out of range" {
 }
 
 test "generateAllSubsets - basic" {
-    const subsets = try generateAllSubsets(testing.allocator, 3);
-    defer subsets.deinit();
+    var subsets = try generateAllSubsets(testing.allocator, 3);
+    defer subsets.deinit(testing.allocator);
 
     try testing.expectEqual(8, subsets.items.len); // 2^3
     try testing.expectEqual(0b000, subsets.items[0]);
@@ -359,8 +359,8 @@ test "generateAllSubsets - too many elements" {
 }
 
 test "generateSubsetsOfSize - basic" {
-    const subsets = try generateSubsetsOfSize(testing.allocator, 4, 2);
-    defer subsets.deinit();
+    var subsets = try generateSubsetsOfSize(testing.allocator, 4, 2);
+    defer subsets.deinit(testing.allocator);
 
     try testing.expectEqual(6, subsets.items.len); // C(4, 2)
 
@@ -370,12 +370,12 @@ test "generateSubsetsOfSize - basic" {
 }
 
 test "generateSubsetsOfSize - edge cases" {
-    const empty = try generateSubsetsOfSize(testing.allocator, 5, 0);
-    defer empty.deinit();
+    var empty = try generateSubsetsOfSize(testing.allocator, 5, 0);
+    defer empty.deinit(testing.allocator);
     try testing.expectEqual(0, empty.items.len);
 
-    const full = try generateSubsetsOfSize(testing.allocator, 3, 3);
-    defer full.deinit();
+    var full = try generateSubsetsOfSize(testing.allocator, 3, 3);
+    defer full.deinit(testing.allocator);
     try testing.expectEqual(1, full.items.len);
     try testing.expectEqual(0b111, full.items[0]);
 }
@@ -388,11 +388,11 @@ test "SubmaskIterator - basic iteration" {
     const mask: u64 = 0b1011; // 3 set bits -> 8 submasks
     var iter = SubmaskIterator.init(mask);
 
-    var masks = ArrayList(u64).init(testing.allocator);
-    defer masks.deinit();
+    var masks: ArrayList(u64) = .empty;
+    defer masks.deinit(testing.allocator);
 
     while (iter.next()) |submask| {
-        try masks.append(submask);
+        try masks.append(testing.allocator, submask);
         // Each submask should be a subset of mask
         try testing.expect((submask & mask) == submask);
     }

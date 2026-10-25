@@ -28,7 +28,6 @@ const AutoHashMap = std.AutoHashMap;
 ///
 /// **Time Complexity**: O(V + E) where V = vertices, E = edges
 /// **Space Complexity**: O(V + E) for adjacency list and path storage
-
 /// Graph type for Eulerian path algorithms
 pub const GraphType = enum {
     undirected,
@@ -65,8 +64,10 @@ pub fn hasEulerianPath(
             const du = degree.get(u) orelse 0;
             const dv = degree.get(v) orelse 0;
 
-            try degree.put(u, du + 1);
-            if (u != v) { // Avoid counting self-loop twice
+            if (u == v) { // A self-loop adds 2 to the degree of its vertex
+                try degree.put(u, du + 2);
+            } else {
+                try degree.put(u, du + 1);
                 try degree.put(v, dv + 1);
             }
         }
@@ -148,7 +149,7 @@ pub fn findEulerianPath(
     defer {
         var it = adj.iterator();
         while (it.next()) |entry| {
-            entry.value_ptr.deinit();
+            entry.value_ptr.deinit(allocator);
         }
         adj.deinit();
     }
@@ -164,25 +165,27 @@ pub fn findEulerianPath(
         // Add edge to adjacency list
         var entry = try adj.getOrPut(u);
         if (!entry.found_existing) {
-            entry.value_ptr.* = ArrayList(T).init(allocator);
+            entry.value_ptr.* = .empty;
         }
-        try entry.value_ptr.append(v);
+        try entry.value_ptr.append(allocator, v);
 
         if (graph_type == .undirected and u != v) {
             // Add reverse edge for undirected graph
             var entry2 = try adj.getOrPut(v);
             if (!entry2.found_existing) {
-                entry2.value_ptr.* = ArrayList(T).init(allocator);
+                entry2.value_ptr.* = .empty;
             }
-            try entry2.value_ptr.append(u);
+            try entry2.value_ptr.append(allocator, u);
         }
 
         // Track degrees
         if (graph_type == .undirected) {
             const du = degree.get(u) orelse 0;
             const dv = degree.get(v) orelse 0;
-            try degree.put(u, du + 1);
-            if (u != v) {
+            if (u == v) {
+                try degree.put(u, du + 2);
+            } else {
+                try degree.put(u, du + 1);
                 try degree.put(v, dv + 1);
             }
         } else {
@@ -214,13 +217,13 @@ pub fn findEulerianPath(
     }
 
     // Hierholzer's algorithm
-    var stack = ArrayList(T).init(allocator);
-    defer stack.deinit();
+    var stack: ArrayList(T) = .empty;
+    defer stack.deinit(allocator);
 
-    var path = ArrayList(T).init(allocator);
-    errdefer path.deinit();
+    var path: ArrayList(T) = .empty;
+    errdefer path.deinit(allocator);
 
-    try stack.append(start);
+    try stack.append(allocator, start);
 
     while (stack.items.len > 0) {
         const v = stack.items[stack.items.len - 1];
@@ -228,11 +231,11 @@ pub fn findEulerianPath(
 
         if (neighbors != null and neighbors.?.items.len > 0) {
             // Follow an edge
-            const u = neighbors.?.pop();
-            try stack.append(u);
+            const u = neighbors.?.pop().?;
+            try stack.append(allocator, u);
 
             // Remove reverse edge if undirected
-            if (graph_type == .undirected) {
+            if (graph_type == .undirected and !std.meta.eql(u, v)) {
                 if (adj.getPtr(u)) |rev_neighbors| {
                     // Find and remove the edge back to v
                     for (rev_neighbors.items, 0..) |neighbor, i| {
@@ -246,7 +249,7 @@ pub fn findEulerianPath(
         } else {
             // No more edges, add to path
             _ = stack.pop();
-            try path.append(v);
+            try path.append(allocator, v);
         }
     }
 
@@ -283,8 +286,8 @@ pub fn isValidEulerianPath(
         const count = edge_set.get(edge) orelse 0;
         try edge_set.put(edge, count + 1);
 
-        if (graph_type == .undirected) {
-            // Also add reversed edge
+        if (graph_type == .undirected and !std.meta.eql(edge[0], edge[1])) {
+            // Also add reversed edge (a self-loop is its own reverse)
             const rev_edge = [2]T{ edge[1], edge[0] };
             const rev_count = edge_set.get(rev_edge) orelse 0;
             try edge_set.put(rev_edge, rev_count + 1);
@@ -297,6 +300,14 @@ pub fn isValidEulerianPath(
         const count = edge_set.get(edge) orelse return false;
         if (count == 0) return false;
         try edge_set.put(edge, count - 1);
+
+        if (graph_type == .undirected and !std.meta.eql(edge[0], edge[1])) {
+            // Traversing {a, b} consumes both stored orientations
+            const rev_edge = [2]T{ edge[1], edge[0] };
+            const rev_count = edge_set.get(rev_edge) orelse return false;
+            if (rev_count == 0) return false;
+            try edge_set.put(rev_edge, rev_count - 1);
+        }
     }
 
     // Check all edges were used
@@ -393,9 +404,9 @@ test "eulerian - find path undirected" {
         .{ 2, 0 },
     };
 
-    const path = try findEulerianPath(u32, allocator, &edges, .undirected);
+    var path = try findEulerianPath(u32, allocator, &edges, .undirected);
     try std.testing.expect(path != null);
-    defer path.?.deinit();
+    defer path.?.deinit(allocator);
 
     try std.testing.expectEqual(@as(usize, 4), path.?.items.len); // 4 vertices for 3 edges
     try std.testing.expectEqual(@as(usize, 3), pathLength(u32, path.?.items)); // 3 edges
@@ -411,9 +422,9 @@ test "eulerian - find path directed" {
         .{ 2, 3 },
     };
 
-    const path = try findEulerianPath(u32, allocator, &edges, .directed);
+    var path = try findEulerianPath(u32, allocator, &edges, .directed);
     try std.testing.expect(path != null);
-    defer path.?.deinit();
+    defer path.?.deinit(allocator);
 
     try std.testing.expectEqual(@as(usize, 4), path.?.items.len);
     try std.testing.expectEqual(@as(u32, 0), path.?.items[0]);
@@ -429,9 +440,9 @@ test "eulerian - verify path" {
         .{ 2, 0 },
     };
 
-    const path = try findEulerianPath(u32, allocator, &edges, .undirected);
+    var path = try findEulerianPath(u32, allocator, &edges, .undirected);
     try std.testing.expect(path != null);
-    defer path.?.deinit();
+    defer path.?.deinit(allocator);
 
     const valid = try isValidEulerianPath(u32, allocator, path.?.items, &edges, .undirected);
     try std.testing.expect(valid);
@@ -451,9 +462,9 @@ test "eulerian - square undirected" {
     const result = try hasEulerianPath(u32, allocator, &edges, .undirected);
     try std.testing.expectEqual(EulerianType.circuit, result);
 
-    const path = try findEulerianPath(u32, allocator, &edges, .undirected);
+    var path = try findEulerianPath(u32, allocator, &edges, .undirected);
     try std.testing.expect(path != null);
-    defer path.?.deinit();
+    defer path.?.deinit(allocator);
 
     const valid = try isValidEulerianPath(u32, allocator, path.?.items, &edges, .undirected);
     try std.testing.expect(valid);
@@ -484,9 +495,9 @@ test "eulerian - self loop" {
     const result = try hasEulerianPath(u32, allocator, &edges, .undirected);
     try std.testing.expectEqual(EulerianType.circuit, result);
 
-    const path = try findEulerianPath(u32, allocator, &edges, .undirected);
+    var path = try findEulerianPath(u32, allocator, &edges, .undirected);
     try std.testing.expect(path != null);
-    defer path.?.deinit();
+    defer path.?.deinit(allocator);
 
     try std.testing.expectEqual(@as(usize, 2), path.?.items.len); // 0 -> 0
 }
@@ -513,9 +524,9 @@ test "eulerian - single edge" {
     const result = try hasEulerianPath(u32, allocator, &edges, .undirected);
     try std.testing.expectEqual(EulerianType.path, result);
 
-    const path = try findEulerianPath(u32, allocator, &edges, .undirected);
+    var path = try findEulerianPath(u32, allocator, &edges, .undirected);
     try std.testing.expect(path != null);
-    defer path.?.deinit();
+    defer path.?.deinit(allocator);
 
     try std.testing.expectEqual(@as(usize, 2), path.?.items.len);
 }
@@ -533,9 +544,9 @@ test "eulerian - complex undirected" {
     const result = try hasEulerianPath(u32, allocator, &edges, .undirected);
     try std.testing.expectEqual(EulerianType.circuit, result);
 
-    const path = try findEulerianPath(u32, allocator, &edges, .undirected);
+    var path = try findEulerianPath(u32, allocator, &edges, .undirected);
     try std.testing.expect(path != null);
-    defer path.?.deinit();
+    defer path.?.deinit(allocator);
 
     try std.testing.expectEqual(@as(usize, 11), path.?.items.len); // 10 edges + 1
     const valid = try isValidEulerianPath(u32, allocator, path.?.items, &edges, .undirected);
@@ -574,9 +585,9 @@ test "eulerian - large undirected path" {
     const result = try hasEulerianPath(u32, allocator, edges, .undirected);
     try std.testing.expectEqual(EulerianType.path, result);
 
-    const path = try findEulerianPath(u32, allocator, edges, .undirected);
+    var path = try findEulerianPath(u32, allocator, edges, .undirected);
     try std.testing.expect(path != null);
-    defer path.?.deinit();
+    defer path.?.deinit(allocator);
 
     try std.testing.expectEqual(@as(usize, 100), path.?.items.len);
 }
@@ -593,10 +604,34 @@ test "eulerian - memory safety" {
     // Multiple iterations to detect leaks
     for (0..10) |_| {
         _ = try hasEulerianPath(u32, allocator, &edges, .undirected);
-        const path = try findEulerianPath(u32, allocator, &edges, .undirected);
-        if (path) |p| {
+        var path = try findEulerianPath(u32, allocator, &edges, .undirected);
+        if (path) |*p| {
             _ = try isValidEulerianPath(u32, allocator, p.items, &edges, .undirected);
-            p.deinit();
+            p.deinit(allocator);
         }
     }
+}
+
+test "eulerian - self loop on a triangle vertex keeps circuit and validates" {
+    const allocator = std.testing.allocator;
+
+    // Triangle with two self-loops on vertex 0: every degree stays even.
+    const edges = [_][2]u32{
+        .{ 0, 1 },
+        .{ 1, 2 },
+        .{ 2, 0 },
+        .{ 0, 0 },
+        .{ 0, 0 },
+    };
+
+    const kind = try hasEulerianPath(u32, allocator, &edges, .undirected);
+    try std.testing.expectEqual(EulerianType.circuit, kind);
+
+    var path = try findEulerianPath(u32, allocator, &edges, .undirected);
+    try std.testing.expect(path != null);
+    defer path.?.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, edges.len + 1), path.?.items.len);
+    const valid = try isValidEulerianPath(u32, allocator, path.?.items, &edges, .undirected);
+    try std.testing.expect(valid);
 }

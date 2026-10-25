@@ -82,7 +82,7 @@ pub fn Dijkstra(
                     return null;
                 }
 
-                var path: std.ArrayList(V) = .{};
+                var path: std.ArrayList(V) = .empty;
                 errdefer path.deinit(self.allocator);
 
                 var current = target;
@@ -280,7 +280,7 @@ const TestGraph = struct {
     fn addEdge(self: *TestGraph, from: u32, to: u32, weight: i32) !void {
         const entry = try self.edges.getOrPut(from);
         if (!entry.found_existing) {
-            entry.value_ptr.* = .{};
+            entry.value_ptr.* = .empty;
         }
         try entry.value_ptr.append(self.allocator, .{ .target = to, .weight = weight });
     }
@@ -504,7 +504,7 @@ test "Dijkstra: floating point weights" {
         fn addEdge(self: *@This(), from: u32, to: u32, weight: f64) !void {
             const entry = try self.edges.getOrPut(from);
             if (!entry.found_existing) {
-                entry.value_ptr.* = .{};
+                entry.value_ptr.* = .empty;
             }
             try entry.value_ptr.append(self.allocator, .{ .target = to, .weight = weight });
         }

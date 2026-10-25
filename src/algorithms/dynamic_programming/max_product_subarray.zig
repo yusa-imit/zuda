@@ -58,34 +58,49 @@ pub fn maxProductWithIndices(comptime T: type, nums: []const T) ?ProductResult(T
     if (nums.len == 0) return null;
     if (nums.len == 1) return ProductResult(T){ .product = nums[0], .start = 0, .end = 0 };
 
+    // max_prod / min_prod are the extreme products of subarrays ending at i;
+    // max_start / min_start are where those subarrays begin.
     var max_prod = nums[0];
     var min_prod = nums[0];
+    var max_start: usize = 0;
+    var min_start: usize = 0;
     var result = nums[0];
     var result_start: usize = 0;
     var result_end: usize = 0;
-    var current_start: usize = 0;
 
     for (nums[1..], 1..) |num, i| {
-        // When multiplied by a negative number, max becomes min
-        if (num < 0) {
-            const temp = max_prod;
-            max_prod = min_prod;
-            min_prod = temp;
+        const from_max = max_prod * num;
+        const from_min = min_prod * num;
+
+        // New maximum: start fresh, extend the old maximum, or extend the old minimum
+        var next_max = num;
+        var next_max_start = i;
+        var next_min = num;
+        var next_min_start = i;
+        if (from_max > next_max) {
+            next_max = from_max;
+            next_max_start = max_start;
         }
-
-        // Reset start position if starting fresh
-        if (num > max_prod * num) {
-            current_start = i;
+        if (from_min > next_max) {
+            next_max = from_min;
+            next_max_start = min_start;
         }
+        if (from_max < next_min) {
+            next_min = from_max;
+            next_min_start = max_start;
+        }
+        if (from_min < next_min) {
+            next_min = from_min;
+            next_min_start = min_start;
+        }
+        max_prod = next_max;
+        max_start = next_max_start;
+        min_prod = next_min;
+        min_start = next_min_start;
 
-        // Update max and min products
-        max_prod = @max(num, max_prod * num);
-        min_prod = @min(num, min_prod * num);
-
-        // Update global result with indices
         if (max_prod > result) {
             result = max_prod;
-            result_start = current_start;
+            result_start = max_start;
             result_end = i;
         }
     }
@@ -222,13 +237,13 @@ pub fn minProduct(comptime T: type, nums: []const T) ?T {
 test "maxProduct - basic cases" {
     try testing.expectEqual(@as(i32, 6), maxProduct(i32, &.{ 2, 3, -2, 4 }).?);
     try testing.expectEqual(@as(i32, 0), maxProduct(i32, &.{ -2, 0, -1 }).?);
-    try testing.expectEqual(@as(i32, 24), maxProduct(i32, &.{ 2, 3, -2, 4, -1 }).?);
-    try testing.expectEqual(@as(i32, 2), maxProduct(i32, &.{ 2 }).?);
+    try testing.expectEqual(@as(i32, 48), maxProduct(i32, &.{ 2, 3, -2, 4, -1 }).?);
+    try testing.expectEqual(@as(i32, 2), maxProduct(i32, &.{2}).?);
 }
 
 test "maxProduct - all negative" {
     try testing.expectEqual(@as(i32, 12), maxProduct(i32, &.{ -2, -3, -4 }).?);
-    try testing.expectEqual(@as(i32, -2), maxProduct(i32, &.{ -2, -3, -1 }).?);
+    try testing.expectEqual(@as(i32, 6), maxProduct(i32, &.{ -2, -3, -1 }).?);
 }
 
 test "maxProduct - all positive" {
@@ -237,12 +252,12 @@ test "maxProduct - all positive" {
 
 test "maxProduct - with zeros" {
     try testing.expectEqual(@as(i32, 6), maxProduct(i32, &.{ 2, 0, 3, 2 }).?);
-    try testing.expectEqual(@as(i32, 0), maxProduct(i32, &.{ 0, 2 }).?);
+    try testing.expectEqual(@as(i32, 2), maxProduct(i32, &.{ 0, 2 }).?);
     try testing.expectEqual(@as(i32, 6), maxProduct(i32, &.{ 0, 2, 3 }).?);
 }
 
 test "maxProduct - single negative" {
-    try testing.expectEqual(@as(i32, 12), maxProduct(i32, &.{ 2, -5, -3, 2 }).?);
+    try testing.expectEqual(@as(i32, 60), maxProduct(i32, &.{ 2, -5, -3, 2 }).?);
 }
 
 test "maxProduct - alternating signs" {
@@ -280,7 +295,7 @@ test "maxProductTable - basic cases" {
 
     try testing.expectEqual(@as(i32, 6), (try maxProductTable(i32, allocator, &.{ 2, 3, -2, 4 })).?);
     try testing.expectEqual(@as(i32, 0), (try maxProductTable(i32, allocator, &.{ -2, 0, -1 })).?);
-    try testing.expectEqual(@as(i32, 24), (try maxProductTable(i32, allocator, &.{ 2, 3, -2, 4, -1 })).?);
+    try testing.expectEqual(@as(i32, 48), (try maxProductTable(i32, allocator, &.{ 2, 3, -2, 4, -1 })).?);
 }
 
 test "maxProductTable - memory safety" {
@@ -302,12 +317,12 @@ test "maxProductWithZeros - no zeros" {
 }
 
 test "countProductGreaterThan - basic" {
-    try testing.expectEqual(@as(usize, 6), countProductGreaterThan(i32, &.{ 1, 2, 3, 4 }, 1));
-    try testing.expectEqual(@as(usize, 3), countProductGreaterThan(i32, &.{ 1, 2, 3, 4 }, 3));
+    try testing.expectEqual(@as(usize, 9), countProductGreaterThan(i32, &.{ 1, 2, 3, 4 }, 1));
+    try testing.expectEqual(@as(usize, 6), countProductGreaterThan(i32, &.{ 1, 2, 3, 4 }, 3));
 }
 
 test "countProductGreaterThan - with negatives" {
-    try testing.expectEqual(@as(usize, 4), countProductGreaterThan(i32, &.{ -2, -3, 4 }, 5));
+    try testing.expectEqual(@as(usize, 2), countProductGreaterThan(i32, &.{ -2, -3, 4 }, 5));
 }
 
 test "countProductGreaterThan - empty" {
@@ -315,7 +330,7 @@ test "countProductGreaterThan - empty" {
 }
 
 test "minProduct - basic" {
-    try testing.expectEqual(@as(i32, -24), minProduct(i32, &.{ 2, 3, -2, 4 }).?);
+    try testing.expectEqual(@as(i32, -48), minProduct(i32, &.{ 2, 3, -2, 4 }).?);
     try testing.expectEqual(@as(i32, -2), minProduct(i32, &.{ -2, 0, -1 }).?);
 }
 
@@ -330,15 +345,15 @@ test "maxProduct - floating point" {
 
 test "maxProduct - large values" {
     const nums = [_]i64{ 10, 20, -5, 30 };
-    try testing.expectEqual(@as(i64, 3000), maxProduct(i64, &nums).?);
+    try testing.expectEqual(@as(i64, 200), maxProduct(i64, &nums).?);
 }
 
 test "maxProduct - stress test" {
     const allocator = testing.allocator;
-    const nums = try allocator.alloc(i32, 1000);
+    const nums = try allocator.alloc(i32, 20);
     defer allocator.free(nums);
 
-    // Fill with pattern: 2, -1, 2, -1, ...
+    // Fill with pattern: 2, -1, 2, -1, ... (20 elements keeps products within i32)
     for (nums, 0..) |*num, i| {
         num.* = if (i % 2 == 0) 2 else -1;
     }

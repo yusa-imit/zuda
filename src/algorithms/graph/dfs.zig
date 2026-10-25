@@ -98,7 +98,7 @@ pub fn DFS(
                     return null;
                 }
 
-                var path: std.ArrayList(V) = .{};
+                var path: std.ArrayList(V) = .empty;
                 errdefer path.deinit(self.allocator);
 
                 var current = target;
@@ -253,10 +253,10 @@ pub fn DFS(
             var parents = std.HashMap(V, V, HashMapContext, std.hash_map.default_max_load_percentage).initContext(allocator, hm_ctx);
             errdefer parents.deinit();
 
-            var visit_order: std.ArrayList(V) = .{};
+            var visit_order: std.ArrayList(V) = .empty;
             errdefer visit_order.deinit(allocator);
 
-            var finish_order: std.ArrayList(V) = .{};
+            var finish_order: std.ArrayList(V) = .empty;
             errdefer finish_order.deinit(allocator);
 
             var states = std.HashMap(V, State, HashMapContext, std.hash_map.default_max_load_percentage).initContext(allocator, hm_ctx);
@@ -288,7 +288,7 @@ pub fn DFS(
 
             // Explicit stack for iterative DFS
             const StackFrame = struct { v: V, first_visit: bool };
-            var stack: std.ArrayList(StackFrame) = .{};
+            var stack: std.ArrayList(StackFrame) = .empty;
             defer stack.deinit(allocator);
 
             try stack.append(allocator, .{ .v = start, .first_visit = true });
@@ -398,10 +398,10 @@ pub fn DFS(
             var parents = std.HashMap(V, V, HashMapContext, std.hash_map.default_max_load_percentage).initContext(allocator, hm_ctx);
             errdefer parents.deinit();
 
-            var visit_order: std.ArrayList(V) = .{};
+            var visit_order: std.ArrayList(V) = .empty;
             errdefer visit_order.deinit(allocator);
 
-            var finish_order: std.ArrayList(V) = .{};
+            var finish_order: std.ArrayList(V) = .empty;
             errdefer finish_order.deinit(allocator);
 
             var states = std.HashMap(V, State, HashMapContext, std.hash_map.default_max_load_percentage).initContext(allocator, hm_ctx);
@@ -417,7 +417,7 @@ pub fn DFS(
                 if (state != State.unvisited) continue;
 
                 const StackFrame = struct { v: V, first_visit: bool };
-                var stack: std.ArrayList(StackFrame) = .{};
+                var stack: std.ArrayList(StackFrame) = .empty;
                 defer stack.deinit(allocator);
 
                 try stack.append(allocator, .{ .v = start, .first_visit = true });
@@ -512,16 +512,16 @@ test "DFS: basic traversal" {
     // Graph: 1 -> 2 -> 3
     //        |         ^
     //        +-> 4 ----+
-    var list1 = std.ArrayList(u32){};
+    var list1 = std.ArrayList(u32).empty;
     try list1.append(testing.allocator, 2);
     try list1.append(testing.allocator, 4);
     try graph.edges.put(1, list1);
 
-    var list2 = std.ArrayList(u32){};
+    var list2 = std.ArrayList(u32).empty;
     try list2.append(testing.allocator, 3);
     try graph.edges.put(2, list2);
 
-    var list4 = std.ArrayList(u32){};
+    var list4 = std.ArrayList(u32).empty;
     try list4.append(testing.allocator, 3);
     try graph.edges.put(4, list4);
 
@@ -575,15 +575,15 @@ test "DFS: path reconstruction" {
     }
 
     // Linear chain: 1 -> 2 -> 3 -> 4
-    var list1 = std.ArrayList(u32){};
+    var list1 = std.ArrayList(u32).empty;
     try list1.append(testing.allocator, 2);
     try graph.edges.put(1, list1);
 
-    var list2 = std.ArrayList(u32){};
+    var list2 = std.ArrayList(u32).empty;
     try list2.append(testing.allocator, 3);
     try graph.edges.put(2, list2);
 
-    var list3 = std.ArrayList(u32){};
+    var list3 = std.ArrayList(u32).empty;
     try list3.append(testing.allocator, 4);
     try graph.edges.put(3, list3);
 
@@ -630,11 +630,11 @@ test "DFS: disconnected graph" {
     }
 
     // Two disconnected components: 1 -> 2 and 3 -> 4
-    var list1 = std.ArrayList(u32){};
+    var list1 = std.ArrayList(u32).empty;
     try list1.append(testing.allocator, 2);
     try graph.edges.put(1, list1);
 
-    var list3 = std.ArrayList(u32){};
+    var list3 = std.ArrayList(u32).empty;
     try list3.append(testing.allocator, 4);
     try graph.edges.put(3, list3);
 
@@ -680,19 +680,19 @@ test "DFS: early termination (runToGoal)" {
     }
 
     // Graph: 1 -> 2 -> 3 -> 4 -> 5
-    var list1 = std.ArrayList(u32){};
+    var list1 = std.ArrayList(u32).empty;
     try list1.append(testing.allocator, 2);
     try graph.edges.put(1, list1);
 
-    var list2 = std.ArrayList(u32){};
+    var list2 = std.ArrayList(u32).empty;
     try list2.append(testing.allocator, 3);
     try graph.edges.put(2, list2);
 
-    var list3 = std.ArrayList(u32){};
+    var list3 = std.ArrayList(u32).empty;
     try list3.append(testing.allocator, 4);
     try graph.edges.put(3, list3);
 
-    var list4 = std.ArrayList(u32){};
+    var list4 = std.ArrayList(u32).empty;
     try list4.append(testing.allocator, 5);
     try graph.edges.put(4, list4);
 
@@ -741,15 +741,15 @@ test "DFS: cycle detection (back edge)" {
     }
 
     // Graph with cycle: 1 -> 2 -> 3 -> 1
-    var list1 = std.ArrayList(u32){};
+    var list1 = std.ArrayList(u32).empty;
     try list1.append(testing.allocator, 2);
     try graph.edges.put(1, list1);
 
-    var list2 = std.ArrayList(u32){};
+    var list2 = std.ArrayList(u32).empty;
     try list2.append(testing.allocator, 3);
     try graph.edges.put(2, list2);
 
-    var list3 = std.ArrayList(u32){};
+    var list3 = std.ArrayList(u32).empty;
     try list3.append(testing.allocator, 1);
     try graph.edges.put(3, list3);
 
@@ -803,16 +803,16 @@ test "DFS: acyclic graph (DAG)" {
     //      |    |
     //      v    v
     //      3 -> 4
-    var list1 = std.ArrayList(u32){};
+    var list1 = std.ArrayList(u32).empty;
     try list1.append(testing.allocator, 2);
     try list1.append(testing.allocator, 3);
     try graph.edges.put(1, list1);
 
-    var list2 = std.ArrayList(u32){};
+    var list2 = std.ArrayList(u32).empty;
     try list2.append(testing.allocator, 4);
     try graph.edges.put(2, list2);
 
-    var list3 = std.ArrayList(u32){};
+    var list3 = std.ArrayList(u32).empty;
     try list3.append(testing.allocator, 4);
     try graph.edges.put(3, list3);
 
@@ -852,7 +852,7 @@ test "DFS: single vertex" {
         while (it.next()) |list| list.deinit(testing.allocator);
     }
 
-    const list1 = std.ArrayList(u32){};
+    const list1 = std.ArrayList(u32).empty;
     try graph.edges.put(1, list1);
 
     const dfs_impl = DFS(u32, TestContext);
@@ -902,11 +902,11 @@ test "DFS: runAll on disconnected graph" {
     }
 
     // Two components: 1 -> 2 and 3 -> 4
-    var list1 = std.ArrayList(u32){};
+    var list1 = std.ArrayList(u32).empty;
     try list1.append(testing.allocator, 2);
     try graph.edges.put(1, list1);
 
-    var list3 = std.ArrayList(u32){};
+    var list3 = std.ArrayList(u32).empty;
     try list3.append(testing.allocator, 4);
     try graph.edges.put(3, list3);
 
@@ -955,7 +955,7 @@ test "DFS: stress test (large chain)" {
     const chain_length = 1000;
     var i: u32 = 0;
     while (i < chain_length - 1) : (i += 1) {
-        var list = std.ArrayList(u32){};
+        var list = std.ArrayList(u32).empty;
         try list.append(testing.allocator, i + 1);
         try graph.edges.put(i, list);
     }

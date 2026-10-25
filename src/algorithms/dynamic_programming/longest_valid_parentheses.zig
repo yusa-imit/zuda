@@ -40,7 +40,6 @@ const Allocator = std.mem.Allocator;
 /// # Reference
 /// - LeetCode #32 (Longest Valid Parentheses)
 /// - Classic DP string problem with multiple solution approaches
-
 /// Longest valid parentheses using dynamic programming.
 ///
 /// Time: O(n) where n = string length
@@ -140,19 +139,19 @@ pub fn longestValidParenthesesTwoPass(s: []const u8) usize {
 pub fn longestValidParenthesesStack(allocator: Allocator, s: []const u8) !usize {
     if (s.len < 2) return 0;
 
-    var stack = std.ArrayList(isize).init(allocator);
-    defer stack.deinit();
+    var stack: std.ArrayList(isize) = .empty;
+    defer stack.deinit(allocator);
 
-    try stack.append(-1); // Base index
+    try stack.append(allocator, -1); // Base index
     var max_len: usize = 0;
 
     for (s, 0..) |ch, i| {
         if (ch == '(') {
-            try stack.append(@intCast(i));
+            try stack.append(allocator, @intCast(i));
         } else if (ch == ')') {
             _ = stack.pop();
             if (stack.items.len == 0) {
-                try stack.append(@intCast(i));
+                try stack.append(allocator, @intCast(i));
             } else {
                 const top = stack.items[stack.items.len - 1];
                 const len: usize = @intCast(@as(isize, @intCast(i)) - top);
@@ -171,8 +170,8 @@ pub fn longestValidParenthesesStack(allocator: Allocator, s: []const u8) !usize 
 ///
 /// Returns an ArrayList of ValidSubstring structs.
 pub fn findAllValidSubstrings(allocator: Allocator, s: []const u8) !std.ArrayList(ValidSubstring) {
-    var result = std.ArrayList(ValidSubstring).init(allocator);
-    errdefer result.deinit();
+    var result: std.ArrayList(ValidSubstring) = .empty;
+    errdefer result.deinit(allocator);
 
     if (s.len < 2) return result;
 
@@ -199,13 +198,12 @@ pub fn findAllValidSubstrings(allocator: Allocator, s: []const u8) !std.ArrayLis
                 const start = i + 1 - dp[i];
                 const len = dp[i];
 
-                // Check if this is a new substring or extends previous
-                if (result.items.len == 0 or start > result.items[result.items.len - 1].start) {
-                    try result.append(.{ .start = start, .length = len });
-                } else {
-                    // Update last entry if it's an extension
-                    result.items[result.items.len - 1].length = len;
+                // Drop earlier entries contained in this one (they end before i)
+                while (result.getLastOrNull()) |last| {
+                    if (last.start < start) break;
+                    _ = result.pop();
                 }
+                try result.append(allocator, .{ .start = start, .length = len });
             }
         }
     }
@@ -280,7 +278,7 @@ test "longestValidParentheses - nested structures" {
     try testing.expectEqual(@as(usize, 6), try longestValidParentheses(allocator, "((()))"));
 
     // Multiple nested: "(())(())" = 8
-    try testing.expectEqual(@as(usize, 8), try longestValidParentheses(allocator, "(())((()))"));
+    try testing.expectEqual(@as(usize, 8), try longestValidParentheses(allocator, "(())(())"));
 
     // Nested with invalid: "((())" = 4
     try testing.expectEqual(@as(usize, 4), try longestValidParentheses(allocator, "((())"));
@@ -293,7 +291,7 @@ test "longestValidParentheses - mixed valid/invalid" {
     try testing.expectEqual(@as(usize, 6), try longestValidParentheses(allocator, "()(())"));
 
     // "()(()()" = 4 (last four)
-    try testing.expectEqual(@as(usize, 4), try longestValidParentheses(allocator, "()(()("));
+    try testing.expectEqual(@as(usize, 4), try longestValidParentheses(allocator, "()(()()"));
 
     // ")()()()(" = 6 (middle part)
     try testing.expectEqual(@as(usize, 6), try longestValidParentheses(allocator, ")()()()("));
@@ -349,11 +347,11 @@ test "longestValidParentheses - large input" {
     const allocator = testing.allocator;
 
     // Generate large valid string: "()()()" repeated
-    var large = std.ArrayList(u8).init(allocator);
-    defer large.deinit();
+    var large: std.ArrayList(u8) = .empty;
+    defer large.deinit(allocator);
 
     for (0..50) |_| {
-        try large.appendSlice("()");
+        try large.appendSlice(allocator, "()");
     }
 
     const result = try longestValidParentheses(allocator, large.items);
@@ -364,7 +362,7 @@ test "longestValidParentheses - complex patterns" {
     const allocator = testing.allocator;
 
     // "(()()" = 4
-    try testing.expectEqual(@as(usize, 4), try longestValidParentheses(allocator, "(()("));
+    try testing.expectEqual(@as(usize, 4), try longestValidParentheses(allocator, "(()()"));
 
     // "()(()" = 2
     try testing.expectEqual(@as(usize, 2), try longestValidParentheses(allocator, "()(()"));
@@ -381,7 +379,7 @@ test "findAllValidSubstrings - basic" {
 
     {
         var result = try findAllValidSubstrings(allocator, "()");
-        defer result.deinit();
+        defer result.deinit(allocator);
 
         try testing.expectEqual(@as(usize, 1), result.items.len);
         try testing.expectEqual(@as(usize, 0), result.items[0].start);
@@ -390,7 +388,7 @@ test "findAllValidSubstrings - basic" {
 
     {
         var result = try findAllValidSubstrings(allocator, ")()())");
-        defer result.deinit();
+        defer result.deinit(allocator);
 
         try testing.expectEqual(@as(usize, 1), result.items.len);
         try testing.expectEqual(@as(usize, 1), result.items[0].start);
@@ -403,7 +401,7 @@ test "findAllValidSubstrings - substring extraction" {
 
     const s = "()((())";
     var result = try findAllValidSubstrings(allocator, s);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     for (result.items) |sub| {
         const extracted = sub.substring(s);
@@ -420,6 +418,6 @@ test "longestValidParentheses - memory safety" {
         _ = try longestValidParentheses(allocator, ")()())");
         _ = try longestValidParenthesesStack(allocator, "(()())");
         var result = try findAllValidSubstrings(allocator, "()((()))");
-        result.deinit();
+        result.deinit(allocator);
     }
 }

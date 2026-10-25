@@ -37,7 +37,7 @@ const testing = std.testing;
 /// Example:
 /// ```zig
 /// const count = try countCompositions(u32, 5, 2); // Returns 4
-/// // The 4 compositions are: [4,1], [3,2], [2,3], [1,4]
+/// // The 4 compositions are: [1,4], [2,3], [3,2], [4,1]
 /// ```
 pub fn countCompositions(comptime T: type, n: T, k: T) !T {
     if (@typeInfo(T) != .int) {
@@ -112,9 +112,9 @@ pub fn countAllCompositions(comptime T: type, n: T) !T {
 /// var compositions = try generateKCompositions(u32, allocator, 5, 2);
 /// defer {
 ///     for (compositions.items) |comp| allocator.free(comp);
-///     compositions.deinit();
+///     compositions.deinit(allocator);
 /// }
-/// // Returns: [[4,1], [3,2], [2,3], [1,4]]
+/// // Returns: [[1,4], [2,3], [3,2], [4,1]]
 /// ```
 pub fn generateKCompositions(comptime T: type, allocator: Allocator, n: T, k: T) !ArrayList([]T) {
     if (@typeInfo(T) != .int) {
@@ -125,7 +125,7 @@ pub fn generateKCompositions(comptime T: type, allocator: Allocator, n: T, k: T)
         return error.NegativeInput;
     }
 
-    var result = ArrayList([]T){};
+    var result: ArrayList([]T) = .empty;
     errdefer {
         for (result.items) |comp| allocator.free(comp);
         result.deinit(allocator);
@@ -145,7 +145,7 @@ pub fn generateKCompositions(comptime T: type, allocator: Allocator, n: T, k: T)
     }
 
     // Generate compositions via backtracking
-    var current = ArrayList(T){};
+    var current: ArrayList(T) = .empty;
     defer current.deinit(allocator);
 
     try generateKCompositionsHelper(T, allocator, n, k, &current, &result);
@@ -195,7 +195,7 @@ fn generateKCompositionsHelper(
 /// var compositions = try generateCompositions(u32, allocator, 4);
 /// defer {
 ///     for (compositions.items) |comp| allocator.free(comp);
-///     compositions.deinit();
+///     compositions.deinit(allocator);
 /// }
 /// // Returns: [[4], [3,1], [2,2], [1,3], [2,1,1], [1,2,1], [1,1,2], [1,1,1,1]]
 /// ```
@@ -208,7 +208,7 @@ pub fn generateCompositions(comptime T: type, allocator: Allocator, n: T) !Array
         return error.NegativeInput;
     }
 
-    var result = ArrayList([]T){};
+    var result: ArrayList([]T) = .empty;
     errdefer {
         for (result.items) |comp| allocator.free(comp);
         result.deinit(allocator);
@@ -228,7 +228,7 @@ pub fn generateCompositions(comptime T: type, allocator: Allocator, n: T) !Array
 
     var mask: u32 = 0;
     while (mask < total_comps) : (mask += 1) {
-        var comp = ArrayList(T){};
+        var comp: ArrayList(T) = .empty;
         defer comp.deinit(allocator);
 
         var current_part: T = 1;
@@ -350,7 +350,7 @@ pub fn lexicographicUnrank(comptime T: type, allocator: Allocator, n: T, rank: T
         return try allocator.alloc(T, 0);
     }
 
-    var result = ArrayList(T){};
+    var result: ArrayList(T) = .empty;
     errdefer result.deinit(allocator);
 
     var remaining_rank = rank;
@@ -423,7 +423,8 @@ fn binomial(comptime T: type, n: T, k: T) !T {
 // ============================================================================
 
 test "countCompositions: basic cases" {
-    try testing.expectEqual(@as(u32, 0), try countCompositions(u32, 0, 0));
+    // The empty composition is the single composition of 0 into 0 parts.
+    try testing.expectEqual(@as(u32, 1), try countCompositions(u32, 0, 0));
     try testing.expectEqual(@as(u32, 1), try countCompositions(u32, 1, 1));
     try testing.expectEqual(@as(u32, 1), try countCompositions(u32, 2, 2));
     try testing.expectEqual(@as(u32, 1), try countCompositions(u32, 5, 5));
@@ -433,7 +434,7 @@ test "countCompositions: two parts" {
     try testing.expectEqual(@as(u32, 1), try countCompositions(u32, 2, 2)); // [1,1]
     try testing.expectEqual(@as(u32, 2), try countCompositions(u32, 3, 2)); // [2,1], [1,2]
     try testing.expectEqual(@as(u32, 3), try countCompositions(u32, 4, 2)); // [3,1], [2,2], [1,3]
-    try testing.expectEqual(@as(u32, 4), try countCompositions(u32, 5, 2)); // [4,1], [3,2], [2,3], [1,4]
+    try testing.expectEqual(@as(u32, 4), try countCompositions(u32, 5, 2)); // [1,4], [2,3], [3,2], [4,1]
 }
 
 test "countCompositions: specific values" {
@@ -498,11 +499,11 @@ test "generateKCompositions: two parts" {
     }
 
     try testing.expectEqual(@as(usize, 4), comps.items.len);
-    // Should be: [4,1], [3,2], [2,3], [1,4]
-    try testing.expectEqual(@as(u32, 4), comps.items[0][0]);
-    try testing.expectEqual(@as(u32, 1), comps.items[0][1]);
-    try testing.expectEqual(@as(u32, 1), comps.items[3][0]);
-    try testing.expectEqual(@as(u32, 4), comps.items[3][1]);
+    // Lexicographic order: [1,4], [2,3], [3,2], [4,1]
+    try testing.expectEqual(@as(u32, 1), comps.items[0][0]);
+    try testing.expectEqual(@as(u32, 4), comps.items[0][1]);
+    try testing.expectEqual(@as(u32, 4), comps.items[3][0]);
+    try testing.expectEqual(@as(u32, 1), comps.items[3][1]);
 }
 
 test "generateKCompositions: three parts of 6" {
@@ -597,21 +598,21 @@ test "generateCompositions: negative input error" {
 
 test "lexicographicRank: simple compositions" {
     try testing.expectEqual(@as(u32, 0), try lexicographicRank(u32, &[_]u32{3})); // Smallest of n=3
-    try testing.expectEqual(@as(u32, 1), try lexicographicRank(u32, &[_]u32{2, 1}));
-    try testing.expectEqual(@as(u32, 2), try lexicographicRank(u32, &[_]u32{1, 2}));
-    try testing.expectEqual(@as(u32, 3), try lexicographicRank(u32, &[_]u32{1, 1, 1})); // Largest of n=3
+    try testing.expectEqual(@as(u32, 1), try lexicographicRank(u32, &[_]u32{ 1, 2 }));
+    try testing.expectEqual(@as(u32, 2), try lexicographicRank(u32, &[_]u32{ 2, 1 }));
+    try testing.expectEqual(@as(u32, 3), try lexicographicRank(u32, &[_]u32{ 1, 1, 1 })); // Largest of n=3
 }
 
 test "lexicographicRank: compositions of 4" {
-    // All 8 compositions of 4 in lexicographic order
+    // All 8 compositions of 4: fewer parts first, then lexicographic within a part count
     try testing.expectEqual(@as(u32, 0), try lexicographicRank(u32, &[_]u32{4}));
-    try testing.expectEqual(@as(u32, 1), try lexicographicRank(u32, &[_]u32{3, 1}));
-    try testing.expectEqual(@as(u32, 2), try lexicographicRank(u32, &[_]u32{2, 2}));
-    try testing.expectEqual(@as(u32, 3), try lexicographicRank(u32, &[_]u32{1, 3}));
-    try testing.expectEqual(@as(u32, 4), try lexicographicRank(u32, &[_]u32{2, 1, 1}));
-    try testing.expectEqual(@as(u32, 5), try lexicographicRank(u32, &[_]u32{1, 2, 1}));
-    try testing.expectEqual(@as(u32, 6), try lexicographicRank(u32, &[_]u32{1, 1, 2}));
-    try testing.expectEqual(@as(u32, 7), try lexicographicRank(u32, &[_]u32{1, 1, 1, 1}));
+    try testing.expectEqual(@as(u32, 1), try lexicographicRank(u32, &[_]u32{ 1, 3 }));
+    try testing.expectEqual(@as(u32, 2), try lexicographicRank(u32, &[_]u32{ 2, 2 }));
+    try testing.expectEqual(@as(u32, 3), try lexicographicRank(u32, &[_]u32{ 3, 1 }));
+    try testing.expectEqual(@as(u32, 4), try lexicographicRank(u32, &[_]u32{ 1, 1, 2 }));
+    try testing.expectEqual(@as(u32, 5), try lexicographicRank(u32, &[_]u32{ 1, 2, 1 }));
+    try testing.expectEqual(@as(u32, 6), try lexicographicRank(u32, &[_]u32{ 2, 1, 1 }));
+    try testing.expectEqual(@as(u32, 7), try lexicographicRank(u32, &[_]u32{ 1, 1, 1, 1 }));
 }
 
 test "lexicographicRank: empty composition" {

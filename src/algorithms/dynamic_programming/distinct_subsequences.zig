@@ -27,7 +27,6 @@ const Allocator = std.mem.Allocator;
 /// - Text analysis (subsequence counting)
 /// - DNA sequence analysis (count matching patterns)
 /// - Pattern recognition in sequential data
-
 /// Count distinct subsequences of s that match t using full DP table
 ///
 /// Time: O(n×m) where n = len(s), m = len(t)
@@ -132,17 +131,17 @@ pub fn allSubsequences(allocator: Allocator, s: []const u8, t: []const u8) !std.
     const n = s.len;
     const m = t.len;
 
-    var result = std.ArrayList(std.ArrayList(usize)).init(allocator);
+    var result: std.ArrayList(std.ArrayList(usize)) = .empty;
     errdefer {
-        for (result.items) |seq| {
-            seq.deinit();
+        for (result.items) |*seq| {
+            seq.deinit(allocator);
         }
-        result.deinit();
+        result.deinit(allocator);
     }
 
     if (m == 0) {
         // Empty pattern matches with empty selection
-        try result.append(std.ArrayList(usize).init(allocator));
+        try result.append(allocator, .empty);
         return result;
     }
 
@@ -158,35 +157,35 @@ pub fn allSubsequences(allocator: Allocator, s: []const u8, t: []const u8) !std.
         path: std.ArrayList(usize),
     };
 
-    var stack = std.ArrayList(State).init(allocator);
+    var stack: std.ArrayList(State) = .empty;
     defer {
         for (stack.items) |*state| {
-            state.path.deinit();
+            state.path.deinit(allocator);
         }
-        stack.deinit();
+        stack.deinit(allocator);
     }
 
     // Start from end
-    try stack.append(.{
+    try stack.append(allocator, .{
         .i = n,
         .j = m,
-        .path = std.ArrayList(usize).init(allocator),
+        .path = .empty,
     });
 
     while (stack.items.len > 0) {
-        var state = stack.pop();
+        var state = stack.pop().?; // Loop condition guarantees non-empty.
 
         // Reached start — found a complete match
         if (state.j == 0) {
             // Reverse path (we built it backwards)
             std.mem.reverse(usize, state.path.items);
-            try result.append(state.path);
+            try result.append(allocator, state.path);
             continue;
         }
 
         // Can't continue
         if (state.i == 0) {
-            state.path.deinit();
+            state.path.deinit(allocator);
             continue;
         }
 
@@ -194,18 +193,18 @@ pub fn allSubsequences(allocator: Allocator, s: []const u8, t: []const u8) !std.
         const skip_state = State{
             .i = state.i - 1,
             .j = state.j,
-            .path = try state.path.clone(),
+            .path = try state.path.clone(allocator),
         };
-        try stack.append(skip_state);
+        try stack.append(allocator, skip_state);
 
         // Try using s[i-1] if it matches t[j-1]
         if (s[state.i - 1] == t[state.j - 1]) {
-            try state.path.append(state.i - 1);
+            try state.path.append(allocator, state.i - 1);
             state.i -= 1;
             state.j -= 1;
-            try stack.append(state);
+            try stack.append(allocator, state);
         } else {
-            state.path.deinit();
+            state.path.deinit(allocator);
         }
     }
 
@@ -323,10 +322,10 @@ test "distinct subsequences - all subsequences basic" {
 
     var sequences = try allSubsequences(allocator, "abc", "ac");
     defer {
-        for (sequences.items) |seq| {
-            seq.deinit();
+        for (sequences.items) |*seq| {
+            seq.deinit(allocator);
         }
-        sequences.deinit();
+        sequences.deinit(allocator);
     }
 
     // Should find exactly 1 way: indices [0, 2]
@@ -341,10 +340,10 @@ test "distinct subsequences - all subsequences empty" {
 
     var sequences = try allSubsequences(allocator, "abc", "");
     defer {
-        for (sequences.items) |seq| {
-            seq.deinit();
+        for (sequences.items) |*seq| {
+            seq.deinit(allocator);
         }
-        sequences.deinit();
+        sequences.deinit(allocator);
     }
 
     // Empty pattern matches with empty selection
@@ -357,10 +356,10 @@ test "distinct subsequences - all subsequences no match" {
 
     var sequences = try allSubsequences(allocator, "abc", "xyz");
     defer {
-        for (sequences.items) |seq| {
-            seq.deinit();
+        for (sequences.items) |*seq| {
+            seq.deinit(allocator);
         }
-        sequences.deinit();
+        sequences.deinit(allocator);
     }
 
     // No matches
@@ -395,9 +394,9 @@ test "distinct subsequences - memory safety" {
         _ = try countSubsequencesOptimized(allocator, "babgbag", "bag");
 
         var sequences = try allSubsequences(allocator, "abc", "ac");
-        for (sequences.items) |seq| {
-            seq.deinit();
+        for (sequences.items) |*seq| {
+            seq.deinit(allocator);
         }
-        sequences.deinit();
+        sequences.deinit(allocator);
     }
 }
