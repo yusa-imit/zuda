@@ -35,7 +35,6 @@ const testing = std.testing;
 /// const similarity = jaroWinkler("MARTHA", "MARHTA");
 /// // Returns ~0.961 (very similar, common prefix "MAR", one transposition)
 /// ```
-
 /// Compute Jaro similarity between two strings
 ///
 /// Time: O(n*m) where n, m are string lengths
@@ -177,13 +176,13 @@ pub fn findMostSimilar(query: []const u8, candidates: []const []const u8, alloca
 /// Time: O(k * n * m) where k = list length, n = query length, m = avg string length
 /// Space: O(k) for result list + O(n + m) for each comparison
 pub fn findAllSimilar(query: []const u8, candidates: []const []const u8, threshold: f64, allocator: std.mem.Allocator) !std.ArrayList(usize) {
-    var results = std.ArrayList(usize).init(allocator);
-    errdefer results.deinit();
+    var results = std.ArrayList(usize).empty;
+    errdefer results.deinit(testing.allocator);
 
     for (candidates, 0..) |candidate, i| {
         const similarity = try jaroWinkler(query, candidate, allocator);
         if (similarity >= threshold) {
-            try results.append(i);
+            try results.append(allocator, i);
         }
     }
 
@@ -333,8 +332,8 @@ test "findMostSimilar: empty list" {
 
 test "findAllSimilar: multiple matches" {
     const candidates = [_][]const u8{ "MARTHA", "MARHTA", "DIXON", "DUANE" };
-    const results = try findAllSimilar("MARTHA", &candidates, 0.9, testing.allocator);
-    defer results.deinit();
+    var results = try findAllSimilar("MARTHA", &candidates, 0.9, testing.allocator);
+    defer results.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 2), results.items.len); // MARTHA, MARHTA
     try testing.expectEqual(@as(usize, 0), results.items[0]);
@@ -343,8 +342,8 @@ test "findAllSimilar: multiple matches" {
 
 test "findAllSimilar: no matches" {
     const candidates = [_][]const u8{ "abc", "def", "ghi" };
-    const results = try findAllSimilar("xyz", &candidates, 0.5, testing.allocator);
-    defer results.deinit();
+    var results = try findAllSimilar("xyz", &candidates, 0.5, testing.allocator);
+    defer results.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 0), results.items.len);
 }
@@ -427,8 +426,8 @@ test "record linkage: duplicate detection" {
     };
 
     const query = "John Smith";
-    const duplicates = try findAllSimilar(query, &records, 0.85, testing.allocator);
-    defer duplicates.deinit();
+    var duplicates = try findAllSimilar(query, &records, 0.85, testing.allocator);
+    defer duplicates.deinit(testing.allocator);
 
     try testing.expect(duplicates.items.len >= 2); // at least exact + Jon/Smyth
 }

@@ -60,16 +60,17 @@ pub fn longestCommonPrefixDivideConquer(
     if (strings.len == 0) return try allocator.dupe(u8, "");
     if (strings.len == 1) return try allocator.dupe(u8, strings[0]);
 
-    return divideConquerHelper(strings);
+    // The helper returns a view into `strings`; copy it so the caller owns the result.
+    return allocator.dupe(u8, divideConquerHelper(strings));
 }
 
-fn divideConquerHelper(strings: []const []const u8) ![]u8 {
+fn divideConquerHelper(strings: []const []const u8) []const u8 {
     if (strings.len == 1) return strings[0];
     if (strings.len == 2) return commonPrefixOfTwo(strings[0], strings[1]);
 
     const mid = strings.len / 2;
-    const left_prefix = try divideConquerHelper(strings[0..mid]);
-    const right_prefix = try divideConquerHelper(strings[mid..]);
+    const left_prefix = divideConquerHelper(strings[0..mid]);
+    const right_prefix = divideConquerHelper(strings[mid..]);
     return commonPrefixOfTwo(left_prefix, right_prefix);
 }
 
@@ -132,14 +133,14 @@ pub fn findAllCommonPrefixLengths(
     strings: []const []const u8,
     min_length: usize,
 ) !std.ArrayList(usize) {
-    var result = std.ArrayList(usize).init(allocator);
-    errdefer result.deinit();
+    var result = std.ArrayList(usize).empty;
+    errdefer result.deinit(allocator);
 
     if (strings.len == 0) return result;
 
     const lcp = longestCommonPrefixVertical(strings);
     for (min_length..lcp.len + 1) |len| {
-        try result.append(len);
+        try result.append(allocator, len);
     }
     return result;
 }
@@ -313,7 +314,7 @@ test "LCP binary search: all identical" {
 test "all common prefix lengths" {
     const strings = &[_][]const u8{ "flower", "flow", "flight" };
     var lengths = try findAllCommonPrefixLengths(testing.allocator, strings, 1);
-    defer lengths.deinit();
+    defer lengths.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 2), lengths.items.len);
     try testing.expectEqual(@as(usize, 1), lengths.items[0]);
@@ -376,16 +377,16 @@ test "LCP: consistency across methods" {
 
 test "LCP: large dataset" {
     const allocator = testing.allocator;
-    var strings = std.ArrayList([]u8).init(allocator);
+    var strings = std.ArrayList([]u8).empty;
     defer {
         for (strings.items) |str| allocator.free(str);
-        strings.deinit();
+        strings.deinit(allocator);
     }
 
     // Create 100 strings with common prefix "prefix_"
     for (0..100) |i| {
         const str = try std.fmt.allocPrint(allocator, "prefix_{d}_suffix", .{i});
-        try strings.append(str);
+        try strings.append(allocator, str);
     }
 
     const lcp = longestCommonPrefix(strings.items);

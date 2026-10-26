@@ -47,7 +47,6 @@
 /// - LeetCode #242 (Valid Anagram)
 /// - LeetCode #49 (Group Anagrams)
 /// - LeetCode #438 (Find All Anagrams in a String)
-
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -104,9 +103,9 @@ pub fn areAnagramsSorted(allocator: Allocator, s1: []const u8, s2: []const u8) !
     if (s1.len != s2.len) return false;
 
     // Create sorted copies
-    var sorted1 = try allocator.dupe(u8, s1);
+    const sorted1 = try allocator.dupe(u8, s1);
     defer allocator.free(sorted1);
-    var sorted2 = try allocator.dupe(u8, s2);
+    const sorted2 = try allocator.dupe(u8, s2);
     defer allocator.free(sorted2);
 
     std.mem.sort(u8, sorted1, {}, std.sort.asc(u8));
@@ -127,12 +126,12 @@ pub fn areAnagramsSorted(allocator: Allocator, s1: []const u8, s2: []const u8) !
 /// const text = "cbaebabacd";
 /// const pattern = "abc";
 /// var indices = try findAllAnagrams(allocator, text, pattern);
-/// defer indices.deinit();
+/// defer indices.deinit(allocator);
 /// // indices = [0, 6] ("cba" at 0, "bac" at 6)
 /// ```
 pub fn findAllAnagrams(allocator: Allocator, text: []const u8, pattern: []const u8) !std.ArrayList(usize) {
-    var result = std.ArrayList(usize).init(allocator);
-    errdefer result.deinit();
+    var result = std.ArrayList(usize).empty;
+    errdefer result.deinit(allocator);
 
     if (pattern.len > text.len) return result;
 
@@ -152,7 +151,7 @@ pub fn findAllAnagrams(allocator: Allocator, text: []const u8, pattern: []const 
 
     // Check first window
     if (frequenciesMatch(&pattern_freq, &window_freq)) {
-        try result.append(0);
+        try result.append(allocator, 0);
     }
 
     // Slide window
@@ -164,7 +163,7 @@ pub fn findAllAnagrams(allocator: Allocator, text: []const u8, pattern: []const 
         window_freq[text[i - pattern.len]] -= 1;
 
         if (frequenciesMatch(&pattern_freq, &window_freq)) {
-            try result.append(i - pattern.len + 1);
+            try result.append(allocator, i - pattern.len + 1);
         }
     }
 
@@ -191,16 +190,16 @@ fn frequenciesMatch(freq1: *const [256]i32, freq2: *const [256]i32) bool {
 /// const words = [_][]const u8{ "eat", "tea", "tan", "ate", "nat", "bat" };
 /// var groups = try groupAnagrams(allocator, &words);
 /// defer {
-///     for (groups.items) |group| group.deinit();
-///     groups.deinit();
+///     for (groups.items) |*group| group.deinit(allocator);
+///     groups.deinit(allocator);
 /// }
 /// // groups = [["eat", "tea", "ate"], ["tan", "nat"], ["bat"]]
 /// ```
 pub fn groupAnagrams(allocator: Allocator, strings: []const []const u8) !std.ArrayList(std.ArrayList([]const u8)) {
-    var groups = std.ArrayList(std.ArrayList([]const u8)).init(allocator);
+    var groups = std.ArrayList(std.ArrayList([]const u8)).empty;
     errdefer {
-        for (groups.items) |group| group.deinit();
-        groups.deinit();
+        for (groups.items) |*group| group.deinit(allocator);
+        groups.deinit(allocator);
     }
 
     // Map from canonical form (sorted string) to group index
@@ -215,21 +214,21 @@ pub fn groupAnagrams(allocator: Allocator, strings: []const []const u8) !std.Arr
 
     for (strings) |str| {
         // Create canonical form (sorted string)
-        var sorted = try allocator.dupe(u8, str);
+        const sorted = try allocator.dupe(u8, str);
         errdefer allocator.free(sorted);
         std.mem.sort(u8, sorted, {}, std.sort.asc(u8));
 
         if (map.get(sorted)) |group_idx| {
             // Add to existing group
             allocator.free(sorted);
-            try groups.items[group_idx].append(str);
+            try groups.items[group_idx].append(allocator, str);
         } else {
             // Create new group
-            var new_group = std.ArrayList([]const u8).init(allocator);
-            errdefer new_group.deinit();
-            try new_group.append(str);
+            var new_group = std.ArrayList([]const u8).empty;
+            errdefer new_group.deinit(allocator);
+            try new_group.append(allocator, str);
             const group_idx = groups.items.len;
-            try groups.append(new_group);
+            try groups.append(allocator, new_group);
             try map.put(sorted, group_idx);
         }
     }
@@ -307,12 +306,12 @@ pub fn areAnagramsIgnoreCaseAndSpaces(s1: []const u8, s2: []const u8) bool {
 /// ## Example
 ///
 /// ```zig
-/// var canonical = try getCanonicalForm(allocator, "listen");
+/// const canonical = try getCanonicalForm(allocator, "listen");
 /// defer allocator.free(canonical);
 /// // canonical = "eilnst"
 /// ```
 pub fn getCanonicalForm(allocator: Allocator, s: []const u8) ![]u8 {
-    var result = try allocator.dupe(u8, s);
+    const result = try allocator.dupe(u8, s);
     std.mem.sort(u8, result, {}, std.sort.asc(u8));
     return result;
 }
@@ -348,7 +347,7 @@ test "findAllAnagrams - basic examples" {
 
     {
         var result = try findAllAnagrams(allocator, "cbaebabacd", "abc");
-        defer result.deinit();
+        defer result.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 2), result.items.len);
         try std.testing.expectEqual(@as(usize, 0), result.items[0]); // "cba"
         try std.testing.expectEqual(@as(usize, 6), result.items[1]); // "bac"
@@ -356,7 +355,7 @@ test "findAllAnagrams - basic examples" {
 
     {
         var result = try findAllAnagrams(allocator, "abab", "ab");
-        defer result.deinit();
+        defer result.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 3), result.items.len);
         try std.testing.expectEqual(@as(usize, 0), result.items[0]); // "ab"
         try std.testing.expectEqual(@as(usize, 1), result.items[1]); // "ba"
@@ -370,21 +369,21 @@ test "findAllAnagrams - edge cases" {
     {
         // Pattern longer than text
         var result = try findAllAnagrams(allocator, "abc", "abcd");
-        defer result.deinit();
+        defer result.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 0), result.items.len);
     }
 
     {
         // No anagrams found
         var result = try findAllAnagrams(allocator, "abcdefgh", "xyz");
-        defer result.deinit();
+        defer result.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 0), result.items.len);
     }
 
     {
         // Entire text is anagram
         var result = try findAllAnagrams(allocator, "abc", "abc");
-        defer result.deinit();
+        defer result.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 1), result.items.len);
         try std.testing.expectEqual(@as(usize, 0), result.items[0]);
     }
@@ -396,8 +395,8 @@ test "groupAnagrams - basic examples" {
     const words = [_][]const u8{ "eat", "tea", "tan", "ate", "nat", "bat" };
     var groups = try groupAnagrams(allocator, &words);
     defer {
-        for (groups.items) |group| group.deinit();
-        groups.deinit();
+        for (groups.items) |*group| group.deinit(allocator);
+        groups.deinit(allocator);
     }
 
     try std.testing.expectEqual(@as(usize, 3), groups.items.len);
@@ -433,8 +432,8 @@ test "groupAnagrams - edge cases" {
         const words = [_][]const u8{"hello"};
         var groups = try groupAnagrams(allocator, &words);
         defer {
-            for (groups.items) |group| group.deinit();
-            groups.deinit();
+            for (groups.items) |*group| group.deinit(allocator);
+            groups.deinit(allocator);
         }
         try std.testing.expectEqual(@as(usize, 1), groups.items.len);
         try std.testing.expectEqual(@as(usize, 1), groups.items[0].items.len);
@@ -445,8 +444,8 @@ test "groupAnagrams - edge cases" {
         const words = [_][]const u8{ "abc", "bca", "cab" };
         var groups = try groupAnagrams(allocator, &words);
         defer {
-            for (groups.items) |group| group.deinit();
-            groups.deinit();
+            for (groups.items) |*group| group.deinit(allocator);
+            groups.deinit(allocator);
         }
         try std.testing.expectEqual(@as(usize, 1), groups.items.len);
         try std.testing.expectEqual(@as(usize, 3), groups.items[0].items.len);
@@ -457,8 +456,8 @@ test "groupAnagrams - edge cases" {
         const words = [_][]const u8{ "abc", "def", "ghi" };
         var groups = try groupAnagrams(allocator, &words);
         defer {
-            for (groups.items) |group| group.deinit();
-            groups.deinit();
+            for (groups.items) |*group| group.deinit(allocator);
+            groups.deinit(allocator);
         }
         try std.testing.expectEqual(@as(usize, 3), groups.items.len);
     }
@@ -486,19 +485,19 @@ test "getCanonicalForm - basic examples" {
     const allocator = std.testing.allocator;
 
     {
-        var canonical = try getCanonicalForm(allocator, "listen");
+        const canonical = try getCanonicalForm(allocator, "listen");
         defer allocator.free(canonical);
         try std.testing.expectEqualStrings("eilnst", canonical);
     }
 
     {
-        var canonical = try getCanonicalForm(allocator, "silent");
+        const canonical = try getCanonicalForm(allocator, "silent");
         defer allocator.free(canonical);
         try std.testing.expectEqualStrings("eilnst", canonical);
     }
 
     {
-        var canonical = try getCanonicalForm(allocator, "abc");
+        const canonical = try getCanonicalForm(allocator, "abc");
         defer allocator.free(canonical);
         try std.testing.expectEqualStrings("abc", canonical);
     }
@@ -516,7 +515,7 @@ test "anagrams - large input" {
     text[102] = 'a';
 
     var result = try findAllAnagrams(allocator, text, "abc");
-    defer result.deinit();
+    defer result.deinit(allocator);
     try std.testing.expect(result.items.len > 0);
 }
 
@@ -527,7 +526,7 @@ test "anagrams - memory safety" {
     var i: usize = 0;
     while (i < 10) : (i += 1) {
         var result = try findAllAnagrams(allocator, "abcabc", "abc");
-        defer result.deinit();
+        defer result.deinit(allocator);
     }
 }
 
@@ -552,7 +551,7 @@ test "areAnagrams - different lengths" {
 test "findAllAnagrams - pattern same as text" {
     const allocator = std.testing.allocator;
     var result = try findAllAnagrams(allocator, "abc", "abc");
-    defer result.deinit();
+    defer result.deinit(allocator);
     // When pattern equals text, there is exactly one match at position 0
     try std.testing.expectEqual(@as(usize, 1), result.items.len);
     try std.testing.expectEqual(@as(usize, 0), result.items[0]);
@@ -563,8 +562,8 @@ test "groupAnagrams - single word group" {
     const words = [_][]const u8{"abc"};
     var groups = try groupAnagrams(allocator, &words);
     defer {
-        for (groups.items) |group| group.deinit();
-        groups.deinit();
+        for (groups.items) |*group| group.deinit(allocator);
+        groups.deinit(allocator);
     }
     // Single word should form one group with one element
     try std.testing.expectEqual(@as(usize, 1), groups.items.len);

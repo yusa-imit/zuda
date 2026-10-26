@@ -214,12 +214,12 @@ pub const Trie = struct {
     /// Time: O(n + k*m) where n = nodes in subtree, k = words, m = avg length
     /// Space: O(k*m) for result ArrayList
     pub fn getAllWordsWithPrefix(self: *Trie, allocator: Allocator, prefix: []const u8) !std.ArrayList([]const u8) {
-        var results = std.ArrayList([]const u8).init(allocator);
+        var results: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (results.items) |item| {
                 allocator.free(item);
             }
-            results.deinit();
+            results.deinit(allocator);
         }
 
         const prefix_node = self.findNode(prefix);
@@ -227,10 +227,10 @@ pub const Trie = struct {
             return results; // Empty list
         }
 
-        var prefix_buf = std.ArrayList(u8).init(allocator);
-        defer prefix_buf.deinit();
+        var prefix_buf: std.ArrayList(u8) = .empty;
+        defer prefix_buf.deinit(allocator);
 
-        try prefix_buf.appendSlice(prefix);
+        try prefix_buf.appendSlice(allocator, prefix);
         try self.collectWords(prefix_node.?, &prefix_buf, &results, allocator);
 
         return results;
@@ -238,17 +238,16 @@ pub const Trie = struct {
 
     /// Collect all words in subtree (DFS)
     fn collectWords(self: *Trie, node: *TrieNode, current: *std.ArrayList(u8), results: *std.ArrayList([]const u8), allocator: Allocator) !void {
-        _ = self;
-
         if (node.is_end_of_word) {
             const word = try allocator.dupe(u8, current.items);
-            try results.append(word);
+            errdefer allocator.free(word);
+            try results.append(allocator, word);
         }
 
         for (node.children, 0..) |maybe_child, i| {
             if (maybe_child) |child| {
                 const char = @as(u8, @intCast(i)) + 'a';
-                try current.append(char);
+                try current.append(allocator, char);
                 try self.collectWords(child, current, results, allocator);
                 _ = current.pop();
             }
@@ -265,7 +264,6 @@ pub const Trie = struct {
 
     /// Count words in a subtree (DFS)
     fn countWordsInSubtree(self: *Trie, node: *TrieNode) usize {
-        _ = self;
         var count: usize = if (node.is_end_of_word) 1 else 0;
 
         for (node.children) |maybe_child| {
@@ -281,8 +279,8 @@ pub const Trie = struct {
     /// Time: O(m) where m = length of longest common prefix
     /// Space: O(m) for result string
     pub fn longestCommonPrefix(self: *Trie, allocator: Allocator) ![]const u8 {
-        var result = std.ArrayList(u8).init(allocator);
-        errdefer result.deinit();
+        var result: std.ArrayList(u8) = .empty;
+        errdefer result.deinit(allocator);
 
         var current = self.root;
 
@@ -305,11 +303,11 @@ pub const Trie = struct {
                 break;
             }
 
-            try result.append(next_char);
+            try result.append(allocator, next_char);
             current = next_node.?;
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(allocator);
     }
 
     /// Check if the Trie is empty (no words)
@@ -417,7 +415,7 @@ test "Trie: getAllWordsWithPrefix" {
         for (words.items) |word| {
             testing.allocator.free(word);
         }
-        words.deinit();
+        words.deinit(testing.allocator);
     }
 
     try testing.expectEqual(@as(usize, 3), words.items.len);
@@ -497,7 +495,7 @@ test "Trie: isEmpty and size" {
     _ = try trie.insert("world");
     try testing.expectEqual(@as(usize, 2), trie.size());
 
-    _ = try trie.delete("hello");
+    _ = trie.delete("hello");
     try testing.expectEqual(@as(usize, 1), trie.size());
 }
 
@@ -557,7 +555,7 @@ test "Trie: getAllWordsWithPrefix with no matches" {
     _ = try trie.insert("banana");
 
     var words = try trie.getAllWordsWithPrefix(testing.allocator, "cherry");
-    defer words.deinit();
+    defer words.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 0), words.items.len);
 }
@@ -621,7 +619,7 @@ test "Trie: memory safety with allocator verification" {
             for (words.items) |word| {
                 testing.allocator.free(word);
             }
-            words.deinit();
+            words.deinit(testing.allocator);
         }
     }
 }

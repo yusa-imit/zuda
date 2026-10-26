@@ -27,7 +27,6 @@
 ///
 /// - Manacher, Glenn (1975) - "A New Linear-Time On-Line Algorithm for Finding the Smallest Initial Palindrome of a String"
 /// - LeetCode #5 (Longest Palindromic Substring)
-
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -295,10 +294,10 @@ pub fn allPalindromes(allocator: Allocator, s: []const u8) ![][]const u8 {
     }
 
     // Extract all palindromes
-    var results = std.ArrayList([]const u8).init(allocator);
+    var results: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (results.items) |p| allocator.free(p);
-        results.deinit();
+        results.deinit(allocator);
     }
 
     for (0..transformed.len) |i| {
@@ -310,11 +309,12 @@ pub fn allPalindromes(allocator: Allocator, s: []const u8) ![][]const u8 {
         const len = radius[i];
         if (len > 0) {
             const palindrome = try allocator.dupe(u8, s[start .. start + len]);
-            try results.append(palindrome);
+            errdefer allocator.free(palindrome);
+            try results.append(allocator, palindrome);
         }
     }
 
-    return try results.toOwnedSlice();
+    return try results.toOwnedSlice(allocator);
 }
 
 /// Transform string by inserting separators for uniform palindrome handling.

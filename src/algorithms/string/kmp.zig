@@ -81,7 +81,7 @@ pub fn KMP(comptime T: type) type {
         /// Returns ArrayList of match indices
         /// Time: O(n) | Space: O(k) where k = number of matches
         pub fn findAll(self: *const Self, text: []const T, allocator: Allocator) !std.ArrayList(usize) {
-            var matches: std.ArrayList(usize) = .{};
+            var matches: std.ArrayList(usize) = .empty;
             errdefer matches.deinit(allocator);
 
             if (text.len < self.pattern.len) return matches;

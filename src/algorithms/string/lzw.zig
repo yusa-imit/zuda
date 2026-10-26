@@ -44,7 +44,6 @@ const StringHashMap = std.StringHashMap;
 /// - Welch, T. (1984). "A Technique for High-Performance Data Compression"
 /// - IEEE Computer, 17(6), 8-19
 /// - GIF89a specification
-
 /// LZW compression result with metadata
 pub const CompressionResult = struct {
     codes: []u16,
@@ -93,8 +92,8 @@ pub const LZWError = error{
 pub fn encode(allocator: Allocator, data: []const u8) !CompressionResult {
     if (data.len == 0) return LZWError.EmptyInput;
 
-    var codes = ArrayList(u16).init(allocator);
-    errdefer codes.deinit();
+    var codes: ArrayList(u16) = .empty;
+    errdefer codes.deinit(allocator);
 
     // Dictionary: string -> code
     // Use StringHashMap with owned keys
@@ -112,17 +111,18 @@ pub fn encode(allocator: Allocator, data: []const u8) !CompressionResult {
     var i: u16 = 0;
     while (i < INITIAL_DICT_SIZE) : (i += 1) {
         const key = try allocator.alloc(u8, 1);
+        errdefer allocator.free(key);
         key[0] = @intCast(i);
         try dictionary.put(key, i);
     }
 
     var next_code: u16 = INITIAL_DICT_SIZE;
-    var current = ArrayList(u8).init(allocator);
-    defer current.deinit();
+    var current: ArrayList(u8) = .empty;
+    defer current.deinit(allocator);
 
     for (data) |byte| {
         // Try extending current string
-        try current.append(byte);
+        try current.append(allocator, byte);
 
         // Check if extended string is in dictionary
         if (!dictionary.contains(current.items)) {
@@ -130,28 +130,29 @@ pub fn encode(allocator: Allocator, data: []const u8) !CompressionResult {
             const prev_len = current.items.len - 1;
             const prev = current.items[0..prev_len];
             const code = dictionary.get(prev) orelse unreachable;
-            try codes.append(code);
+            try codes.append(allocator, code);
 
             // Add new string to dictionary if not full
             if (next_code < MAX_DICT_SIZE) {
                 const key = try allocator.dupe(u8, current.items);
+                errdefer allocator.free(key);
                 try dictionary.put(key, next_code);
                 next_code += 1;
             }
 
             // Reset current to last byte only
             current.clearRetainingCapacity();
-            try current.append(byte);
+            try current.append(allocator, byte);
         }
     }
 
     // Output code for remaining string
     if (current.items.len > 0) {
         const code = dictionary.get(current.items) orelse unreachable;
-        try codes.append(code);
+        try codes.append(allocator, code);
     }
 
-    const codes_slice = try codes.toOwnedSlice();
+    const codes_slice = try codes.toOwnedSlice(allocator);
     const ratio = if (data.len > 0)
         1.0 - (@as(f64, @floatFromInt(codes_slice.len * 2)) / @as(f64, @floatFromInt(data.len)))
     else
@@ -180,16 +181,16 @@ pub fn encode(allocator: Allocator, data: []const u8) !CompressionResult {
 pub fn decode(allocator: Allocator, codes: []const u16) !DecompressionResult {
     if (codes.len == 0) return LZWError.EmptyInput;
 
-    var output = ArrayList(u8).init(allocator);
-    errdefer output.deinit();
+    var output: ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
 
     // Dictionary: code -> string
-    var dictionary = ArrayList([]u8).init(allocator);
+    var dictionary: ArrayList([]u8) = .empty;
     defer {
         for (dictionary.items) |entry| {
             allocator.free(entry);
         }
-        dictionary.deinit();
+        dictionary.deinit(allocator);
     }
 
     // Initialize dictionary with single-byte values (0-255)
@@ -197,7 +198,8 @@ pub fn decode(allocator: Allocator, codes: []const u16) !DecompressionResult {
     while (i < INITIAL_DICT_SIZE) : (i += 1) {
         const entry = try allocator.alloc(u8, 1);
         entry[0] = @intCast(i);
-        try dictionary.append(entry);
+        errdefer allocator.free(entry);
+        try dictionary.append(allocator, entry);
     }
 
     // Process first code
@@ -206,7 +208,7 @@ pub fn decode(allocator: Allocator, codes: []const u16) !DecompressionResult {
 
     var previous = try allocator.dupe(u8, dictionary.items[first_code]);
     defer allocator.free(previous);
-    try output.appendSlice(previous);
+    try output.appendSlice(allocator, previous);
 
     // Process remaining codes
     for (codes[1..]) |code| {
@@ -228,23 +230,26 @@ pub fn decode(allocator: Allocator, codes: []const u16) !DecompressionResult {
             return LZWError.InvalidCode;
         }
 
-        try output.appendSlice(current);
+        try output.appendSlice(allocator, current);
 
         // Add new dictionary entry: previous + first char of current
         if (dictionary.items.len < MAX_DICT_SIZE) {
             const new_entry = try allocator.alloc(u8, previous.len + 1);
             @memcpy(new_entry[0..previous.len], previous);
             new_entry[previous.len] = current[0];
-            try dictionary.append(new_entry);
+            errdefer allocator.free(new_entry);
+            try dictionary.append(allocator, new_entry);
         }
 
         // Update previous
+        // Duplicate first so a failed allocation leaves `previous` valid for the defer above.
+        const next_previous = try allocator.dupe(u8, current);
         allocator.free(previous);
-        previous = try allocator.dupe(u8, current);
+        previous = next_previous;
     }
 
     return DecompressionResult{
-        .data = try output.toOwnedSlice(),
+        .data = try output.toOwnedSlice(allocator),
     };
 }
 
@@ -441,12 +446,12 @@ test "LZW: special case xyx pattern" {
 test "LZW: large dictionary usage" {
     const allocator = testing.allocator;
     // Create data that will use many dictionary entries
-    var data_list = ArrayList(u8).init(allocator);
-    defer data_list.deinit();
+    var data_list: ArrayList(u8) = .empty;
+    defer data_list.deinit(allocator);
 
     var i: usize = 0;
     while (i < 1000) : (i += 1) {
-        try data_list.append(@intCast(i % 26 + 'A'));
+        try data_list.append(allocator, @intCast(i % 26 + 'A'));
     }
 
     var enc = try encode(allocator, data_list.items);

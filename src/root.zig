@@ -924,6 +924,14 @@ test {
     _ = @import("algorithms/combinatorics/sequences.zig");
     _ = @import("algorithms/combinatorics/stirling.zig");
     _ = @import("algorithms/combinatorics/young_tableaux.zig");
+    _ = @import("algorithms/string/anagrams.zig");
+    _ = @import("algorithms/string/double_metaphone.zig");
+    _ = @import("algorithms/string/glob_match.zig");
+    _ = @import("algorithms/string/longest_common_prefix.zig");
+    _ = @import("algorithms/string/rabin_karp.zig");
+    _ = @import("algorithms/string/run_length_encoding.zig");
+    _ = @import("algorithms/string/smith_waterman.zig");
+    _ = @import("algorithms/string/z_algorithm.zig");
     _ = @import("compat/silica_btree.zig");
     _ = @import("compat/zr_dag.zig");
     _ = @import("internal/testing.zig");
