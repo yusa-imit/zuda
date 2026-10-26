@@ -1168,6 +1168,8 @@ pub fn StudentT(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn init(nu: T) DistributionError!Self {
             if (nu <= 0.0 or !math.isFinite(nu)) return error.InvalidParameter;
+            // sample() builds Gamma(nu / 2, 0.5); a subnormal nu would halve to zero.
+            if (!(nu / 2.0 > 0.0)) return error.InvalidParameter;
             return Self{ .nu = nu };
         }
 
@@ -1264,6 +1266,7 @@ pub fn StudentT(comptime T: type) type {
 
             // Generate chi-squared random variable V ~ χ²(ν)
             // χ²(ν) = Gamma(ν/2, 1/2)
+            // Cannot fail: init rejects nu whose half is not a positive finite shape.
             const chi_squared_dist = Gamma(T).init(self.nu / 2.0, 0.5) catch unreachable;
             const v = chi_squared_dist.sample(rng);
 
@@ -1370,6 +1373,8 @@ pub fn FDistribution(comptime T: type) type {
         pub fn init(d1: T, d2: T) DistributionError!Self {
             if (d1 <= 0.0 or d2 <= 0.0) return error.InvalidParameter;
             if (!math.isFinite(d1) or !math.isFinite(d2)) return error.InvalidParameter;
+            // sample() builds Gamma(d / 2, 0.5); a subnormal d would halve to zero.
+            if (!(d1 / 2.0 > 0.0) or !(d2 / 2.0 > 0.0)) return error.InvalidParameter;
             return Self{ .d1 = d1, .d2 = d2 };
         }
 
@@ -1445,6 +1450,7 @@ pub fn FDistribution(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
+            // Cannot fail: init rejects d1 and d2 whose halves are not positive finite shapes.
             const chi1 = Gamma(T).init(self.d1 / 2.0, 0.5) catch unreachable;
             const chi2 = Gamma(T).init(self.d2 / 2.0, 0.5) catch unreachable;
 
@@ -50246,6 +50252,8 @@ pub fn GeneralizedNormal(comptime T: type) type {
             if (!(beta > 0.0)) return error.InvalidParameter;
             if (!math.isFinite(alpha)) return error.InvalidParameter;
             if (!math.isFinite(beta)) return error.InvalidParameter;
+            // sample() builds Gamma(1 / beta, 1); a subnormal beta would overflow the shape.
+            if (!math.isFinite(1.0 / beta)) return error.InvalidParameter;
             return Self{ .mu = mu, .alpha = alpha, .beta = beta };
         }
 
@@ -50407,6 +50415,7 @@ pub fn GeneralizedNormal(comptime T: type) type {
         ///
         /// Time: O(1) amortized | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
+            // Cannot fail: init guarantees beta > 0 and 1 / beta finite, so the shape is valid.
             const gamma_dist = Gamma(T).init(1.0 / self.beta, 1.0) catch unreachable;
             const g = gamma_dist.sample(rng);
             const g_power = math.pow(T, g, 1.0 / self.beta);
@@ -73190,6 +73199,7 @@ pub fn HalfStudentT(comptime T: type) type {
                 return 2.0 * math.atan(z) / math.pi;
             }
 
+            // Cannot fail: init validated nu > 0 and finite, all StudentT.init requires.
             const t_dist = StudentT(T).init(self.nu) catch unreachable;
             return 2.0 * t_dist.cdf(z) - 1.0;
         }
@@ -73215,7 +73225,10 @@ pub fn HalfStudentT(comptime T: type) type {
             if (!(p >= 0.0 and p <= 1.0)) return error.InvalidProbability;
             if (p == 0.0) return 0.0;
             if (p == 1.0) return math.inf(T);
+            // Cannot fail: init validated nu > 0 and finite, all StudentT.init requires.
             const t_dist = StudentT(T).init(self.nu) catch unreachable;
+            // Cannot fail: p is in (0, 1) here, so (1 + p) / 2 lies in [0.5, 1] and quantile
+            // rejects only p outside [0, 1].
             const t_q = t_dist.quantile((1.0 + p) / 2.0) catch unreachable;
             return self.sigma * t_q;
         }
@@ -73284,6 +73297,7 @@ pub fn HalfStudentT(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
+            // Cannot fail: init validated nu > 0 and finite, all StudentT.init requires.
             const t_dist = StudentT(T).init(self.nu) catch unreachable;
             return @abs(t_dist.sample(rng)) * self.sigma;
         }
@@ -97474,6 +97488,7 @@ pub fn FoldedT(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn pdf(self: Self, x: T) T {
             if (x < 0.0) return 0.0;
+            // Cannot fail: init validated nu > 0 and finite, all StudentT.init requires.
             const t_dist = StudentT(T).init(self.nu) catch unreachable;
             const inv_sigma = 1.0 / self.sigma;
             const z1 = (x - self.mu) * inv_sigma;
@@ -97499,6 +97514,7 @@ pub fn FoldedT(comptime T: type) type {
         /// Time: O(1) | Space: O(1)
         pub fn cdf(self: Self, x: T) T {
             if (x <= 0.0) return 0.0;
+            // Cannot fail: init validated nu > 0 and finite, all StudentT.init requires.
             const t_dist = StudentT(T).init(self.nu) catch unreachable;
             const inv_sigma = 1.0 / self.sigma;
             const z1 = (x - self.mu) * inv_sigma;
@@ -97555,6 +97571,7 @@ pub fn FoldedT(comptime T: type) type {
             if (self.nu <= 1.0) {
                 return math.inf(T);
             }
+            // Cannot fail: init validated nu > 0 and finite, all StudentT.init requires.
             const t_dist = StudentT(T).init(self.nu) catch unreachable;
             const z = self.mu / self.sigma;
             const cdf_z = t_dist.cdf(z);
@@ -97640,6 +97657,7 @@ pub fn FoldedT(comptime T: type) type {
         ///
         /// Time: O(1) | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
+            // Cannot fail: init validated nu > 0 and finite, all StudentT.init requires.
             const t_dist = StudentT(T).init(self.nu) catch unreachable;
             const t = t_dist.sample(rng);
             return @abs(self.mu + self.sigma * t);
@@ -99337,6 +99355,7 @@ pub fn PoissonLindley(comptime T: type) type {
         ///
         /// Time: O(1) amortized | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) u64 {
+            // Cannot fail: init validated theta > 0 and finite, all Lindley.init requires.
             const lindley_dist = Lindley(T).init(self.theta) catch unreachable;
             const lambda = lindley_dist.sample(rng);
             return poissonKnuth(T, rng, lambda);
@@ -102854,6 +102873,8 @@ pub fn SkewT(comptime T: type) type {
         pub fn init(xi: T, omega: T, alpha: T, nu: T) DistributionError!Self {
             if (omega <= 0.0 or !math.isFinite(omega)) return error.InvalidParameter;
             if (nu <= 0.0 or !math.isFinite(nu)) return error.InvalidParameter;
+            // sample() builds Gamma(nu / 2, 0.5); a subnormal nu would halve to zero.
+            if (!(nu / 2.0 > 0.0)) return error.InvalidParameter;
             if (!math.isFinite(xi)) return error.InvalidParameter;
             if (!math.isFinite(alpha)) return error.InvalidParameter;
             return Self{ .xi = xi, .omega = omega, .alpha = alpha, .nu = nu };
@@ -103122,6 +103143,7 @@ pub fn SkewT(comptime T: type) type {
             const z = delta * @abs(z1) + sqrt_1_minus_delta_sq * z2;
 
             // Chi-squared component
+            // Cannot fail: init rejects nu whose half is not a positive finite shape.
             const chi_squared_dist = Gamma(T).init(self.nu / 2.0, 0.5) catch unreachable;
             const v = chi_squared_dist.sample(rng);
 
@@ -108373,6 +108395,8 @@ pub fn HalfGeneralizedNormal(comptime T: type) type {
             if (!math.isFinite(beta)) return error.InvalidParameter;
             if (!(alpha > 0.0)) return error.InvalidParameter;
             if (!math.isFinite(alpha)) return error.InvalidParameter;
+            // sample() builds Gamma(1 / beta, 1); a subnormal beta would overflow the shape.
+            if (!math.isFinite(1.0 / beta)) return error.InvalidParameter;
             return Self{ .beta = beta, .alpha = alpha };
         }
 
@@ -108454,6 +108478,7 @@ pub fn HalfGeneralizedNormal(comptime T: type) type {
         ///
         /// Time: O(1) amortized | Space: O(1)
         pub fn sample(self: Self, rng: std.Random) T {
+            // Cannot fail: init guarantees beta > 0 and 1 / beta finite, so the shape is valid.
             const gamma_dist = Gamma(T).init(1.0 / self.beta, 1.0) catch unreachable;
             const g = gamma_dist.sample(rng);
             const g_power = math.pow(T, g, 1.0 / self.beta);
@@ -128409,4 +128434,33 @@ test "Sibuya: sf and cdf sum to 1" {
     const sf_val = dist.sf(k);
     const cdf_val = dist.cdf(k);
     try testing.expectApproxEqAbs(@as(f64, 1.0), sf_val + cdf_val, 1e-12);
+}
+
+test "derived Gamma parameters: init rejects unrepresentable derived shapes" {
+    const tiny = std.math.floatTrueMin(f64);
+    // nu / 2 rounds to zero, so sample() could not build its Gamma(nu / 2, 0.5).
+    try testing.expectError(error.InvalidParameter, StudentT(f64).init(tiny));
+    try testing.expectError(error.InvalidParameter, FDistribution(f64).init(tiny, 1.0));
+    try testing.expectError(error.InvalidParameter, FDistribution(f64).init(1.0, tiny));
+    try testing.expectError(error.InvalidParameter, SkewT(f64).init(0.0, 1.0, 0.0, tiny));
+    // 1 / beta overflows to infinity, so sample() could not build its Gamma(1 / beta, 1).
+    try testing.expectError(error.InvalidParameter, GeneralizedNormal(f64).init(0.0, 1.0, tiny));
+    try testing.expectError(error.InvalidParameter, HalfGeneralizedNormal(f64).init(tiny, 1.0));
+}
+
+test "derived Gamma parameters: smallest accepted values still sample without panicking" {
+    var prng = std.Random.DefaultPrng.init(0x5eed);
+    const rng = prng.random();
+    const nu_min: f64 = 2.0 * std.math.floatMin(f64);
+    const beta_min: f64 = 4.0 / std.math.floatMax(f64);
+    const student = try StudentT(f64).init(nu_min);
+    _ = student.sample(rng);
+    const skew = try SkewT(f64).init(0.0, 1.0, 0.0, nu_min);
+    _ = skew.sample(rng);
+    const fdist = try FDistribution(f64).init(nu_min, nu_min);
+    _ = fdist.sample(rng);
+    const gnorm = try GeneralizedNormal(f64).init(0.0, 1.0, beta_min);
+    _ = gnorm.sample(rng);
+    const hgnorm = try HalfGeneralizedNormal(f64).init(beta_min, 1.0);
+    _ = hgnorm.sample(rng);
 }
