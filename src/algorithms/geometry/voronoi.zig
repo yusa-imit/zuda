@@ -113,15 +113,15 @@ pub const Cell = struct {
     /// Edges bounding this cell (in CCW order when possible)
     edges: std.ArrayList(usize),
 
-    pub fn init(allocator: Allocator, site: Point) !Cell {
+    pub fn init(site: Point) Cell {
         return .{
             .site = site,
-            .edges = std.ArrayList(usize).init(allocator),
+            .edges = std.ArrayList(usize).empty,
         };
     }
 
-    pub fn deinit(self: *Cell) void {
-        self.edges.deinit();
+    pub fn deinit(self: *Cell, allocator: Allocator) void {
+        self.edges.deinit(allocator);
     }
 };
 
@@ -137,10 +137,10 @@ pub const VoronoiDiagram = struct {
 
     pub fn deinit(self: *VoronoiDiagram) void {
         for (self.cells.items) |*cell| {
-            cell.deinit();
+            cell.deinit(self.allocator);
         }
-        self.cells.deinit();
-        self.edges.deinit();
+        self.cells.deinit(self.allocator);
+        self.edges.deinit(self.allocator);
     }
 
     /// Get number of vertices (edge endpoints)
@@ -225,19 +225,24 @@ pub fn voronoi(allocator: Allocator, sites: []const Point) !VoronoiDiagram {
     if (sites.len == 0) {
         return VoronoiDiagram{
             .sites = sites,
-            .edges = std.ArrayList(Edge).init(allocator),
-            .cells = std.ArrayList(Cell).init(allocator),
+            .edges = std.ArrayList(Edge).empty,
+            .cells = std.ArrayList(Cell).empty,
             .allocator = allocator,
         };
     }
 
     if (sites.len == 1) {
         // Single site: unbounded cell, no edges
-        var cells = std.ArrayList(Cell).init(allocator);
-        try cells.append(try Cell.init(allocator, sites[0]));
+        var cells = std.ArrayList(Cell).empty;
+        errdefer cells_deinit(allocator, &cells);
+
+        var cell0 = Cell.init(sites[0]);
+        errdefer cell0.deinit(allocator);
+
+        try cells.append(allocator, cell0);
         return VoronoiDiagram{
             .sites = sites,
-            .edges = std.ArrayList(Edge).init(allocator),
+            .edges = std.ArrayList(Edge).empty,
             .cells = cells,
             .allocator = allocator,
         };
@@ -251,17 +256,23 @@ pub fn voronoi(allocator: Allocator, sites: []const Point) !VoronoiDiagram {
         const mid_y = (p1.y + p2.y) / 2.0;
         const midpoint = Point.init(mid_x, mid_y);
 
-        var edges = std.ArrayList(Edge).init(allocator);
-        try edges.append(Edge.init(midpoint, null, p1, p2));
+        var edges = std.ArrayList(Edge).empty;
+        errdefer edges.deinit(allocator);
 
-        var cells = std.ArrayList(Cell).init(allocator);
-        var cell1 = try Cell.init(allocator, p1);
-        try cell1.edges.append(0);
-        try cells.append(cell1);
+        try edges.append(allocator, Edge.init(midpoint, null, p1, p2));
 
-        var cell2 = try Cell.init(allocator, p2);
-        try cell2.edges.append(0);
-        try cells.append(cell2);
+        var cells = std.ArrayList(Cell).empty;
+        errdefer cells_deinit(allocator, &cells);
+
+        var cell1 = Cell.init(p1);
+        errdefer cell1.deinit(allocator);
+        try cell1.edges.append(allocator, 0);
+        try cells.append(allocator, cell1);
+
+        var cell2 = Cell.init(p2);
+        errdefer cell2.deinit(allocator);
+        try cell2.edges.append(allocator, 0);
+        try cells.append(allocator, cell2);
 
         return VoronoiDiagram{
             .sites = sites,
@@ -273,12 +284,17 @@ pub fn voronoi(allocator: Allocator, sites: []const Point) !VoronoiDiagram {
 
     // For 3+ sites: construct edges based on Delaunay dual
     // Simplified: create perpendicular bisectors for all pairs within threshold
-    var edges = std.ArrayList(Edge).init(allocator);
-    var cells = std.ArrayList(Cell).init(allocator);
+    var edges = std.ArrayList(Edge).empty;
+    var cells = std.ArrayList(Cell).empty;
+    errdefer edges.deinit(allocator);
+    errdefer cells_deinit(allocator, &cells);
 
     // Initialize cells
     for (sites) |site| {
-        try cells.append(try Cell.init(allocator, site));
+        var cell = Cell.init(site);
+        errdefer cell.deinit(allocator);
+
+        try cells.append(allocator, cell);
     }
 
     // Create edges for nearby site pairs (simplified Voronoi construction)
@@ -295,10 +311,10 @@ pub fn voronoi(allocator: Allocator, sites: []const Point) !VoronoiDiagram {
                 const vertex = Point.init(mid_x, mid_y);
 
                 const edge_idx = edges.items.len;
-                try edges.append(Edge.init(vertex, null, site1, site2));
+                try edges.append(allocator, Edge.init(vertex, null, site1, site2));
 
-                try cells.items[i].edges.append(edge_idx);
-                try cells.items[j].edges.append(edge_idx);
+                try cells.items[i].edges.append(allocator, edge_idx);
+                try cells.items[j].edges.append(allocator, edge_idx);
             }
         }
     }
@@ -309,6 +325,14 @@ pub fn voronoi(allocator: Allocator, sites: []const Point) !VoronoiDiagram {
         .cells = cells,
         .allocator = allocator,
     };
+}
+
+/// Free every cell, then the list; the error path of the constructors below.
+fn cells_deinit(allocator: Allocator, cells: *std.ArrayList(Cell)) void {
+    for (cells.items) |*cell| {
+        cell.deinit(allocator);
+    }
+    cells.deinit(allocator);
 }
 
 /// Helper: compute diagonal of bounding box
@@ -344,12 +368,17 @@ pub fn voronoiFromDelaunay(
     sites: []const Point,
     delaunay_edges: []const [2]usize,
 ) !VoronoiDiagram {
-    var edges = std.ArrayList(Edge).init(allocator);
-    var cells = std.ArrayList(Cell).init(allocator);
+    var edges = std.ArrayList(Edge).empty;
+    var cells = std.ArrayList(Cell).empty;
+    errdefer edges.deinit(allocator);
+    errdefer cells_deinit(allocator, &cells);
 
     // Initialize cells
     for (sites) |site| {
-        try cells.append(try Cell.init(allocator, site));
+        var cell = Cell.init(site);
+        errdefer cell.deinit(allocator);
+
+        try cells.append(allocator, cell);
     }
 
     // For each Delaunay edge, create perpendicular bisector (Voronoi edge)
@@ -367,10 +396,10 @@ pub fn voronoiFromDelaunay(
         const vertex = Point.init(mid_x, mid_y);
 
         const edge_idx = edges.items.len;
-        try edges.append(Edge.init(vertex, null, site1, site2));
+        try edges.append(allocator, Edge.init(vertex, null, site1, site2));
 
-        try cells.items[i].edges.append(edge_idx);
-        try cells.items[j].edges.append(edge_idx);
+        try cells.items[i].edges.append(allocator, edge_idx);
+        try cells.items[j].edges.append(allocator, edge_idx);
     }
 
     return VoronoiDiagram{
@@ -545,15 +574,15 @@ test "Voronoi: Random sites" {
 test "Voronoi: Large dataset" {
     const allocator = std.testing.allocator;
 
-    var sites = std.ArrayList(Point).init(allocator);
-    defer sites.deinit();
+    var sites = std.ArrayList(Point).empty;
+    defer sites.deinit(allocator);
 
     // Create 50 sites in a grid pattern
     var y: f64 = 0;
     while (y < 10) : (y += 2) {
         var x: f64 = 0;
         while (x < 10) : (x += 2) {
-            try sites.append(Point.init(x, y));
+            try sites.append(allocator, Point.init(x, y));
         }
     }
 

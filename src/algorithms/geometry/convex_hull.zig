@@ -54,7 +54,7 @@ pub fn grahamScan(comptime T: type, allocator: std.mem.Allocator, points: []cons
     }.lessThan);
 
     // Build lower hull
-    var lower: std.ArrayList(Point(T)) = .{};
+    var lower: std.ArrayList(Point(T)) = .empty;
     defer lower.deinit(allocator);
 
     for (sorted) |p| {
@@ -71,7 +71,7 @@ pub fn grahamScan(comptime T: type, allocator: std.mem.Allocator, points: []cons
     }
 
     // Build upper hull
-    var upper: std.ArrayList(Point(T)) = .{};
+    var upper: std.ArrayList(Point(T)) = .empty;
     defer upper.deinit(allocator);
 
     var i: usize = sorted.len;
@@ -113,7 +113,7 @@ pub fn jarvisMarch(comptime T: type, allocator: std.mem.Allocator, points: []con
         return result;
     }
 
-    var hull: std.ArrayList(Point(T)) = .{};
+    var hull: std.ArrayList(Point(T)) = .empty;
     errdefer hull.deinit(allocator);
 
     // Start with leftmost point

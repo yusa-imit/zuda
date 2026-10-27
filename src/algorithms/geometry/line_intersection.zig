@@ -20,7 +20,6 @@
 /// - CAD systems (detecting overlaps, constraint solving)
 ///
 /// Reference: Cormen et al., "Introduction to Algorithms" (2009)
-
 const std = @import("std");
 const testing = std.testing;
 
@@ -90,7 +89,7 @@ pub fn orientation(comptime T: type, p: Point(T), q: Point(T), r: Point(T)) Orie
     // = (q.x - p.x) * (r.y - q.y) - (q.y - p.y) * (r.x - q.x)
     const val = (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
 
-    const epsilon: T = if (@typeInfo(T) == .Float) 1e-10 else 0;
+    const epsilon: T = if (@typeInfo(T) == .float) 1e-10 else 0;
 
     if (@abs(val) <= epsilon) return .collinear;
     return if (val > 0) .clockwise else .counterclockwise;
@@ -157,7 +156,7 @@ pub fn segmentIntersection(comptime T: type, seg1: Segment(T), seg2: Segment(T))
     }
 
     // For floating point, compute exact intersection point
-    if (@typeInfo(T) == .Float) {
+    if (@typeInfo(T) == .float) {
         const p1 = seg1.p1;
         const p2 = seg1.p2;
         const q1 = seg2.p1;
@@ -200,20 +199,20 @@ pub fn segmentIntersection(comptime T: type, seg1: Segment(T), seg2: Segment(T))
 // Tests
 // ============================================================================
 
-test "orientation: clockwise" {
+test "orientation: counterclockwise" {
     const p = Point(f64).init(0, 0);
     const q = Point(f64).init(4, 4);
     const r = Point(f64).init(1, 2);
 
-    try testing.expectEqual(Orientation.clockwise, orientation(f64, p, q, r));
+    try testing.expectEqual(Orientation.counterclockwise, orientation(f64, p, q, r));
 }
 
-test "orientation: counterclockwise" {
+test "orientation: clockwise" {
     const p = Point(f64).init(0, 0);
     const q = Point(f64).init(4, 4);
     const r = Point(f64).init(2, 1);
 
-    try testing.expectEqual(Orientation.counterclockwise, orientation(f64, p, q, r));
+    try testing.expectEqual(Orientation.clockwise, orientation(f64, p, q, r));
 }
 
 test "orientation: collinear" {

@@ -1,36 +1,32 @@
-//! Bentley-Ottmann Algorithm for Line Segment Intersection Detection
+//! Sweep-line segment intersection (the Bentley-Ottmann sweep, without the balanced status tree)
 //!
-//! A sweep line algorithm that finds all intersection points among a set of line segments.
-//! Uses an event queue (sorted by x-coordinate) and a status structure (active segments at sweep line)
-//! to efficiently detect intersections in O((n+k) log n) time where:
-//! - n = number of segments
-//! - k = number of intersection points
-//!
-//! This is optimal for reporting all intersections, much better than naive O(n²) pairwise checking.
+//! Sweeps a vertical line left to right over the segment endpoints and tests each entering
+//! segment against the segments the line currently crosses. That reports every intersection
+//! exactly once in O(n log n + n * a + k) time, where n = segments, a = peak active segments
+//! and k = intersections. The classic neighbour-only status tree reaches O((n + k) log n) but
+//! needs exact-arithmetic tie handling for vertical and collinear segments; this version trades
+//! that bound for correctness on every input.
 //!
 //! Applications:
 //! - Map overlay operations (GIS)
-//! - Computer graphics (polygon clipping, hidden line removal)
 //! - Circuit board design (detecting wire crossings)
-//! - Computational geometry problems requiring intersection detection
 //!
 //! Algorithm:
-//! 1. Create events for all segment endpoints (left/right)
-//! 2. Sort events by x-coordinate (sweep line position)
-//! 3. Process events left-to-right:
-//!    - Left endpoint: insert segment into status, check neighbors for intersections
-//!    - Right endpoint: remove segment from status, check remaining neighbors
-//!    - Intersection: swap segments in status, check new neighbors
-//! 4. Return all detected intersection points
+//! 1. Create a left and a right event for every segment and sort them by x (left first on ties)
+//! 2. Left event: test the segment against every active one, record hits, make it active
+//! 3. Right event: remove the segment from the active set
+//!
+//! Allocation: only `findIntersections` and `countIntersections` allocate, from the allocator
+//! they are given; the result owns its lists and frees them with `deinit(allocator)`.
 //!
 //! References:
 //! - Bentley, J. L., & Ottmann, T. A. (1979). "Algorithms for Reporting and Counting Geometric Intersections"
 //! - de Berg et al., "Computational Geometry: Algorithms and Applications" (2008)
 
 const std = @import("std");
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
-const AutoHashMap = std.AutoHashMap;
 const line_intersection = @import("line_intersection.zig");
 
 /// 2D point with floating-point coordinates
@@ -136,269 +132,117 @@ pub fn IntersectionResult(comptime T: type) type {
         // pairs[i] = [seg_id1, seg_id2] that intersect at points[i]
         pairs: ArrayList([2]usize),
 
-        pub fn deinit(self: *@This()) void {
-            self.points.deinit();
-            self.pairs.deinit();
+        pub fn deinit(self: *@This(), allocator: Allocator) void {
+            self.points.deinit(allocator);
+            self.pairs.deinit(allocator);
         }
     };
 }
 
-/// Find all intersection points among given segments using Bentley-Ottmann algorithm
+/// Find all intersection points among the given segments with a sweep line.
 ///
-/// Time: O((n+k) log n) where n=segments, k=intersections
-/// Space: O(n+k) for event queue and status structure
+/// Time: O(n log n + n * a + k) where n = segments, a = peak number of segments the sweep
+/// line crosses at once, k = intersections | Space: O(n + k)
 ///
-/// Returns a result containing all intersection points and the pairs of segments that intersect.
+/// Returns every point where two segments meet, with the pair of segment ids for each point.
+/// Segments that merely touch at an endpoint, or overlap collinearly, count as intersecting.
 /// The caller owns the returned result and must call deinit() to free memory.
 pub fn findIntersections(comptime T: type, allocator: Allocator, segments: []const Segment(T)) !IntersectionResult(T) {
-    if (segments.len == 0) {
-        return IntersectionResult(T){
-            .points = ArrayList(Point(T)).init(allocator),
-            .pairs = ArrayList([2]usize).init(allocator),
-        };
-    }
+    var result = IntersectionResult(T){ .points = .empty, .pairs = .empty };
+    errdefer result.deinit(allocator);
+    if (segments.len == 0) return result;
 
-    // Normalize segments (left endpoint first)
     var normalized = try ArrayList(Segment(T)).initCapacity(allocator, segments.len);
-    defer normalized.deinit();
+    defer normalized.deinit(allocator);
+
     for (segments) |seg| {
-        try normalized.append(seg.normalized());
+        normalized.appendAssumeCapacity(seg.normalized());
     }
+    assert(normalized.items.len == segments.len);
 
-    // Initialize event queue with all segment endpoints
-    var events = ArrayList(Event(T)).init(allocator);
-    defer events.deinit();
+    // Two events per segment, ordered left to right. At equal x every left endpoint precedes
+    // every right endpoint, so segments that touch at one x are both active when tested.
+    var events = try ArrayList(SweepEvent(T)).initCapacity(allocator, 2 * segments.len);
+    defer events.deinit(allocator);
 
-    for (normalized.items) |seg| {
-        try events.append(.{
-            .point = seg.p1,
-            .event_type = .left_endpoint,
-            .segments = .{ seg.id, null },
-        });
-        try events.append(.{
-            .point = seg.p2,
-            .event_type = .right_endpoint,
-            .segments = .{ seg.id, null },
-        });
+    for (normalized.items, 0..) |seg, index| {
+        events.appendAssumeCapacity(.{ .x = seg.p1.x, .is_left = true, .index = index });
+        events.appendAssumeCapacity(.{ .x = seg.p2.x, .is_left = false, .index = index });
     }
+    std.mem.sort(SweepEvent(T), events.items, {}, SweepEvent(T).lessThan);
 
-    // Sort events by x-coordinate (sweep line)
-    std.mem.sort(Event(T), events.items, {}, Event(T).lessThan);
+    // Active set: indices of the segments the sweep line currently crosses.
+    var active = try ArrayList(usize).initCapacity(allocator, segments.len);
+    defer active.deinit(allocator);
 
-    // Status structure: active segments at current sweep line position
-    // We'll use an ArrayList and maintain sorted order by y-coordinate
-    var status = ArrayList(usize).init(allocator); // Segment IDs
-    defer status.deinit();
-
-    // Map segment ID to its index in normalized array
-    var seg_map = AutoHashMap(usize, usize).init(allocator);
-    defer seg_map.deinit();
-    for (normalized.items, 0..) |seg, i| {
-        try seg_map.put(seg.id, i);
-    }
-
-    // Track processed intersections to avoid duplicates
-    var processed = AutoHashMap([2]usize, void).init(allocator);
-    defer processed.deinit();
-
-    // Result lists
-    var result_points = ArrayList(Point(T)).init(allocator);
-    var result_pairs = ArrayList([2]usize).init(allocator);
-
-    // Process events
     for (events.items) |event| {
-        const x = event.point.x;
-
-        switch (event.event_type) {
-            .left_endpoint => {
-                const seg_id = event.segments[0].?;
-                const seg_idx = seg_map.get(seg_id).?;
-                _ = seg_idx;
-
-                // Insert segment into status at correct y-position
-                const insert_pos = findInsertPosition(T, status.items, normalized.items, seg_id, seg_map, x);
-                try status.insert(insert_pos, seg_id);
-
-                // Check for intersections with neighbors
-                if (insert_pos > 0) {
-                    const neighbor_below_id = status.items[insert_pos - 1];
-                    try checkAndAddIntersection(T, allocator, normalized.items, &seg_map, seg_id, neighbor_below_id, &result_points, &result_pairs, &processed, &events, x);
-                }
-                if (insert_pos + 1 < status.items.len) {
-                    const neighbor_above_id = status.items[insert_pos + 1];
-                    try checkAndAddIntersection(T, allocator, normalized.items, &seg_map, seg_id, neighbor_above_id, &result_points, &result_pairs, &processed, &events, x);
-                }
-            },
-
-            .right_endpoint => {
-                const seg_id = event.segments[0].?;
-
-                // Find and remove segment from status
-                for (status.items, 0..) |id, i| {
-                    if (id == seg_id) {
-                        // Check neighbors for new potential intersections
-                        if (i > 0 and i + 1 < status.items.len) {
-                            const below_id = status.items[i - 1];
-                            const above_id = status.items[i + 1];
-                            try checkAndAddIntersection(T, allocator, normalized.items, &seg_map, below_id, above_id, &result_points, &result_pairs, &processed, &events, x);
-                        }
-                        _ = status.orderedRemove(i);
-                        break;
-                    }
-                }
-            },
-
-            .intersection => {
-                // Intersection event: swap segments in status
-                const seg1_id = event.segments[0].?;
-                const seg2_id = event.segments[1].?;
-
-                // Find positions and swap
-                var pos1: ?usize = null;
-                var pos2: ?usize = null;
-                for (status.items, 0..) |id, i| {
-                    if (id == seg1_id) pos1 = i;
-                    if (id == seg2_id) pos2 = i;
-                }
-
-                if (pos1 != null and pos2 != null) {
-                    const p1 = pos1.?;
-                    const p2 = pos2.?;
-                    const tmp = status.items[p1];
-                    status.items[p1] = status.items[p2];
-                    status.items[p2] = tmp;
-
-                    // Check new neighbors
-                    const min_pos = @min(p1, p2);
-                    const max_pos = @max(p1, p2);
-
-                    if (min_pos > 0) {
-                        const neighbor_id = status.items[min_pos - 1];
-                        try checkAndAddIntersection(T, allocator, normalized.items, &seg_map, status.items[min_pos], neighbor_id, &result_points, &result_pairs, &processed, &events, x);
-                    }
-                    if (max_pos + 1 < status.items.len) {
-                        const neighbor_id = status.items[max_pos + 1];
-                        try checkAndAddIntersection(T, allocator, normalized.items, &seg_map, status.items[max_pos], neighbor_id, &result_points, &result_pairs, &processed, &events, x);
-                    }
-                }
-            },
-        }
-    }
-
-    return IntersectionResult(T){
-        .points = result_points,
-        .pairs = result_pairs,
-    };
-}
-
-/// Find insert position for a segment in status array (sorted by y at x)
-/// Time: O(log n) | Space: O(1)
-///
-/// Uses binary search to find the correct insertion position based on y-coordinate
-/// at the current sweep line position x. The status array maintains segments
-/// sorted by their y-coordinate at x.
-///
-/// Arguments:
-/// - status: Current status structure (segment IDs sorted by y at x)
-/// - segments: Array of all normalized segments
-/// - new_seg_id: ID of the segment to insert
-/// - seg_map: Map from segment ID to index in segments array
-/// - x: Current sweep line x-coordinate
-fn findInsertPosition(
-    comptime T: type,
-    status: []const usize,
-    segments: []const Segment(T),
-    new_seg_id: usize,
-    seg_map: *const AutoHashMap(usize, usize),
-    x: T,
-) usize {
-    if (status.len == 0) return 0;
-
-    // Get the segment we're inserting
-    const new_seg_idx = seg_map.get(new_seg_id).?;
-    const new_seg = segments[new_seg_idx];
-    const new_y = new_seg.yAtX(x);
-
-    // Binary search: find leftmost position where segments[status[i]].yAtX(x) >= new_y
-    var left: usize = 0;
-    var right: usize = status.len;
-
-    while (left < right) {
-        const mid = left + (right - left) / 2;
-        const mid_seg_idx = seg_map.get(status[mid]).?;
-        const mid_seg = segments[mid_seg_idx];
-        const mid_y = mid_seg.yAtX(x);
-
-        if (mid_y < new_y) {
-            left = mid + 1;
+        if (event.is_left) {
+            try sweep_insert(T, allocator, &result, normalized.items, active.items, event.index);
+            active.appendAssumeCapacity(event.index);
         } else {
-            right = mid;
+            const position = std.mem.indexOfScalar(usize, active.items, event.index).?;
+            _ = active.swapRemove(position);
         }
     }
+    assert(active.items.len == 0);
 
-    return left;
+    return result;
 }
 
-/// Check if two segments intersect and add to result if they do
-fn checkAndAddIntersection(
+/// A sweep-line stop: one segment endpoint at x.
+fn SweepEvent(comptime T: type) type {
+    return struct {
+        x: T,
+        is_left: bool,
+        index: usize,
+
+        fn lessThan(_: void, a: @This(), b: @This()) bool {
+            if (a.x != b.x) return a.x < b.x;
+            if (a.is_left != b.is_left) return a.is_left;
+            return a.index < b.index;
+        }
+    };
+}
+
+/// Test the segment entering the sweep against every active segment and record the hits.
+fn sweep_insert(
     comptime T: type,
-    _: Allocator,
+    allocator: Allocator,
+    result: *IntersectionResult(T),
     segments: []const Segment(T),
-    seg_map: *AutoHashMap(usize, usize),
-    seg1_id: usize,
-    seg2_id: usize,
-    points: *ArrayList(Point(T)),
-    pairs: *ArrayList([2]usize),
-    processed: *AutoHashMap([2]usize, void),
-    events: *ArrayList(Event(T)),
-    current_x: T,
+    active: []const usize,
+    new_index: usize,
 ) !void {
-    // Avoid duplicate checks
-    const pair = if (seg1_id < seg2_id) [2]usize{ seg1_id, seg2_id } else [2]usize{ seg2_id, seg1_id };
-    if (processed.contains(pair)) return;
-
-    const seg1_idx = seg_map.get(seg1_id).?;
-    const seg2_idx = seg_map.get(seg2_id).?;
-    const seg1 = segments[seg1_idx];
-    const seg2 = segments[seg2_idx];
-
-    // Convert to line_intersection format
-    const ls1 = line_intersection.Segment(T){
-        .p1 = .{ .x = seg1.p1.x, .y = seg1.p1.y },
-        .p2 = .{ .x = seg1.p2.x, .y = seg1.p2.y },
-    };
-    const ls2 = line_intersection.Segment(T){
-        .p1 = .{ .x = seg2.p1.x, .y = seg2.p1.y },
-        .p2 = .{ .x = seg2.p2.x, .y = seg2.p2.y },
+    assert(new_index < segments.len);
+    const new_seg = segments[new_index];
+    const new_ls = line_intersection.Segment(T){
+        .p1 = .{ .x = new_seg.p1.x, .y = new_seg.p1.y },
+        .p2 = .{ .x = new_seg.p2.x, .y = new_seg.p2.y },
     };
 
-    if (line_intersection.doSegmentsIntersect(T, ls1, ls2)) {
-        const intersection = line_intersection.segmentIntersection(T, ls1, ls2);
-        if (intersection) |int_point| {
-            // Only add if intersection is to the right of current sweep line
-            if (int_point.x >= current_x) {
-                try points.append(.{ .x = int_point.x, .y = int_point.y });
-                try pairs.append(pair);
-                try processed.put(pair, {});
-
-                // Add intersection event if not already processed
-                try events.append(.{
-                    .point = .{ .x = int_point.x, .y = int_point.y },
-                    .event_type = .intersection,
-                    .segments = .{ seg1_id, seg2_id },
-                });
-            }
+    for (active) |other_index| {
+        assert(other_index != new_index);
+        const other = segments[other_index];
+        const other_ls = line_intersection.Segment(T){
+            .p1 = .{ .x = other.p1.x, .y = other.p1.y },
+            .p2 = .{ .x = other.p2.x, .y = other.p2.y },
+        };
+        const hit = line_intersection.segmentIntersection(T, new_ls, other_ls);
+        if (hit.point) |point| {
+            const lo = @min(new_seg.id, other.id);
+            const hi = @max(new_seg.id, other.id);
+            try result.points.append(allocator, .{ .x = point.x, .y = point.y });
+            try result.pairs.append(allocator, .{ lo, hi });
         }
     }
 }
 
-/// Count total number of intersection points (without computing them)
+/// Count total number of intersection points.
 ///
-/// Time: O((n+k) log n) - same as findIntersections but potentially faster due to less bookkeeping
-/// Space: O(n) for event queue and status
+/// Time: O(n log n + n * a + k), same as findIntersections | Space: O(n + k)
 pub fn countIntersections(comptime T: type, allocator: Allocator, segments: []const Segment(T)) !usize {
     var result = try findIntersections(T, allocator, segments);
-    defer result.deinit();
+    defer result.deinit(allocator);
     return result.points.items.len;
 }
 
@@ -409,7 +253,7 @@ pub fn countIntersections(comptime T: type, allocator: Allocator, segments: []co
 test "Bentley-Ottmann: no segments" {
     const allocator = std.testing.allocator;
     var result = try findIntersections(f64, allocator, &[_]Segment(f64){});
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     try std.testing.expectEqual(0, result.points.items.len);
     try std.testing.expectEqual(0, result.pairs.items.len);
@@ -421,7 +265,7 @@ test "Bentley-Ottmann: single segment" {
         .{ .p1 = .{ .x = 0, .y = 0 }, .p2 = .{ .x = 1, .y = 1 }, .id = 0 },
     };
     var result = try findIntersections(f64, allocator, &segments);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     try std.testing.expectEqual(0, result.points.items.len);
 }
@@ -433,7 +277,7 @@ test "Bentley-Ottmann: two parallel segments" {
         .{ .p1 = .{ .x = 0, .y = 1 }, .p2 = .{ .x = 2, .y = 1 }, .id = 1 },
     };
     var result = try findIntersections(f64, allocator, &segments);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     try std.testing.expectEqual(0, result.points.items.len);
 }
@@ -445,7 +289,7 @@ test "Bentley-Ottmann: two intersecting segments (X shape)" {
         .{ .p1 = .{ .x = 0, .y = 2 }, .p2 = .{ .x = 2, .y = 0 }, .id = 1 },
     };
     var result = try findIntersections(f64, allocator, &segments);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     try std.testing.expectEqual(1, result.points.items.len);
     try std.testing.expect(result.points.items[0].equals(.{ .x = 1, .y = 1 }));
@@ -461,7 +305,7 @@ test "Bentley-Ottmann: multiple intersections" {
         .{ .p1 = .{ .x = 3, .y = 0 }, .p2 = .{ .x = 3, .y = 2 }, .id = 3 }, // Vertical at x=3
     };
     var result = try findIntersections(f64, allocator, &segments);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     // Horizontal line intersects 3 vertical lines
     try std.testing.expectEqual(3, result.points.items.len);
@@ -469,14 +313,14 @@ test "Bentley-Ottmann: multiple intersections" {
 
 test "Bentley-Ottmann: no intersections among many segments" {
     const allocator = std.testing.allocator;
-    var segments = ArrayList(Segment(f64)).init(allocator);
-    defer segments.deinit();
+    var segments = ArrayList(Segment(f64)).empty;
+    defer segments.deinit(allocator);
 
     // Create 10 non-intersecting horizontal segments at different y-coordinates
     var i: usize = 0;
     while (i < 10) : (i += 1) {
         const y = @as(f64, @floatFromInt(i));
-        try segments.append(.{
+        try segments.append(allocator, .{
             .p1 = .{ .x = 0, .y = y },
             .p2 = .{ .x = 10, .y = y },
             .id = i,
@@ -484,7 +328,7 @@ test "Bentley-Ottmann: no intersections among many segments" {
     }
 
     var result = try findIntersections(f64, allocator, segments.items);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     try std.testing.expectEqual(0, result.points.items.len);
 }
@@ -498,7 +342,7 @@ test "Bentley-Ottmann: star pattern (many intersections)" {
         .{ .p1 = .{ .x = 0, .y = 2 }, .p2 = .{ .x = 2, .y = 0 }, .id = 3 }, // Diagonal \
     };
     var result = try findIntersections(f64, allocator, &segments);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     // All 4 segments intersect at center (1,1), giving C(4,2) = 6 pairs
     try std.testing.expect(result.points.items.len >= 4); // At least 4 distinct intersections
@@ -511,7 +355,7 @@ test "Bentley-Ottmann: touching endpoints" {
         .{ .p1 = .{ .x = 1, .y = 1 }, .p2 = .{ .x = 2, .y = 0 }, .id = 1 },
     };
     var result = try findIntersections(f64, allocator, &segments);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     // Endpoint touching counts as intersection
     try std.testing.expectEqual(1, result.points.items.len);
@@ -525,7 +369,7 @@ test "Bentley-Ottmann: T-junction" {
         .{ .p1 = .{ .x = 1, .y = 0 }, .p2 = .{ .x = 1, .y = 1 }, .id = 1 }, // Vertical to midpoint
     };
     var result = try findIntersections(f64, allocator, &segments);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     try std.testing.expectEqual(1, result.points.items.len);
     try std.testing.expect(result.points.items[0].equals(.{ .x = 1, .y = 1 }));
@@ -538,7 +382,7 @@ test "Bentley-Ottmann: collinear overlapping segments" {
         .{ .p1 = .{ .x = 1, .y = 0 }, .p2 = .{ .x = 3, .y = 0 }, .id = 1 },
     };
     var result = try findIntersections(f64, allocator, &segments);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     // Collinear overlapping - line_intersection should handle this
     // Expected: may report endpoints or entire overlap region
@@ -565,7 +409,7 @@ test "Bentley-Ottmann: f32 type" {
         .{ .p1 = .{ .x = 0, .y = 1 }, .p2 = .{ .x = 1, .y = 0 }, .id = 1 },
     };
     var result = try findIntersections(f32, allocator, &segments);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     try std.testing.expectEqual(1, result.points.items.len);
     try std.testing.expect(result.points.items[0].equals(.{ .x = 0.5, .y = 0.5 }));
@@ -573,14 +417,14 @@ test "Bentley-Ottmann: f32 type" {
 
 test "Bentley-Ottmann: large scale" {
     const allocator = std.testing.allocator;
-    var segments = ArrayList(Segment(f64)).init(allocator);
-    defer segments.deinit();
+    var segments = ArrayList(Segment(f64)).empty;
+    defer segments.deinit(allocator);
 
     // Create 20 segments: 10 horizontal + 10 vertical (100 intersections)
     var i: usize = 0;
     while (i < 10) : (i += 1) {
         const y = @as(f64, @floatFromInt(i));
-        try segments.append(.{
+        try segments.append(allocator, .{
             .p1 = .{ .x = 0, .y = y },
             .p2 = .{ .x = 10, .y = y },
             .id = i,
@@ -588,7 +432,7 @@ test "Bentley-Ottmann: large scale" {
     }
     while (i < 20) : (i += 1) {
         const x = @as(f64, @floatFromInt(i - 10));
-        try segments.append(.{
+        try segments.append(allocator, .{
             .p1 = .{ .x = x, .y = 0 },
             .p2 = .{ .x = x, .y = 10 },
             .id = i,
@@ -596,7 +440,7 @@ test "Bentley-Ottmann: large scale" {
     }
 
     var result = try findIntersections(f64, allocator, segments.items);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     // Should find 10*10 = 100 intersections
     try std.testing.expectEqual(100, result.points.items.len);
@@ -610,6 +454,6 @@ test "Bentley-Ottmann: memory safety" {
     };
 
     var result = try findIntersections(f64, allocator, &segments);
-    result.deinit();
+    result.deinit(allocator);
     // Should not leak memory (testing.allocator will catch leaks)
 }

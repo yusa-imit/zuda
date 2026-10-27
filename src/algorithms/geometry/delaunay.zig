@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const assert = std.debug.assert;
 
 /// Point in 2D space
 pub fn Point(comptime T: type) type {
@@ -82,15 +83,15 @@ pub fn DelaunayTriangulation(comptime T: type) type {
         pub fn init(allocator: std.mem.Allocator) Self {
             return .{
                 .allocator = allocator,
-                .points = std.ArrayList(Point(T)).init(allocator),
-                .triangles = std.ArrayList(Triangle).init(allocator),
+                .points = std.ArrayList(Point(T)).empty,
+                .triangles = std.ArrayList(Triangle).empty,
             };
         }
 
         /// Free resources
         pub fn deinit(self: *Self) void {
-            self.points.deinit();
-            self.triangles.deinit();
+            self.points.deinit(self.allocator);
+            self.triangles.deinit(self.allocator);
         }
 
         /// Compute Delaunay triangulation using Bowyer-Watson algorithm
@@ -105,22 +106,22 @@ pub fn DelaunayTriangulation(comptime T: type) type {
             self.triangles.clearRetainingCapacity();
 
             // Add all points
-            try self.points.appendSlice(points);
+            try self.points.appendSlice(self.allocator, points);
 
             // Create super-triangle that contains all points
-            const bounds = computeBounds(points);
+            const bounds = computeBounds(T, points);
             const super_a = Point(T){ .x = bounds.min_x - bounds.width * 2, .y = bounds.min_y - bounds.height };
             const super_b = Point(T){ .x = bounds.max_x + bounds.width * 2, .y = bounds.min_y - bounds.height };
             const super_c = Point(T){ .x = (bounds.min_x + bounds.max_x) / 2, .y = bounds.max_y + bounds.height * 3 };
 
             const super_a_idx = self.points.items.len;
-            try self.points.append(super_a);
+            try self.points.append(self.allocator, super_a);
             const super_b_idx = self.points.items.len;
-            try self.points.append(super_b);
+            try self.points.append(self.allocator, super_b);
             const super_c_idx = self.points.items.len;
-            try self.points.append(super_c);
+            try self.points.append(self.allocator, super_c);
 
-            try self.triangles.append(Triangle{ .a = super_a_idx, .b = super_b_idx, .c = super_c_idx });
+            try self.triangles.append(self.allocator, Triangle{ .a = super_a_idx, .b = super_b_idx, .c = super_c_idx });
 
             // Add each point one at a time
             for (0..points.len) |i| {
@@ -150,19 +151,19 @@ pub fn DelaunayTriangulation(comptime T: type) type {
         /// Add a point to the triangulation
         fn addPoint(self: *Self, point_idx: usize) !void {
             const point = self.points.items[point_idx];
-            var bad_triangles = std.ArrayList(Triangle).init(self.allocator);
-            defer bad_triangles.deinit();
+            var bad_triangles = std.ArrayList(Triangle).empty;
+            defer bad_triangles.deinit(self.allocator);
 
             // Find triangles whose circumcircle contains the point
             for (self.triangles.items) |tri| {
                 if (try self.inCircumcircle(point, tri)) {
-                    try bad_triangles.append(tri);
+                    try bad_triangles.append(self.allocator, tri);
                 }
             }
 
             // Find the boundary edges of the polygonal hole
-            var polygon = std.ArrayList(Edge).init(self.allocator);
-            defer polygon.deinit();
+            var polygon = std.ArrayList(Edge).empty;
+            defer polygon.deinit(self.allocator);
 
             for (bad_triangles.items) |bad_tri| {
                 const edges = [_]Edge{
@@ -181,7 +182,7 @@ pub fn DelaunayTriangulation(comptime T: type) type {
                         }
                     }
                     if (!is_shared) {
-                        try polygon.append(edge);
+                        try polygon.append(self.allocator, edge);
                     }
                 }
             }
@@ -205,7 +206,7 @@ pub fn DelaunayTriangulation(comptime T: type) type {
 
             // Create new triangles from polygon edges to the new point
             for (polygon.items) |edge| {
-                try self.triangles.append(Triangle{
+                try self.triangles.append(self.allocator, Triangle{
                     .a = edge.a,
                     .b = edge.b,
                     .c = point_idx,
@@ -256,16 +257,19 @@ pub fn DelaunayTriangulation(comptime T: type) type {
     };
 }
 
-const Bounds = struct {
-    min_x: f64,
-    max_x: f64,
-    min_y: f64,
-    max_y: f64,
-    width: f64,
-    height: f64,
-};
+fn BoundsType(comptime T: type) type {
+    return struct {
+        min_x: T,
+        max_x: T,
+        min_y: T,
+        max_y: T,
+        width: T,
+        height: T,
+    };
+}
 
-fn computeBounds(points: []const Point(f64)) Bounds {
+fn computeBounds(comptime T: type, points: []const Point(T)) BoundsType(T) {
+    assert(points.len > 0);
     var min_x = points[0].x;
     var max_x = points[0].x;
     var min_y = points[0].y;
@@ -416,15 +420,15 @@ test "Delaunay: large scale (50 points)" {
     var dt = DelaunayTriangulation(f64).init(testing.allocator);
     defer dt.deinit();
 
-    var points = std.ArrayList(Point(f64)).init(testing.allocator);
-    defer points.deinit();
+    var points = std.ArrayList(Point(f64)).empty;
+    defer points.deinit(testing.allocator);
 
     // Generate grid points
     var i: usize = 0;
     while (i < 50) : (i += 1) {
         const x = @as(f64, @floatFromInt(i % 10));
         const y = @as(f64, @floatFromInt(i / 10));
-        try points.append(.{ .x = x, .y = y });
+        try points.append(testing.allocator, .{ .x = x, .y = y });
     }
 
     try dt.triangulate(points.items);
