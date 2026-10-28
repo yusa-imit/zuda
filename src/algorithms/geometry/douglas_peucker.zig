@@ -103,14 +103,14 @@ pub fn perpendicularDistance(point: Point, line_start: Point, line_end: Point) f
 ///     Point.init(9, 9),
 /// };
 /// var result = try simplify(allocator, &points, 1.0);
-/// defer result.deinit();
+/// defer result.deinit(allocator);
 /// // Result typically: [(0,0), (3,5), (7,9), (9,9)]
 /// ```
 pub fn simplify(allocator: Allocator, points: []const Point, epsilon: f64) !std.ArrayList(Point) {
     if (points.len <= 2) {
         // Base case: 2 or fewer points cannot be simplified
-        var result = std.ArrayList(Point).init(allocator);
-        try result.appendSlice(points);
+        var result = std.ArrayList(Point).empty;
+        try result.appendSlice(allocator, points);
         return result;
     }
 
@@ -127,10 +127,10 @@ pub fn simplify(allocator: Allocator, points: []const Point, epsilon: f64) !std.
     try simplifyRecursive(points, epsilon, 0, points.len - 1, keep);
 
     // Build result array with kept points
-    var result = std.ArrayList(Point).init(allocator);
+    var result = std.ArrayList(Point).empty;
     for (points, 0..) |point, i| {
         if (keep[i]) {
-            try result.append(point);
+            try result.append(allocator, point);
         }
     }
 
@@ -253,7 +253,7 @@ test "simplify - straight line remains unchanged" {
     };
 
     var result = try simplify(allocator, &points, 0.1);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     // All points are collinear within tolerance, so only endpoints kept
     try testing.expectEqual(@as(usize, 2), result.items.len);
@@ -272,7 +272,7 @@ test "simplify - single outlier kept" {
     };
 
     var result = try simplify(allocator, &points, 1.0);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     // Should keep outlier point
     try testing.expect(result.items.len >= 3);
@@ -298,11 +298,11 @@ test "simplify - epsilon effect" {
 
     // Small epsilon: keep more points
     var result_small = try simplify(allocator, &points, 0.05);
-    defer result_small.deinit();
+    defer result_small.deinit(allocator);
 
     // Large epsilon: remove more points
     var result_large = try simplify(allocator, &points, 0.5);
-    defer result_large.deinit();
+    defer result_large.deinit(allocator);
 
     try testing.expect(result_small.items.len >= result_large.items.len);
 }
@@ -319,12 +319,19 @@ test "simplify - zigzag pattern" {
         Point.init(6, 0),
     };
 
-    var result = try simplify(allocator, &points, 0.5);
-    defer result.deinit();
+    // Every peak sits 1.0 from the chord (0,0)-(6,0), so a tolerance of 1.5 keeps only the
+    // endpoints while 0.5 must keep the whole zigzag.
+    var coarse = try simplify(allocator, &points, 1.5);
+    defer coarse.deinit(allocator);
 
-    // Should significantly reduce points while maintaining overall zigzag shape
-    try testing.expect(result.items.len < points.len);
-    try testing.expect(result.items.len >= 2); // At least endpoints
+    try testing.expectEqual(@as(usize, 2), coarse.items.len);
+    try testing.expectEqual(points[0], coarse.items[0]);
+    try testing.expectEqual(points[6], coarse.items[1]);
+
+    var fine = try simplify(allocator, &points, 0.5);
+    defer fine.deinit(allocator);
+
+    try testing.expectEqual(points.len, fine.items.len);
 }
 
 test "simplify - minimal input (2 points)" {
@@ -335,7 +342,7 @@ test "simplify - minimal input (2 points)" {
     };
 
     var result = try simplify(allocator, &points, 1.0);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     try testing.expectEqual(@as(usize, 2), result.items.len);
 }
@@ -345,7 +352,7 @@ test "simplify - single point" {
     var points = [_]Point{Point.init(0, 0)};
 
     var result = try simplify(allocator, &points, 1.0);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     try testing.expectEqual(@as(usize, 1), result.items.len);
 }
@@ -355,7 +362,7 @@ test "simplify - empty input" {
     var points = [_]Point{};
 
     var result = try simplify(allocator, &points, 1.0);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     try testing.expectEqual(@as(usize, 0), result.items.len);
 }
@@ -376,7 +383,7 @@ test "simplify - GPS track example" {
     };
 
     var result = try simplify(allocator, &points, 0.1);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     // Should remove noisy points but keep significant features
     try testing.expect(result.items.len < points.len);
@@ -443,7 +450,7 @@ test "simplify - large scale test" {
     }
 
     var result = try simplify(allocator, points, 0.1);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     // Should achieve significant compression
     try testing.expect(result.items.len < points.len);
@@ -463,7 +470,7 @@ test "simplify - memory safety" {
     };
 
     var result = try simplify(allocator, &points, 0.5);
-    defer result.deinit();
+    defer result.deinit(allocator);
 
     // Should not leak memory
     try testing.expect(result.items.len > 0);

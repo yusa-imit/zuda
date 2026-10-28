@@ -26,7 +26,7 @@ pub fn Point(comptime T: type) type {
 
         pub fn equals(self: @This(), other: @This()) bool {
             const epsilon = switch (@typeInfo(T)) {
-                .Float => @as(T, 1e-9),
+                .float => @as(T, 1e-9),
                 else => 0,
             };
             const dx = if (self.x > other.x) self.x - other.x else other.x - self.x;
@@ -60,20 +60,20 @@ pub const Triangle = struct {
 pub fn triangulate(comptime T: type, allocator: Allocator, polygon: []const Point(T)) !std.ArrayList(Triangle) {
     if (polygon.len < 3) return error.DegeneratePolygon;
 
-    var triangles = std.ArrayList(Triangle).init(allocator);
-    errdefer triangles.deinit();
+    var triangles = std.ArrayList(Triangle).empty;
+    errdefer triangles.deinit(allocator);
 
     // Handle trivial case
     if (polygon.len == 3) {
-        try triangles.append(.{ .i0 = 0, .i1 = 1, .i2 = 2 });
+        try triangles.append(allocator, .{ .i0 = 0, .i1 = 1, .i2 = 2 });
         return triangles;
     }
 
     // Create a list of remaining vertex indices
     var remaining = try std.ArrayList(usize).initCapacity(allocator, polygon.len);
-    defer remaining.deinit();
+    defer remaining.deinit(allocator);
     for (0..polygon.len) |i| {
-        try remaining.append(i);
+        try remaining.append(allocator, i);
     }
 
     // Ear clipping: remove ears until we have a triangle
@@ -95,7 +95,7 @@ pub fn triangulate(comptime T: type, allocator: Allocator, polygon: []const Poin
             // Check if this is an ear
             if (isEar(T, polygon, remaining.items, v_prev, v_curr, v_next)) {
                 // Add triangle
-                try triangles.append(.{
+                try triangles.append(allocator, .{
                     .i0 = v_prev,
                     .i1 = v_curr,
                     .i2 = v_next,
@@ -116,7 +116,7 @@ pub fn triangulate(comptime T: type, allocator: Allocator, polygon: []const Poin
 
     // Add the final triangle
     if (remaining.items.len == 3) {
-        try triangles.append(.{
+        try triangles.append(allocator, .{
             .i0 = remaining.items[0],
             .i1 = remaining.items[1],
             .i2 = remaining.items[2],
@@ -156,7 +156,7 @@ fn isEar(comptime T: type, polygon: []const Point(T), remaining: []const usize, 
 fn isConvex(comptime T: type, p_prev: Point(T), p_curr: Point(T), p_next: Point(T)) bool {
     const cross = crossProduct(T, p_prev, p_curr, p_next);
     return switch (@typeInfo(T)) {
-        .Float => cross > 1e-9,
+        .float => cross > 1e-9,
         else => cross > 0,
     };
 }
@@ -187,7 +187,7 @@ fn pointInTriangle(comptime T: type, p: Point(T), a: Point(T), b: Point(T), c: P
     const dot12 = v1x * v2x + v1y * v2y;
 
     const inv_denom = switch (@typeInfo(T)) {
-        .Float => blk: {
+        .float => blk: {
             const denom = dot00 * dot11 - dot01 * dot01;
             if (@abs(denom) < 1e-9) return false;
             break :blk 1.0 / denom;
@@ -200,21 +200,22 @@ fn pointInTriangle(comptime T: type, p: Point(T), a: Point(T), b: Point(T), c: P
     };
 
     const u = switch (@typeInfo(T)) {
-        .Float => (dot11 * dot02 - dot01 * dot12) * inv_denom,
+        .float => (dot11 * dot02 - dot01 * dot12) * inv_denom,
         else => @divTrunc(dot11 * dot02 - dot01 * dot12, inv_denom),
     };
     const v = switch (@typeInfo(T)) {
-        .Float => (dot00 * dot12 - dot01 * dot02) * inv_denom,
+        .float => (dot00 * dot12 - dot01 * dot02) * inv_denom,
         else => @divTrunc(dot00 * dot12 - dot01 * dot02, inv_denom),
     };
 
     const epsilon = switch (@typeInfo(T)) {
-        .Float => @as(T, 1e-9),
+        .float => @as(T, 1e-9),
         else => 0,
     };
 
-    // Check if point is inside triangle
-    return (u > epsilon) and (v > epsilon) and (u + v < 1.0 - epsilon);
+    // The triangle is closed: a vertex on the diagonal (a, c) would make the clipped polygon touch
+    // itself, so it must block the ear.
+    return (u >= -epsilon) and (v >= -epsilon) and (u + v <= 1.0 + epsilon);
 }
 
 /// Calculate total area of triangulated polygon
@@ -231,7 +232,7 @@ pub fn triangulationArea(comptime T: type, polygon: []const Point(T), triangles:
 
         // Triangle area using cross product
         const area = switch (@typeInfo(T)) {
-            .Float => @abs((p1.x - p0.x) * (p2.y - p0.y) - (p2.x - p0.x) * (p1.y - p0.y)) / 2.0,
+            .float => @abs((p1.x - p0.x) * (p2.y - p0.y) - (p2.x - p0.x) * (p1.y - p0.y)) / 2.0,
             else => blk: {
                 const cross = (p1.x - p0.x) * (p2.y - p0.y) - (p2.x - p0.x) * (p1.y - p0.y);
                 const abs_cross = if (cross < 0) -cross else cross;
@@ -259,7 +260,7 @@ test "triangulate simple square" {
     };
 
     var triangles = try triangulate(f64, allocator, &square);
-    defer triangles.deinit();
+    defer triangles.deinit(allocator);
 
     // Should produce 2 triangles (n-2 for n vertices)
     try testing.expectEqual(@as(usize, 2), triangles.items.len);
@@ -279,7 +280,7 @@ test "triangulate triangle - trivial case" {
     };
 
     var triangles = try triangulate(f64, allocator, &triangle);
-    defer triangles.deinit();
+    defer triangles.deinit(allocator);
 
     // Should produce 1 triangle
     try testing.expectEqual(@as(usize, 1), triangles.items.len);
@@ -298,7 +299,7 @@ test "triangulate pentagon" {
     };
 
     var triangles = try triangulate(f64, allocator, &pentagon);
-    defer triangles.deinit();
+    defer triangles.deinit(allocator);
 
     // Should produce 3 triangles (5-2)
     try testing.expectEqual(@as(usize, 3), triangles.items.len);
@@ -317,7 +318,7 @@ test "triangulate L-shaped polygon" {
     };
 
     var triangles = try triangulate(f64, allocator, &l_shape);
-    defer triangles.deinit();
+    defer triangles.deinit(allocator);
 
     // Should produce 4 triangles (6-2)
     try testing.expectEqual(@as(usize, 4), triangles.items.len);
@@ -340,7 +341,7 @@ test "triangulate concave hexagon" {
     };
 
     var triangles = try triangulate(f64, allocator, &hexagon);
-    defer triangles.deinit();
+    defer triangles.deinit(allocator);
 
     // Should produce 4 triangles (6-2)
     try testing.expectEqual(@as(usize, 4), triangles.items.len);
@@ -369,7 +370,7 @@ test "integer coordinates" {
     };
 
     var triangles = try triangulate(i32, allocator, &square);
-    defer triangles.deinit();
+    defer triangles.deinit(allocator);
 
     try testing.expectEqual(@as(usize, 2), triangles.items.len);
 
@@ -387,7 +388,7 @@ test "f32 support" {
     };
 
     var triangles = try triangulate(f32, allocator, &triangle);
-    defer triangles.deinit();
+    defer triangles.deinit(allocator);
 
     try testing.expectEqual(@as(usize, 1), triangles.items.len);
 
@@ -405,19 +406,19 @@ test "triangle count formula" {
     for (sizes) |n| {
         // Create a simple convex polygon (regular n-gon approximation)
         var polygon = try std.ArrayList(Point(f64)).initCapacity(allocator, n);
-        defer polygon.deinit();
+        defer polygon.deinit(allocator);
 
         const radius = 10.0;
         for (0..n) |i| {
             const angle = @as(f64, @floatFromInt(i)) * 2.0 * std.math.pi / @as(f64, @floatFromInt(n));
-            try polygon.append(.{
+            try polygon.append(allocator, .{
                 .x = radius * @cos(angle),
                 .y = radius * @sin(angle),
             });
         }
 
         var triangles = try triangulate(f64, allocator, polygon.items);
-        defer triangles.deinit();
+        defer triangles.deinit(allocator);
 
         // Should always be n-2 triangles
         try testing.expectEqual(n - 2, triangles.items.len);
@@ -430,19 +431,19 @@ test "large polygon - stress test" {
     // Create a larger polygon (20 vertices)
     const n = 20;
     var polygon = try std.ArrayList(Point(f64)).initCapacity(allocator, n);
-    defer polygon.deinit();
+    defer polygon.deinit(allocator);
 
     const radius = 100.0;
     for (0..n) |i| {
         const angle = @as(f64, @floatFromInt(i)) * 2.0 * std.math.pi / @as(f64, @floatFromInt(n));
-        try polygon.append(.{
+        try polygon.append(allocator, .{
             .x = radius * @cos(angle),
             .y = radius * @sin(angle),
         });
     }
 
     var triangles = try triangulate(f64, allocator, polygon.items);
-    defer triangles.deinit();
+    defer triangles.deinit(allocator);
 
     try testing.expectEqual(n - 2, triangles.items.len);
 }
@@ -459,7 +460,7 @@ test "verify triangle indices validity" {
     };
 
     var triangles = try triangulate(f64, allocator, &pentagon);
-    defer triangles.deinit();
+    defer triangles.deinit(allocator);
 
     // All indices should be valid (< pentagon.len)
     for (triangles.items) |tri| {
@@ -485,7 +486,7 @@ test "memory safety - proper cleanup" {
     };
 
     var triangles = try triangulate(f64, allocator, &square);
-    defer triangles.deinit();
+    defer triangles.deinit(allocator);
 
     // Just verify we can create and destroy without leaks
     try testing.expect(triangles.items.len > 0);
