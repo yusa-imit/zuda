@@ -53,14 +53,14 @@ pub fn BlockSort(comptime T: type, comptime Context: type, comptime lessThanFn: 
             }
 
             // Find and extend runs
-            var runs: std.ArrayList(Run) = .{};
+            var runs: std.ArrayList(Run) = .empty;
             defer runs.deinit(self.allocator);
 
             self.findRuns(items, &runs) catch return;
 
             // Merge runs using in-place block merge
             while (runs.items.len > 1) {
-                var new_runs: std.ArrayList(Run) = .{};
+                var new_runs: std.ArrayList(Run) = .empty;
                 defer new_runs.deinit(self.allocator);
 
                 var i: usize = 0;

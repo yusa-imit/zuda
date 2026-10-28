@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored in a container, and lands on ~18 public functions instead of ~40.
 
 ### Changed
+- All 23 `algorithms/sorting/*` files now run their tests under `zig build test` (22 were reached
+  only through `pub const` re-exports, so their tests never ran); `bitonicsort`, `blocksort`,
+  `mergesort`, `pancakesort`, `pigeonholesort` and `strandsort` did not compile on Zig 0.16.
+  Breaking: `pancakeSortSequence` and `strandsort.getAllStrands` return unmanaged lists (free with
+  `deinit(gpa)`). Bug: `strandSort` was documented stable but its merge put equal keys from later
+  strands first; ties now keep their input order. `bitonicSortAny` ignored an error from its
+  power-of-two path and the padded sort.
 - 46 more files compile on Zig 0.16 and run under `zig build test`: `algorithms/graph/*` (20),
   `algorithms/bitwise/*` (4), `algorithms/combinatorics/*` (8) and 15 of
   `algorithms/dynamic_programming/*`. Breaking: `eulerian.findEulerianPath`'s result and the

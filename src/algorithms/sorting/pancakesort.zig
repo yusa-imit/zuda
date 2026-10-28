@@ -34,7 +34,6 @@ const Allocator = std.mem.Allocator;
 /// References:
 ///   - Gates & Papadimitriou (1979) "Bounds for sorting by prefix reversal"
 ///   - Discrete Mathematics 27(1): 47-57
-
 /// Generic pancake sort with custom comparison function.
 ///
 /// Time: O(n²) where n = arr.len
@@ -131,8 +130,8 @@ pub fn pancakeSortCountFlips(comptime T: type, arr: []T) usize {
 /// Time: O(n²)
 /// Space: O(n) for flip sequence
 pub fn pancakeSortSequence(comptime T: type, allocator: Allocator, arr: []T) !std.ArrayList(usize) {
-    var sequence = std.ArrayList(usize).init(allocator);
-    errdefer sequence.deinit();
+    var sequence: std.ArrayList(usize) = .empty;
+    errdefer sequence.deinit(allocator);
 
     if (arr.len <= 1) return sequence;
 
@@ -143,11 +142,11 @@ pub fn pancakeSortSequence(comptime T: type, allocator: Allocator, arr: []T) !st
 
         if (max_idx != 0) {
             flip(T, arr, max_idx);
-            try sequence.append(max_idx);
+            try sequence.append(allocator, max_idx);
         }
 
         flip(T, arr, curr_size - 1);
-        try sequence.append(curr_size - 1);
+        try sequence.append(allocator, curr_size - 1);
     }
     return sequence;
 }
@@ -334,7 +333,7 @@ test "pancakeSort: flip counting" {
 test "pancakeSort: flip sequence" {
     var data = [_]i32{ 3, 1, 4 };
     var sequence = try pancakeSortSequence(i32, testing.allocator, &data);
-    defer sequence.deinit();
+    defer sequence.deinit(testing.allocator);
 
     // Verify sorted
     try testing.expectEqualSlices(i32, &[_]i32{ 1, 3, 4 }, &data);
