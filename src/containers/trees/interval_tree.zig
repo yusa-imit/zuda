@@ -342,7 +342,7 @@ pub fn IntervalTree(
         /// Time: O(k + log n) where k = number of overlapping intervals
         /// Space: O(k)
         pub fn queryOverlaps(self: *Self, query: Interval) !Iterator {
-            var results: std.ArrayList(Entry) = .{};
+            var results: std.ArrayList(Entry) = .empty;
             errdefer results.deinit(self.allocator);
 
             try self.searchOverlaps(self.root, query, &results);

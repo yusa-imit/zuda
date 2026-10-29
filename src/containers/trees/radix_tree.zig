@@ -90,10 +90,11 @@ pub fn RadixTree(comptime K: type, comptime V: type) type {
                     }
 
                     // No more children, backtrack
+                    const prefix_len = frame.node.prefix.len;
                     _ = self.stack.pop();
-                    if (self.current_key.items.len >= frame.node.prefix.len) {
+                    if (self.current_key.items.len >= prefix_len) {
                         self.current_key.shrinkRetainingCapacity(
-                            self.current_key.items.len - frame.node.prefix.len,
+                            self.current_key.items.len - prefix_len,
                         );
                     }
                 }
@@ -155,12 +156,13 @@ pub fn RadixTree(comptime K: type, comptime V: type) type {
                     }
 
                     // No more children, backtrack
+                    const frame_prefix_len = frame.node.prefix.len;
                     _ = self.stack.pop();
-                    if (self.current_key.items.len >= frame.node.prefix.len and
+                    if (self.current_key.items.len >= frame_prefix_len and
                         self.current_key.items.len > self.prefix_len)
                     {
                         self.current_key.shrinkRetainingCapacity(
-                            self.current_key.items.len - frame.node.prefix.len,
+                            self.current_key.items.len - frame_prefix_len,
                         );
                     }
                 }
@@ -321,7 +323,7 @@ pub fn RadixTree(comptime K: type, comptime V: type) type {
         pub fn remove(self: *Self, key: []const K) ?V {
             if (key.len == 0) return null;
 
-            var path = std.ArrayList(PathEntry){};
+            var path = std.ArrayList(PathEntry).empty;
             defer path.deinit(self.allocator);
 
             var current = &self.root;
@@ -465,9 +467,9 @@ pub fn RadixTree(comptime K: type, comptime V: type) type {
         /// Iterate over all entries with given prefix.
         /// Time: O(k + n) where k = results, n = nodes visited | Space: O(h) for stack
         pub fn prefixIterator(self: *Self, prefix: []const K) !PrefixIterator {
-            var prefix_key = std.ArrayList(K){};
+            var prefix_key = std.ArrayList(K).empty;
             errdefer prefix_key.deinit(self.allocator);
-            var stack = std.ArrayList(PrefixIterator.StackFrame){};
+            var stack = std.ArrayList(PrefixIterator.StackFrame).empty;
             errdefer stack.deinit(self.allocator);
 
             // Navigate to the subtree containing the prefix
@@ -540,7 +542,7 @@ pub fn RadixTree(comptime K: type, comptime V: type) type {
         pub fn longestCommonPrefix(self: *const Self) ![]K {
             if (self.size == 0) return &[_]K{};
 
-            var lcp = std.ArrayList(K){};
+            var lcp = std.ArrayList(K).empty;
             errdefer lcp.deinit(self.allocator);
 
             var current = &self.root;
@@ -564,7 +566,7 @@ pub fn RadixTree(comptime K: type, comptime V: type) type {
         /// Creates an iterator for the container.
         /// Time: O(log n) amortized | Space: O(log n)
         pub fn iterator(self: *Self) !Iterator {
-            var stack = std.ArrayList(Iterator.StackFrame){};
+            var stack = std.ArrayList(Iterator.StackFrame).empty;
             const iter = self.root.children.iterator();
             try stack.append(self.allocator, Iterator.StackFrame{
                 .node = &self.root,
@@ -575,7 +577,7 @@ pub fn RadixTree(comptime K: type, comptime V: type) type {
             return Iterator{
                 .allocator = self.allocator,
                 .stack = stack,
-                .current_key = std.ArrayList(K){},
+                .current_key = std.ArrayList(K).empty,
             };
         }
 

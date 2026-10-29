@@ -416,7 +416,7 @@ pub fn AATree(
         /// Time: O(1) to create, O(n) to iterate | Space: O(log n)
         pub fn iterator(self: *const Self) Iterator {
             return Iterator{
-                .stack = std.ArrayList(*Node){},
+                .stack = std.ArrayList(*Node).empty,
                 .current = self.root,
                 .allocator = self.allocator,
             };
@@ -653,7 +653,7 @@ test "AATree: validate invariants after mixed operations" {
             try inserted_keys.put(testing.allocator, key, true);
         } else if (op == 1) {
             _ = tree.remove(key);
-            _ = inserted_keys.remove(key);
+            _ = inserted_keys.swapRemove(key);
         } else {
             const val = tree.get(key);
             if (inserted_keys.contains(key)) {

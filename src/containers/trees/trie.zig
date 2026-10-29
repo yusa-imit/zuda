@@ -261,7 +261,7 @@ pub fn Trie(comptime K: type, comptime V: type) type {
             if (key.len == 0) return null;
 
             // Find node and track path
-            var path = std.ArrayList(*Node){};
+            var path = std.ArrayList(*Node).empty;
             defer path.deinit(self.allocator);
 
             var current = &self.root;
@@ -349,7 +349,7 @@ pub fn Trie(comptime K: type, comptime V: type) type {
         /// Find the longest common prefix among all keys in the trie
         /// Time: O(min_key_len) | Space: O(min_key_len)
         pub fn longestCommonPrefix(self: *const Self) ![]K {
-            var result = std.ArrayList(K){};
+            var result = std.ArrayList(K).empty;
             errdefer result.deinit(self.allocator);
 
             var current: *const Node = &self.root;
@@ -369,8 +369,8 @@ pub fn Trie(comptime K: type, comptime V: type) type {
         /// Creates an iterator for the container.
         /// Time: O(log n) amortized | Space: O(log n)
         pub fn iterator(self: *const Self) !Iterator {
-            var stack = std.ArrayList(Iterator.StackFrame){};
-            const current_key = std.ArrayList(K){};
+            var stack = std.ArrayList(Iterator.StackFrame).empty;
+            const current_key = std.ArrayList(K).empty;
 
             const root_iter = self.root.children.iterator();
             try stack.append(self.allocator, Iterator.StackFrame{
@@ -400,8 +400,8 @@ pub fn Trie(comptime K: type, comptime V: type) type {
                 }
             }
 
-            var stack = std.ArrayList(PrefixIterator.StackFrame){};
-            var current_key = std.ArrayList(K){};
+            var stack = std.ArrayList(PrefixIterator.StackFrame).empty;
+            var current_key = std.ArrayList(K).empty;
             try current_key.appendSlice(self.allocator, prefix);
 
             const node_iter = current.children.iterator();

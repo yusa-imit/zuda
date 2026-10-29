@@ -489,7 +489,7 @@ pub fn AVLTree(
         /// Create an in-order iterator.
         /// Time: O(log n) init | Space: O(log n)
         pub fn iterator(self: *const Self) !Iterator {
-            var stack = std.ArrayList(*Node){};
+            var stack = std.ArrayList(*Node).empty;
             errdefer stack.deinit(self.allocator);
 
             // Initialize stack with leftmost path
