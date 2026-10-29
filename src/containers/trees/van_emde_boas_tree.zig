@@ -23,6 +23,7 @@ pub fn VanEmdeBoasTree(comptime u: u32) type {
         if (u == 0 or (u & (u - 1)) != 0) {
             @compileError("Universe size must be a power of 2");
         }
+        if (u < 2) @compileError("Universe size must be at least 2");
     }
 
     return struct {
@@ -37,14 +38,20 @@ pub fn VanEmdeBoasTree(comptime u: u32) type {
             break :blk @as(u32, 1) << (bits / 2);
         };
 
+        /// Number of clusters, u / sqrt_u. Equals sqrt_u when log2(u) is even and 2 * sqrt_u when
+        /// it is odd, so the summary universe is this count, not sqrt_u.
+        const cluster_count: u32 = @divExact(u, sqrt_u);
+        const ClusterTree = VanEmdeBoasTree(sqrt_u);
+        const SummaryTree = VanEmdeBoasTree(cluster_count);
+
         // For base case (u=2), we only need 2 bits
         const base_case = (u == 2);
 
         allocator: Allocator,
         min: ?u32, // Minimum element (not stored in clusters)
         max: ?u32, // Maximum element
-        summary: if (base_case) void else ?*VanEmdeBoasTree(sqrt_u), // Summary tree
-        cluster: if (base_case) void else []?*VanEmdeBoasTree(sqrt_u), // Array of cluster trees
+        summary: if (base_case) void else ?*SummaryTree, // Summary tree
+        cluster: if (base_case) void else []?*ClusterTree, // Array of cluster trees
 
         /// Initialize an empty vEB tree
         /// Time: O(1)
@@ -58,7 +65,7 @@ pub fn VanEmdeBoasTree(comptime u: u32) type {
                     .cluster = {},
                 };
             } else {
-                const cluster = try allocator.alloc(?*VanEmdeBoasTree(sqrt_u), sqrt_u);
+                const cluster = try allocator.alloc(?*ClusterTree, cluster_count);
                 @memset(cluster, null);
                 return Self{
                     .allocator = allocator,
@@ -189,13 +196,13 @@ pub fn VanEmdeBoasTree(comptime u: u32) type {
 
             // Ensure cluster exists
             if (self.cluster[h] == null) {
-                self.cluster[h] = try self.allocator.create(VanEmdeBoasTree(sqrt_u));
-                self.cluster[h].?.* = try VanEmdeBoasTree(sqrt_u).init(self.allocator);
+                self.cluster[h] = try self.allocator.create(ClusterTree);
+                self.cluster[h].?.* = try ClusterTree.init(self.allocator);
 
                 // Update summary
                 if (self.summary == null) {
-                    self.summary = try self.allocator.create(VanEmdeBoasTree(sqrt_u));
-                    self.summary.?.* = try VanEmdeBoasTree(sqrt_u).init(self.allocator);
+                    self.summary = try self.allocator.create(SummaryTree);
+                    self.summary.?.* = try SummaryTree.init(self.allocator);
                 }
                 _ = try self.summary.?.insert(h);
             }
@@ -801,4 +808,24 @@ test "VanEmdeBoasTree: bounds checking" {
     try std.testing.expectError(error.OutOfBounds, tree.insert(16));
     try std.testing.expectError(error.OutOfBounds, tree.insert(100));
     try std.testing.expectError(error.OutOfBounds, tree.remove(16));
+}
+
+test "VanEmdeBoasTree: odd-exponent universes keep every cluster addressable" {
+    // log2(8) = 3 and log2(32) = 5 are odd, so there are more clusters than sqrt_u.
+    inline for (.{ 8, 32 }) |universe| {
+        const VEB = VanEmdeBoasTree(universe);
+        var tree = try VEB.init(std.testing.allocator);
+        defer tree.deinit();
+
+        var x: u32 = universe;
+        while (x > 0) {
+            x -= 1;
+            try std.testing.expect(try tree.insert(x));
+            try tree.validate();
+        }
+        try std.testing.expectEqual(@as(usize, universe), tree.count());
+        try std.testing.expectEqual(@as(?u32, 0), tree.minimum());
+        try std.testing.expectEqual(@as(?u32, universe - 1), tree.maximum());
+        try std.testing.expectEqual(@as(?u32, universe - 2), tree.predecessor(universe - 1));
+    }
 }

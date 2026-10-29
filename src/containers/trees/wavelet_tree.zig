@@ -119,17 +119,17 @@ pub fn WaveletTree(comptime T: type) type {
             const mid = min_val + @divFloor(max_val - min_val, 2);
 
             // Build left and right sequences
-            var left_seq = std.ArrayList(T).init(self.allocator);
-            defer left_seq.deinit();
-            var right_seq = std.ArrayList(T).init(self.allocator);
-            defer right_seq.deinit();
+            var left_seq: std.ArrayList(T) = .empty;
+            defer left_seq.deinit(self.allocator);
+            var right_seq: std.ArrayList(T) = .empty;
+            defer right_seq.deinit(self.allocator);
 
             for (sequence, 0..) |val, i| {
                 if (val <= mid) {
-                    try left_seq.append(val);
+                    try left_seq.append(self.allocator, val);
                     // bitmap[i] = 0 for left (already 0 by default)
                 } else {
-                    try right_seq.append(val);
+                    try right_seq.append(self.allocator, val);
                     node.bitmap.set(i);
                 }
             }
@@ -276,8 +276,7 @@ pub fn WaveletTree(comptime T: type) type {
 
         /// Count 0s (left branches) in bitmap[0..i)
         fn rank0(self: *const Self, node: *Node, i: usize) usize {
-            _ = self;
-            return i - node.bitmap.count();
+            return i - self.rank1(node, i);
         }
 
         /// Count 1s (right branches) in bitmap[0..i)

@@ -336,7 +336,7 @@ pub fn SplayTree(
         /// Time: O(1) to create, O(n) to iterate | Space: O(log n)
         pub fn iterator(self: *const Self) Iterator {
             return Iterator{
-                .stack = .{},
+                .stack = .empty,
                 .current = self.root,
                 .allocator = self.allocator,
             };
@@ -581,7 +581,7 @@ test "SplayTree: validate invariants after random operations" {
             try inserted_keys.put(testing.allocator, key, true);
         } else if (op == 1) {
             _ = tree.remove(key);
-            _ = inserted_keys.remove(key);
+            _ = inserted_keys.swapRemove(key);
         } else {
             const val = tree.get(key);
             if (inserted_keys.contains(key)) {

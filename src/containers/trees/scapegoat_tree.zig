@@ -424,7 +424,7 @@ pub fn ScapegoatTree(
         /// Creates an iterator for the container.
         /// Time: O(log n) amortized | Space: O(log n)
         pub fn iterator(self: *const Self) !Iterator {
-            var stack = std.ArrayList(*Node){};
+            var stack = std.ArrayList(*Node).empty;
             if (self.root) |root| {
                 try stack.append(self.allocator, root);
             }
@@ -752,7 +752,7 @@ test "ScapegoatTree: memory leak detection" {
         _ = tree.remove(i);
         removed_count += 1;
     }
-    try testing.expectEqual(n - removed_count, tree.count());
+    try testing.expectEqual(@as(usize, @intCast(n - removed_count)), tree.count());
 
     // Verify removed items are gone
     i = 0;
