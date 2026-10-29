@@ -39,7 +39,6 @@ const Order = std.math.Order;
 /// try bitonicSort(i32, &arr, {}, std.sort.asc);
 /// // arr is now [1, 2, 3, 4, 5, 6, 7, 8]
 /// ```
-
 /// Bitonic Sort with custom comparison function
 ///
 /// Time: O(n log² n) sequential, O(log² n) parallel depth
@@ -114,7 +113,7 @@ pub fn bitonicSortAny(
 
     // If already power of 2, sort in-place
     if (std.math.isPowerOfTwo(n)) {
-        bitonicSort(T, items, context, compareFn);
+        try bitonicSort(T, items, context, compareFn);
         return;
     }
 
@@ -139,7 +138,7 @@ pub fn bitonicSortAny(
     @memset(padded[n..], max_val);
 
     // Sort padded array
-    bitonicSort(T, padded, context, compareFn);
+    try bitonicSort(T, padded, context, compareFn);
 
     // Copy back (only original n elements)
     @memcpy(items, padded[0..n]);

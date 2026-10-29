@@ -53,42 +53,42 @@ pub fn strandSortAlloc(
     if (arr.len <= 1) return;
 
     // Use ArrayList for dynamic input/output management
-    var input = std.ArrayList(T).init(allocator);
-    defer input.deinit();
+    var input: std.ArrayList(T) = .empty;
+    defer input.deinit(allocator);
 
-    var output = std.ArrayList(T).init(allocator);
-    defer output.deinit();
+    var output: std.ArrayList(T) = .empty;
+    defer output.deinit(allocator);
 
     // Copy input to working list
-    try input.appendSlice(arr);
+    try input.appendSlice(allocator, arr);
 
     // Extract strands until input is empty
     while (input.items.len > 0) {
         // Extract sorted strand
-        var strand = std.ArrayList(T).init(allocator);
-        defer strand.deinit();
+        var strand: std.ArrayList(T) = .empty;
+        defer strand.deinit(allocator);
 
-        try strand.append(input.orderedRemove(0));
+        try strand.append(allocator, input.orderedRemove(0));
 
         var i: usize = 0;
         while (i < input.items.len) {
             if (compareFn(strand.items[strand.items.len - 1], input.items[i])) {
                 // Current element extends the strand
-                try strand.append(input.orderedRemove(i));
+                try strand.append(allocator, input.orderedRemove(i));
             } else {
                 i += 1;
             }
         }
 
         // Merge strand into output
-        var merged = std.ArrayList(T).init(allocator);
-        defer merged.deinit();
+        var merged: std.ArrayList(T) = .empty;
+        defer merged.deinit(allocator);
 
-        try merge(T, output.items, strand.items, &merged, compareFn);
+        try merge(T, allocator, output.items, strand.items, &merged, compareFn);
 
         // Replace output with merged result
         output.clearRetainingCapacity();
-        try output.appendSlice(merged.items);
+        try output.appendSlice(allocator, merged.items);
     }
 
     // Copy result back to original array
@@ -146,9 +146,9 @@ pub fn countStrands(
 ) !usize {
     if (arr.len <= 1) return if (arr.len == 1) 1 else 0;
 
-    var input = std.ArrayList(T).init(allocator);
-    defer input.deinit();
-    try input.appendSlice(arr);
+    var input: std.ArrayList(T) = .empty;
+    defer input.deinit(allocator);
+    try input.appendSlice(allocator, arr);
 
     var count: usize = 0;
 
@@ -179,36 +179,36 @@ pub fn getAllStrands(
     allocator: Allocator,
     comptime compareFn: fn (T, T) bool,
 ) !std.ArrayList(std.ArrayList(T)) {
-    var strands = std.ArrayList(std.ArrayList(T)).init(allocator);
+    var strands: std.ArrayList(std.ArrayList(T)) = .empty;
     errdefer {
-        for (strands.items) |strand| {
-            strand.deinit();
+        for (strands.items) |*strand| {
+            strand.deinit(allocator);
         }
-        strands.deinit();
+        strands.deinit(allocator);
     }
 
     if (arr.len == 0) return strands;
 
-    var input = std.ArrayList(T).init(allocator);
-    defer input.deinit();
-    try input.appendSlice(arr);
+    var input: std.ArrayList(T) = .empty;
+    defer input.deinit(allocator);
+    try input.appendSlice(allocator, arr);
 
     while (input.items.len > 0) {
-        var strand = std.ArrayList(T).init(allocator);
-        errdefer strand.deinit();
+        var strand: std.ArrayList(T) = .empty;
+        errdefer strand.deinit(allocator);
 
-        try strand.append(input.orderedRemove(0));
+        try strand.append(allocator, input.orderedRemove(0));
 
         var i: usize = 0;
         while (i < input.items.len) {
             if (compareFn(strand.items[strand.items.len - 1], input.items[i])) {
-                try strand.append(input.orderedRemove(i));
+                try strand.append(allocator, input.orderedRemove(i));
             } else {
                 i += 1;
             }
         }
 
-        try strands.append(strand);
+        try strands.append(allocator, strand);
     }
 
     return strands;
@@ -217,6 +217,7 @@ pub fn getAllStrands(
 /// Merge two sorted arrays (helper for strand merge)
 fn merge(
     comptime T: type,
+    allocator: Allocator,
     left: []const T,
     right: []const T,
     result: *std.ArrayList(T),
@@ -226,23 +227,25 @@ fn merge(
     var j: usize = 0;
 
     while (i < left.len and j < right.len) {
-        if (compareFn(left[i], right[j])) {
-            try result.append(left[i]);
-            i += 1;
-        } else {
-            try result.append(right[j]);
+        // Take from the right only when it is strictly smaller: an equal element in
+        // `left` comes from an earlier strand, so it precedes the one in `right`.
+        if (compareFn(right[j], left[i])) {
+            try result.append(allocator, right[j]);
             j += 1;
+        } else {
+            try result.append(allocator, left[i]);
+            i += 1;
         }
     }
 
     // Append remaining elements
     while (i < left.len) {
-        try result.append(left[i]);
+        try result.append(allocator, left[i]);
         i += 1;
     }
 
     while (j < right.len) {
-        try result.append(right[j]);
+        try result.append(allocator, right[j]);
         j += 1;
     }
 }
@@ -403,10 +406,10 @@ test "strand sort - get all strands" {
         }
     }.lessThan);
     defer {
-        for (strands.items) |strand| {
-            strand.deinit();
+        for (strands.items) |*strand| {
+            strand.deinit(testing.allocator);
         }
-        strands.deinit();
+        strands.deinit(testing.allocator);
     }
 
     try testing.expect(strands.items.len >= 1);

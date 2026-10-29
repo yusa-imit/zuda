@@ -73,7 +73,7 @@ pub fn pigeonholeSortAlloc(comptime T: type, arr: []T, allocator: Allocator) !vo
 
     // Initialize pigeonholes
     for (holes) |*hole| {
-        hole.* = std.ArrayList(T){};
+        hole.* = std.ArrayList(T).empty;
     }
 
     // Distribute elements into pigeonholes
@@ -127,7 +127,7 @@ pub fn pigeonholeSortDesc(comptime T: type, arr: []T, allocator: Allocator) !voi
 
     // Initialize pigeonholes
     for (holes) |*hole| {
-        hole.* = std.ArrayList(T){};
+        hole.* = std.ArrayList(T).empty;
     }
 
     // Distribute elements

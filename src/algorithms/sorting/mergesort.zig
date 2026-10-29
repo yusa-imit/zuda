@@ -200,7 +200,7 @@ pub fn NaturalMergeSort(comptime T: type, comptime Context: type, comptime lessT
         const Run = struct { start: usize, end: usize };
 
         fn findRuns(self: *Self, items: []T) !std.ArrayListUnmanaged(Run) {
-            var runs = std.ArrayListUnmanaged(Run){};
+            var runs = std.ArrayListUnmanaged(Run).empty;
 
             var i: usize = 0;
             while (i < items.len) {
