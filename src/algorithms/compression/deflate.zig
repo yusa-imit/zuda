@@ -1,55 +1,26 @@
 //! DEFLATE Compression Algorithm
 //!
-//! DEFLATE is a lossless compression algorithm combining LZ77 dictionary matching
-//! with Huffman entropy coding, defined in RFC 1951. It's the foundation for gzip,
-//! PNG, and ZIP formats.
+//! DEFLATE (RFC 1951) container support. Only the stored block type (BTYPE 0) is
+//! implemented: `encode` wraps the input in stored blocks (no size reduction, 5 bytes of
+//! overhead per 65535 input bytes) and `decode` reads stored blocks, returning
+//! `error.NotImplemented` for fixed and dynamic Huffman blocks. The streams are valid RFC 1951
+//! data that any inflate implementation reads.
 //!
-//! ## Algorithm Overview
+//! Compressing blocks (LZ77 matching plus Huffman coding) are not implemented; the
+//! `CompressionLevel` and `Config` fields are accepted for API stability and do not change the
+//! output. Use `lz77`, `huffman` or `lz4` in this module family when size reduction is needed.
 //!
-//! DEFLATE combines two compression techniques:
-//! 1. **LZ77 Matching**: Replaces repeated sequences with (distance, length) pairs
-//! 2. **Huffman Coding**: Encodes literals and match codes with variable-length prefix codes
+//! ## Contract
 //!
-//! The compressed data is split into blocks:
-//! - Stored (uncompressed) - for incompressible data
-//! - Fixed Huffman - predefined codes, simple but less optimal
-//! - Dynamic Huffman - custom codes optimized for input, slower but better ratio
-//!
-//! ## Performance Characteristics
-//!
-//! - **Time Complexity**:
-//!   - Encoding: O(n log n) with lazy matching, O(n) with hash table
-//!   - Decoding: O(m) where m = output length
-//! - **Space Complexity**: O(w) where w = sliding window size (32KB default)
-//! - **Compression Ratio**: 2-4x for text, depending on repetition patterns
-//! - **Speed**: Moderate compression (~50-100 MB/s), fast decompression (~200-300 MB/s)
-//!
-//! ## Block Types
-//!
-//! - **Stored (Type 0)**: Raw uncompressed data (used when compression doesn't help)
-//! - **Fixed Huffman (Type 1)**: Predefined Huffman trees (fast encoding)
-//! - **Dynamic Huffman (Type 2)**: Custom Huffman trees (best compression)
-//!
-//! ## Sliding Window
-//!
-//! - Size: 32KB (default), up to 32KB previous data
-//! - Maximum match length: 258 bytes
-//! - Minimum match length: 3 bytes
-//! - Distance codes: 1-32768 (encoded in 15 bits)
-//!
-//! ## Use Cases
-//!
-//! - **Archive Formats**: ZIP, tar.gz, 7z
-//! - **Image Compression**: PNG (required for image data)
-//! - **Web Compression**: HTTP content encoding (gzip, deflate)
-//! - **File Systems**: ZFS, Btrfs optional compression
-//! - **Database Systems**: WAL compression, backup compression
+//! - `encode` returns an owned slice; the stream is always terminated by a final block, also for
+//!   empty input.
+//! - `decode` returns an owned slice, `error.InvalidInput` for truncated streams (including a
+//!   missing final block) and `error.CorruptedData` when a block's LEN and NLEN disagree.
+//! - Time: O(n) both ways. Space: O(n) for the output.
 //!
 //! ## References
 //!
 //! - RFC 1951: DEFLATE Compressed Data Format Specification
-//! - RFC 1952: GZIP File Format Specification
-//! - Deutsch, P. (1996): "DEFLATE Compressed Data Format Specification"
 //! - https://datatracker.ietf.org/doc/html/rfc1951
 
 const std = @import("std");
@@ -114,7 +85,6 @@ fn findBestMatch(data: []const u8, pos: usize, max_dist: usize, max_len: usize) 
     return best;
 }
 
-
 /// Encode data using DEFLATE compression
 ///
 /// Time: O(n log n) with lazy matching or O(n) with simple greedy
@@ -143,7 +113,13 @@ pub fn encodeWithConfig(allocator: Allocator, data: []const u8, config: Config) 
     // For now, use stored blocks (uncompressed) - simpler and still RFC 1951 compliant
     // This is compatible with deflate decoders
     var output = try std.ArrayList(u8).initCapacity(allocator, data.len + 10);
-    defer output.deinit();
+    defer output.deinit(allocator);
+
+    // An empty input still needs a final block: BFINAL=1, BTYPE=00, LEN=0, NLEN=0xFFFF.
+    if (data.len == 0) {
+        try output.appendSlice(allocator, &[_]u8{ 0x01, 0x00, 0x00, 0xFF, 0xFF });
+        return output.toOwnedSlice(allocator);
+    }
 
     var pos: usize = 0;
 
@@ -194,14 +170,13 @@ pub fn decode(allocator: Allocator, compressed: []const u8) ![]u8 {
 pub fn decodeWithValidation(allocator: Allocator, compressed: []const u8, validate_checksum: bool) ![]u8 {
     _ = validate_checksum;
     var output = try std.ArrayList(u8).initCapacity(allocator, compressed.len * 2);
-    defer output.deinit();
+    defer output.deinit(allocator);
 
     var pos: usize = 0;
+    var saw_final = false;
 
     // Read and decompress blocks
     while (pos < compressed.len) {
-        if (pos >= compressed.len) return error.InvalidInput;
-
         const header_byte = compressed[pos];
         pos += 1;
 
@@ -241,8 +216,12 @@ pub fn decodeWithValidation(allocator: Allocator, compressed: []const u8, valida
             else => return error.InvalidInput,
         }
 
-        if (bfinal) break;
+        if (bfinal) {
+            saw_final = true;
+            break;
+        }
     }
+    if (!saw_final) return error.InvalidInput;
 
     return output.toOwnedSlice(allocator);
 }
@@ -273,6 +252,11 @@ test "DEFLATE: roundtrip basic" {
     try testing.expectEqualSlices(u8, input, decompressed);
 }
 
+test "DEFLATE: stream without a final block is rejected" {
+    const missing_final = [_]u8{ 0x00, 0x01, 0x00, 0xFE, 0xFF, 'a' };
+    try testing.expectError(error.InvalidInput, decode(testing.allocator, &missing_final));
+}
+
 test "DEFLATE: empty input" {
     const allocator = testing.allocator;
     const input = "";
@@ -280,7 +264,7 @@ test "DEFLATE: empty input" {
     const compressed = try encode(allocator, input);
     defer allocator.free(compressed);
 
-    try testing.expect(compressed.len >= 1); // At least header
+    try testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x00, 0x00, 0xFF, 0xFF }, compressed);
 
     const decompressed = try decode(allocator, compressed);
     defer allocator.free(decompressed);
@@ -334,8 +318,8 @@ test "DEFLATE: long repetition" {
     const compressed = try encode(allocator, input);
     defer allocator.free(compressed);
 
-    // Should achieve significant compression
-    try testing.expect(compressed.len < input.len / 2);
+    // Stored blocks only: one 5-byte block header, no size reduction.
+    try testing.expectEqual(input.len + 5, compressed.len);
 
     const decompressed = try decode(allocator, compressed);
     defer allocator.free(decompressed);
@@ -471,11 +455,11 @@ test "DEFLATE: large input" {
     const allocator = testing.allocator;
 
     var input_list = try ArrayList(u8).initCapacity(allocator, 5000);
-    defer input_list.deinit();
+    defer input_list.deinit(allocator);
 
     var i: usize = 0;
     while (i < 100) : (i += 1) {
-        try input_list.appendSlice("The quick brown fox jumps over the lazy dog. ");
+        try input_list.appendSlice(allocator, "The quick brown fox jumps over the lazy dog. ");
     }
 
     const input = input_list.items;
@@ -483,8 +467,8 @@ test "DEFLATE: large input" {
     const compressed = try encode(allocator, input);
     defer allocator.free(compressed);
 
-    // Should achieve compression on repetitive text
-    try testing.expect(compressed.len < input.len);
+    // Stored blocks only: one 5-byte header per started 65535-byte block.
+    try testing.expectEqual(input.len + 5 * ((input.len + 65534) / 65535), compressed.len);
 
     const decompressed = try decode(allocator, compressed);
     defer allocator.free(decompressed);
@@ -497,11 +481,11 @@ test "DEFLATE: multiple blocks" {
 
     // Create data large enough to span multiple blocks
     var input_list = try ArrayList(u8).initCapacity(allocator, 70000);
-    defer input_list.deinit();
+    defer input_list.deinit(allocator);
 
     var i: usize = 0;
     while (i < 1000) : (i += 1) {
-        try input_list.appendSlice("block content ");
+        try input_list.appendSlice(allocator, "block content ");
     }
 
     const input = input_list.items;
@@ -520,17 +504,17 @@ test "DEFLATE: maximum match length" {
 
     // Create a pattern that will be matched at max length
     var input_list = try ArrayList(u8).initCapacity(allocator, 600);
-    defer input_list.deinit();
+    defer input_list.deinit(allocator);
 
     // 258 byte pattern, then repeat it
     var i: usize = 0;
     while (i < 258) : (i += 1) {
-        try input_list.append(@intCast(i % 256));
+        try input_list.append(allocator, @intCast(i % 256));
     }
 
     // Repeat the pattern
     const pattern = input_list.items;
-    try input_list.appendSlice(pattern);
+    try input_list.appendSlice(allocator, pattern);
 
     const input = input_list.items;
 
@@ -548,17 +532,17 @@ test "DEFLATE: window boundary" {
 
     // Create data that tests window boundary handling
     var input_list = try ArrayList(u8).initCapacity(allocator, 70000);
-    defer input_list.deinit();
+    defer input_list.deinit(allocator);
 
     // Add unique data to fill window
     var i: usize = 0;
     while (i < 32768) : (i += 1) {
-        try input_list.append(@intCast((i * 7) % 256));
+        try input_list.append(allocator, @intCast((i * 7) % 256));
     }
 
     // Add pattern that should match earlier in window
-    try input_list.appendSlice("window boundary test");
-    try input_list.appendSlice("window boundary test");
+    try input_list.appendSlice(allocator, "window boundary test");
+    try input_list.appendSlice(allocator, "window boundary test");
 
     const input = input_list.items;
 
@@ -605,18 +589,18 @@ test "DEFLATE: distance encoding edge case (max distance)" {
 
     // Create input with match at maximum distance (32KB)
     var input_list = try ArrayList(u8).initCapacity(allocator, 70000);
-    defer input_list.deinit();
+    defer input_list.deinit(allocator);
 
-    try input_list.appendSlice("unique_start_pattern");
+    try input_list.appendSlice(allocator, "unique_start_pattern");
 
     // Fill with data to reach max distance
     var i: usize = 0;
     while (i < 32700) : (i += 1) {
-        try input_list.append(@intCast(i % 256));
+        try input_list.append(allocator, @intCast(i % 256));
     }
 
     // Repeat the start pattern (at max distance)
-    try input_list.appendSlice("unique_start_pattern");
+    try input_list.appendSlice(allocator, "unique_start_pattern");
 
     const input = input_list.items;
 
@@ -633,11 +617,11 @@ test "DEFLATE: all bytes 0-255" {
     const allocator = testing.allocator;
 
     var input_list = try ArrayList(u8).initCapacity(allocator, 256);
-    defer input_list.deinit();
+    defer input_list.deinit(allocator);
 
     var i: usize = 0;
     while (i < 256) : (i += 1) {
-        try input_list.append(@intCast(i));
+        try input_list.append(allocator, @intCast(i));
     }
 
     const input = input_list.items;
@@ -656,7 +640,8 @@ test "DEFLATE: memory safety" {
 
     var i: usize = 0;
     while (i < 10) : (i += 1) {
-        const input = "DEFLATE test data iteration " ++ [_]u8{@intCast(48 + i)};
+        var input: [29]u8 = "DEFLATE test data iteration ".* ++ [_]u8{0};
+        input[28] = @intCast(48 + i);
         const compressed = try encode(allocator, &input);
         defer allocator.free(compressed);
 
@@ -697,11 +682,11 @@ test "DEFLATE: stress test - varying sizes" {
 
     for (sizes) |size| {
         var input_list = try ArrayList(u8).initCapacity(allocator, size);
-        defer input_list.deinit();
+        defer input_list.deinit(allocator);
 
         var i: usize = 0;
         while (i < size) : (i += 1) {
-            try input_list.append(@intCast((i * 13 + 7) % 256));
+            try input_list.append(allocator, @intCast((i * 13 + 7) % 256));
         }
 
         const input = input_list.items;
@@ -720,11 +705,11 @@ test "DEFLATE: highly repetitive data" {
     const allocator = testing.allocator;
 
     var input_list = try ArrayList(u8).initCapacity(allocator, 10000);
-    defer input_list.deinit();
+    defer input_list.deinit(allocator);
 
     var i: usize = 0;
     while (i < 1000) : (i += 1) {
-        try input_list.appendSlice("REPETITIVE");
+        try input_list.appendSlice(allocator, "REPETITIVE");
     }
 
     const input = input_list.items;
@@ -732,8 +717,8 @@ test "DEFLATE: highly repetitive data" {
     const compressed = try encode(allocator, input);
     defer allocator.free(compressed);
 
-    // Highly repetitive data should compress very well
-    try testing.expect(compressed.len < input.len / 5);
+    // Stored blocks only, so even repetitive data keeps its size plus the block header.
+    try testing.expectEqual(input.len + 5, compressed.len);
 
     const decompressed = try decode(allocator, compressed);
     defer allocator.free(decompressed);
@@ -746,13 +731,13 @@ test "DEFLATE: incompressible data" {
 
     // Create pseudo-random incompressible data
     var input_list = try ArrayList(u8).initCapacity(allocator, 256);
-    defer input_list.deinit();
+    defer input_list.deinit(allocator);
 
     var seed: u32 = 12345;
     var i: usize = 0;
     while (i < 256) : (i += 1) {
-        seed = seed *% 1103515245 +% 12345;  // LCG pseudo-random
-        try input_list.append(@intCast((seed >> 16) % 256));
+        seed = seed *% 1103515245 +% 12345; // LCG pseudo-random
+        try input_list.append(allocator, @intCast((seed >> 16) % 256));
     }
 
     const input = input_list.items;

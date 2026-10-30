@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
 const testing = std.testing;
 
 /// LZ77 - Dictionary-based lossless compression
@@ -14,7 +15,6 @@ const testing = std.testing;
 ///
 /// Time: O(n × w) where n is input length, w is window size
 /// Space: O(n) for output, O(w) for sliding window
-
 /// Default window size (32KB - common for gzip)
 pub const DEFAULT_WINDOW_SIZE: usize = 32 * 1024;
 
@@ -53,9 +53,13 @@ pub fn encode(
     data: []const u8,
     window_size: usize,
     lookahead_size: usize,
-) !std.ArrayList(Token) {
-    var tokens = std.ArrayList(Token).init(allocator);
-    errdefer tokens.deinit();
+) Allocator.Error!std.ArrayList(Token) {
+    assert(window_size > 0);
+    assert(window_size <= std.math.maxInt(u16));
+    assert(lookahead_size <= std.math.maxInt(u16));
+
+    var tokens = std.ArrayList(Token).empty;
+    errdefer tokens.deinit(allocator);
 
     if (data.len == 0) return tokens;
 
@@ -65,12 +69,11 @@ pub fn encode(
 
         if (match.length >= MIN_MATCH_LENGTH) {
             // Encode as match
-            const next_char = if (pos + match.length < data.len)
-                data[pos + match.length]
-            else
-                0;
+            // The match search stops one byte short of the end, so next_char exists.
+            assert(pos + match.length < data.len);
+            const next_char = data[pos + match.length];
 
-            try tokens.append(.{
+            try tokens.append(allocator, .{
                 .offset = @intCast(match.offset),
                 .length = @intCast(match.length),
                 .next_char = next_char,
@@ -79,7 +82,7 @@ pub fn encode(
             pos += match.length + 1; // Include next_char
         } else {
             // Encode as literal
-            try tokens.append(.{
+            try tokens.append(allocator, .{
                 .offset = 0,
                 .length = 0,
                 .next_char = data[pos],
@@ -105,7 +108,7 @@ pub fn encode(
 /// const decoded = try decode(allocator, tokens.items);
 /// defer allocator.free(decoded);
 /// ```
-pub fn decode(allocator: Allocator, tokens: []const Token) ![]u8 {
+pub fn decode(allocator: Allocator, tokens: []const Token) error{ CorruptedData, OutOfMemory }![]u8 {
     // Calculate output size
     var output_size: usize = 0;
     for (tokens) |token| {
@@ -117,6 +120,11 @@ pub fn decode(allocator: Allocator, tokens: []const Token) ![]u8 {
 
     var out_pos: usize = 0;
     for (tokens) |token| {
+        if (token.length > 0) {
+            // A match must point back into already decoded output.
+            if (token.offset == 0 or token.offset > out_pos) return error.CorruptedData;
+        }
+
         if (token.length > 0) {
             // Copy from earlier in output (match)
             const start = out_pos - token.offset;
@@ -145,7 +153,8 @@ fn findLongestMatch(
     lookahead_size: usize,
 ) Match {
     const window_start = if (pos > window_size) pos - window_size else 0;
-    const lookahead_end = @min(pos + lookahead_size, data.len);
+    // Keep one byte back for the token's next_char.
+    const lookahead_end = @min(pos + lookahead_size, data.len - 1);
 
     var best_match = Match{ .offset = 0, .length = 0 };
 
@@ -159,9 +168,6 @@ fn findLongestMatch(
             data[search_pos + match_len] == data[pos + match_len])
         {
             match_len += 1;
-
-            // Prevent match from exceeding window
-            if (search_pos + match_len >= pos) break;
         }
 
         // Update best match
@@ -194,10 +200,42 @@ pub fn compressionRatio(original_size: usize, token_count: usize) f64 {
 // Tests
 // ============================================================================
 
+test "LZ77: corrupted tokens are rejected" {
+    const offset_too_far = [_]Token{.{ .offset = 1, .length = 2, .next_char = 'a' }};
+    try testing.expectError(error.CorruptedData, decode(testing.allocator, &offset_too_far));
+
+    const zero_offset = [_]Token{
+        .{ .offset = 0, .length = 0, .next_char = 'a' },
+        .{ .offset = 0, .length = 1, .next_char = 'b' },
+    };
+    try testing.expectError(error.CorruptedData, decode(testing.allocator, &zero_offset));
+}
+
+test "LZ77: match ending at end of input does not append a byte" {
+    const input = "abcabc";
+    var tokens = try encode(testing.allocator, input, 256, 128);
+    defer tokens.deinit(testing.allocator);
+
+    const decoded = try decode(testing.allocator, tokens.items);
+    defer testing.allocator.free(decoded);
+    try testing.expectEqualSlices(u8, input, decoded);
+}
+
+test "LZ77: overlapping match encodes a run" {
+    const input = "aaaaaaaa";
+    var tokens = try encode(testing.allocator, input, 256, 128);
+    defer tokens.deinit(testing.allocator);
+
+    try testing.expect(tokens.items.len < 4);
+    const decoded = try decode(testing.allocator, tokens.items);
+    defer testing.allocator.free(decoded);
+    try testing.expectEqualSlices(u8, input, decoded);
+}
+
 test "LZ77: simple literal encoding" {
     const input = "abc";
     var tokens = try encode(testing.allocator, input, 256, 128);
-    defer tokens.deinit();
+    defer tokens.deinit(testing.allocator);
 
     // All literals (no repeats)
     try testing.expectEqual(@as(usize, 3), tokens.items.len);
@@ -210,7 +248,7 @@ test "LZ77: simple literal encoding" {
 test "LZ77: simple pattern matching" {
     const input = "ababab";
     var tokens = try encode(testing.allocator, input, 256, 128);
-    defer tokens.deinit();
+    defer tokens.deinit(testing.allocator);
 
     // Should find "ab" pattern repeating
     try testing.expect(tokens.items.len < 6); // Better than all literals
@@ -219,7 +257,7 @@ test "LZ77: simple pattern matching" {
 test "LZ77: roundtrip encode-decode" {
     const original = "abcabcabcxyzxyzxyz";
     var tokens = try encode(testing.allocator, original, 256, 128);
-    defer tokens.deinit();
+    defer tokens.deinit(testing.allocator);
 
     const decoded = try decode(testing.allocator, tokens.items);
     defer testing.allocator.free(decoded);
@@ -230,7 +268,7 @@ test "LZ77: roundtrip encode-decode" {
 test "LZ77: empty input" {
     const input: []const u8 = "";
     var tokens = try encode(testing.allocator, input, 256, 128);
-    defer tokens.deinit();
+    defer tokens.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 0), tokens.items.len);
 
@@ -242,7 +280,7 @@ test "LZ77: empty input" {
 test "LZ77: single character" {
     const input = "a";
     var tokens = try encode(testing.allocator, input, 256, 128);
-    defer tokens.deinit();
+    defer tokens.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 1), tokens.items.len);
     try testing.expectEqual(@as(u8, 'a'), tokens.items[0].next_char);
@@ -251,7 +289,7 @@ test "LZ77: single character" {
 test "LZ77: all same character" {
     const input = "aaaaaaa";
     var tokens = try encode(testing.allocator, input, 256, 128);
-    defer tokens.deinit();
+    defer tokens.deinit(testing.allocator);
 
     // Should compress well (find long matches)
     try testing.expect(tokens.items.len < 7);
@@ -265,7 +303,7 @@ test "LZ77: repeated pattern" {
     const pattern = "hello";
     const input = pattern ** 10; // "hellohellohello..."
     var tokens = try encode(testing.allocator, input, 256, 128);
-    defer tokens.deinit();
+    defer tokens.deinit(testing.allocator);
 
     // Should find pattern repeats
     try testing.expect(tokens.items.len < input.len);
@@ -278,7 +316,7 @@ test "LZ77: repeated pattern" {
 test "LZ77: no compression (random-like)" {
     const input = "abcdefghijklmnop"; // All unique
     var tokens = try encode(testing.allocator, input, 256, 128);
-    defer tokens.deinit();
+    defer tokens.deinit(testing.allocator);
 
     // Should be mostly literals
     try testing.expectEqual(@as(usize, input.len), tokens.items.len);
@@ -287,7 +325,7 @@ test "LZ77: no compression (random-like)" {
 test "LZ77: small window size" {
     const input = "ababababab";
     var tokens = try encode(testing.allocator, input, 4, 8); // Small window
-    defer tokens.deinit();
+    defer tokens.deinit(testing.allocator);
 
     const decoded = try decode(testing.allocator, tokens.items);
     defer testing.allocator.free(decoded);
@@ -297,7 +335,7 @@ test "LZ77: small window size" {
 test "LZ77: match at window boundary" {
     const input = "abcdefabcdef";
     var tokens = try encode(testing.allocator, input, 6, 8);
-    defer tokens.deinit();
+    defer tokens.deinit(testing.allocator);
 
     const decoded = try decode(testing.allocator, tokens.items);
     defer testing.allocator.free(decoded);
@@ -307,7 +345,7 @@ test "LZ77: match at window boundary" {
 test "LZ77: overlapping matches" {
     const input = "aaaaaa"; // Self-overlapping
     var tokens = try encode(testing.allocator, input, 256, 128);
-    defer tokens.deinit();
+    defer tokens.deinit(testing.allocator);
 
     const decoded = try decode(testing.allocator, tokens.items);
     defer testing.allocator.free(decoded);
@@ -317,7 +355,7 @@ test "LZ77: overlapping matches" {
 test "LZ77: compression ratio" {
     const input = "abcabcabcabcabc";
     var tokens = try encode(testing.allocator, input, 256, 128);
-    defer tokens.deinit();
+    defer tokens.deinit(testing.allocator);
 
     const ratio = compressionRatio(input.len, tokens.items.len);
     // Should compress (ratio < 1 in token count, but > 1 in bytes for good compression)
@@ -329,16 +367,16 @@ test "LZ77: long repeated sequence" {
     const base = "0123456789";
     const repetitions = 100;
 
-    var input_list = std.ArrayList(u8).init(allocator);
-    defer input_list.deinit();
+    var input_list = std.ArrayList(u8).empty;
+    defer input_list.deinit(allocator);
 
     var i: usize = 0;
     while (i < repetitions) : (i += 1) {
-        try input_list.appendSlice(base);
+        try input_list.appendSlice(testing.allocator, base);
     }
 
     var tokens = try encode(allocator, input_list.items, 1024, 256);
-    defer tokens.deinit();
+    defer tokens.deinit(allocator);
 
     // Should compress significantly
     try testing.expect(tokens.items.len < input_list.items.len / 2);
@@ -351,7 +389,7 @@ test "LZ77: long repeated sequence" {
 test "LZ77: binary data" {
     const input = [_]u8{ 0, 1, 2, 0, 1, 2, 0, 1, 2 };
     var tokens = try encode(testing.allocator, &input, 256, 128);
-    defer tokens.deinit();
+    defer tokens.deinit(testing.allocator);
 
     const decoded = try decode(testing.allocator, tokens.items);
     defer testing.allocator.free(decoded);
@@ -361,7 +399,7 @@ test "LZ77: binary data" {
 test "LZ77: memory safety" {
     const input = "testdata";
     var tokens = try encode(testing.allocator, input, 256, 128);
-    defer tokens.deinit();
+    defer tokens.deinit(testing.allocator);
 
     const decoded = try decode(testing.allocator, tokens.items);
     defer testing.allocator.free(decoded);

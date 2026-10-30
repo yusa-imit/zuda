@@ -42,7 +42,6 @@ pub const Config = struct {
 ///
 /// Time: O(n) average for compression, O(m) for decompression where n = input, m = output
 /// Space: O(hash_table_size + output_size)
-
 const MIN_MATCH = 4; // LZ4 minimum match length
 const LAST_LITERALS = 5; // Last 5 bytes must be literals
 const ML_BITS = 4;
@@ -218,7 +217,7 @@ pub fn decodeWithConfig(allocator: Allocator, input: []const u8, config: Config)
         // Copy literals
         if (literal_len > 0) {
             if (pos + literal_len > input.len) break;
-            try output.appendSlice(allocator, input[pos..pos + literal_len]);
+            try output.appendSlice(allocator, input[pos .. pos + literal_len]);
             pos += literal_len;
         }
 
@@ -276,9 +275,9 @@ fn hashSequence(data: []const u8) u32 {
         return hash;
     }
     const val = @as(u32, data[0]) |
-                (@as(u32, data[1]) << 8) |
-                (@as(u32, data[2]) << 16) |
-                (@as(u32, data[3]) << 24);
+        (@as(u32, data[1]) << 8) |
+        (@as(u32, data[2]) << 16) |
+        (@as(u32, data[3]) << 24);
     return val *% 2654435761; // LZ4 hash multiplier
 }
 
@@ -393,7 +392,7 @@ test "LZ4: mixed literals and matches" {
 test "LZ4: binary data" {
     const allocator = testing.allocator;
 
-    const input = &[_]u8{0, 1, 2, 3, 0, 1, 2, 3, 4, 5, 6, 7};
+    const input = &[_]u8{ 0, 1, 2, 3, 0, 1, 2, 3, 4, 5, 6, 7 };
     const compressed = try encode(allocator, input);
     defer allocator.free(compressed);
 
