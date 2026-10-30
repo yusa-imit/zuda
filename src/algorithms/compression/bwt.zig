@@ -14,7 +14,6 @@ const testing = std.testing;
 ///
 /// Time: O(n² log n) naive, O(n) with suffix array optimization
 /// Space: O(n²) naive, O(n) with suffix array
-
 /// BWT encoding result
 pub const BWTResult = struct {
     /// Transformed data (last column of sorted rotations)
@@ -193,7 +192,7 @@ pub fn decodeFast(allocator: Allocator, data: []const u8, index: usize) ![]u8 {
     // Build cumulative counts (position of first occurrence)
     var cumulative = [_]usize{0} ** 256;
     var sum: usize = 0;
-    for (cumulative, 0..) |*cum, c| {
+    for (&cumulative, 0..) |*cum, c| {
         cum.* = sum;
         sum += counts[c];
     }
@@ -346,12 +345,12 @@ test "BWT: long repeated string" {
     const base = "hello";
     const repetitions = 20;
 
-    var input_list = std.ArrayList(u8).init(allocator);
-    defer input_list.deinit();
+    var input_list = std.ArrayList(u8).empty;
+    defer input_list.deinit(testing.allocator);
 
     var i: usize = 0;
     while (i < repetitions) : (i += 1) {
-        try input_list.appendSlice(base);
+        try input_list.appendSlice(testing.allocator, base);
     }
 
     var encoded = try encode(allocator, input_list.items);

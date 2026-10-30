@@ -86,13 +86,13 @@
 /// - **Note**: Used in Google's infrastructure, Protocol Buffers compression
 ///
 /// ### DEFLATE
-/// **Use Case**: Combining LZ77 and Huffman for optimal compression
-/// - **Best For**: ZIP, GZIP, PNG, DEFLATE formats (RFC 1951)
-/// - **Time**: O(n log n) with lazy matching or O(n) with greedy
-/// - **Space**: O(w) where w = sliding window (32KB default)
-/// - **Pros**: Industry standard, excellent compression ratio (2-4x), widely supported
-/// - **Cons**: More complex than LZ4/Snappy, slower compression than fast algorithms
-/// - **Note**: Foundation for gzip/zip formats, used in HTTP content encoding, PNG images
+/// **Use Case**: RFC 1951 stored-block container (compressing blocks are not implemented)
+/// - **Best For**: Producing valid DEFLATE streams that any inflate reads, without size reduction
+/// - **Time**: O(n) encode and decode
+/// - **Space**: O(n) output
+/// - **Pros**: Standard framing, always valid
+/// - **Cons**: No compression; decode returns `error.NotImplemented` for Huffman-coded blocks
+/// - **Note**: Use `lz77`, `huffman` or `lz4` when size reduction is needed
 ///
 /// ## Algorithm Selection Guide
 ///
@@ -149,11 +149,8 @@
 /// - Extremely fast decompression priority
 /// - Simple format without entropy coding
 ///
-/// Choose DEFLATE when:
-/// - ZIP/GZIP/PNG format compatibility needed
-/// - Maximum compression ratio is important
-/// - Can accept slower compression than LZ4/Snappy
-/// - Industry-standard format required
+/// Choose DEFLATE (stored blocks only) when:
+/// - A valid RFC 1951 stream is needed and size reduction is not
 /// - Web (gzip) or image (PNG) compression
 /// ```
 ///
@@ -200,7 +197,7 @@
 /// - **Arithmetic**: O(n × k) - moderate, k = alphabet size (256 for bytes)
 /// - **LZ4**: O(n) encode/decode - fastest, production-ready for real-time systems
 /// - **Snappy**: O(n) encode (~250 MB/s), O(m) decode (~500 MB/s) - very fast Google compression
-/// - **DEFLATE**: O(n log n) with lazy matching or O(n) greedy, O(m) decode - industry standard ZIP/GZIP
+/// - **DEFLATE**: O(n) encode and decode (stored blocks only)
 ///
 /// ## Memory Usage
 ///
@@ -213,8 +210,7 @@
 /// - **Arithmetic**: O(k) frequency table + O(n) output (k = 256 for bytes)
 /// - **LZ4**: O(hash_table) + O(output) - moderate memory, fast processing
 /// - **Snappy**: O(hash_table) + O(output) - similar to LZ4, simple format
-/// - **DEFLATE**: O(w) for sliding window (32KB default) + O(output) - similar to LZ77 with Huffman overhead
-
+/// - **DEFLATE**: O(output) - input plus 5 bytes of header per 65535-byte block
 pub const rle = @import("compression/rle.zig");
 pub const delta = @import("compression/delta.zig");
 pub const lz77 = @import("compression/lz77.zig");

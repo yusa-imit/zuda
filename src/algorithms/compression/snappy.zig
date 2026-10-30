@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 
@@ -35,7 +36,6 @@ const Allocator = std.mem.Allocator;
 /// - vs Zstd: Much faster, much lower compression ratio
 ///
 /// Reference: Google Snappy specification (2011)
-
 /// Encode data using Snappy compression.
 ///
 /// Time: O(n) average where n = input length
@@ -58,8 +58,10 @@ pub fn encode(allocator: Allocator, input: []const u8) (Allocator.Error || error
 
     // Hash table for finding matches (16-bit hash -> input position)
     var hash_table = [_]u32{0} ** 4096;
+    assert(input.len < std.math.maxInt(u32));
     const hash_shift = 32 - 12; // 12-bit hash
 
+    var literal_start: usize = 0;
     var input_pos: usize = 0;
     while (input_pos < input.len) {
         // Find longest match
@@ -69,38 +71,31 @@ pub fn encode(allocator: Allocator, input: []const u8) (Allocator.Error || error
         if (input_pos + 4 <= input.len) {
             const hash = hashBytes(input[input_pos..][0..4]);
             const hash_idx = hash >> hash_shift;
-            const candidate_pos = hash_table[hash_idx];
+            // Entries hold position + 1 so that zero means empty and position 0 is matchable.
+            const candidate_entry = hash_table[hash_idx];
 
-            if (candidate_pos > 0 and input_pos >= candidate_pos and input_pos - candidate_pos <= 65535) {
-                const offset = input_pos - candidate_pos;
+            if (candidate_entry > 0 and input_pos - (candidate_entry - 1) <= 65535) {
+                const candidate_pos = candidate_entry - 1;
                 const len = findMatchLength(input, candidate_pos, input_pos);
                 if (len >= 4) {
-                    match_offset = offset;
-                    match_length = len;
+                    match_offset = input_pos - candidate_pos;
+                    match_length = @min(len, copy_length_max);
                 }
             }
 
-            hash_table[hash_idx] = @intCast(input_pos);
+            hash_table[hash_idx] = @intCast(input_pos + 1);
         }
 
         if (match_length >= 4) {
-            // Emit copy chunk
+            pos += putLiteralChunks(output[pos..], input[literal_start..input_pos]);
             pos += putCopyChunk(output[pos..], match_offset, match_length);
             input_pos += match_length;
+            literal_start = input_pos;
         } else {
-            // Emit literal chunk
-            const literal_start = input_pos;
-            var literal_len: usize = 1;
-
-            // Accumulate consecutive literals (max 60 bytes per chunk)
-            while (literal_len < 60 and input_pos + literal_len < input.len) {
-                literal_len += 1;
-            }
-
-            pos += putLiteralChunk(output[pos..], input[literal_start..][0..literal_len]);
-            input_pos += literal_len;
+            input_pos += 1;
         }
     }
+    pos += putLiteralChunks(output[pos..], input[literal_start..]);
 
     return allocator.realloc(output, pos);
 }
@@ -119,6 +114,9 @@ pub fn decode(allocator: Allocator, input: []const u8) (Allocator.Error || error
     const uncompressed_len = varint_result.value;
     var pos = varint_result.bytes_read;
 
+    // Every compressed byte yields at most copy_length_max output bytes; reject larger claims.
+    if (uncompressed_len > input.len * copy_length_max) return error.CorruptedData;
+
     var output = try allocator.alloc(u8, uncompressed_len);
     errdefer allocator.free(output);
 
@@ -128,7 +126,7 @@ pub fn decode(allocator: Allocator, input: []const u8) (Allocator.Error || error
         const tag = input[pos];
         pos += 1;
 
-        const chunk_type = tag & 0x03;
+        const chunk_type: u2 = @intCast(tag & 0x03);
         const chunk_len = (tag >> 2) + 1;
 
         switch (chunk_type) {
@@ -221,18 +219,18 @@ fn putVarint(buf: []u8, value: usize) usize {
 
 fn getVarint(buf: []const u8) error{InvalidInput}!struct { value: usize, bytes_read: usize } {
     var value: usize = 0;
-    var shift: u6 = 0;
+    var shift: u7 = 0;
     var pos: usize = 0;
 
     while (pos < buf.len) {
         const byte = buf[pos];
-        value |= (@as(usize, byte & 0x7F) << shift);
+        value |= (@as(usize, byte & 0x7F) << @intCast(shift));
         pos += 1;
         if (byte & 0x80 == 0) {
             return .{ .value = value, .bytes_read = pos };
         }
         shift += 7;
-        if (shift >= 64) return error.InvalidInput;
+        if (shift >= @bitSizeOf(usize)) return error.InvalidInput;
     }
 
     return error.InvalidInput;
@@ -249,14 +247,30 @@ fn hashBytes(bytes: []const u8) u32 {
 
 fn findMatchLength(input: []const u8, pos1: usize, pos2: usize) usize {
     var len: usize = 0;
-    while (pos1 + len < pos2 and pos2 + len < input.len and input[pos1 + len] == input[pos2 + len]) {
+    while (pos2 + len < input.len and input[pos1 + len] == input[pos2 + len]) {
         len += 1;
     }
     return len;
 }
 
+/// Longest copy a single chunk encodes (6-bit length field holds length - 1).
+const copy_length_max: usize = 64;
+
+/// Write `literal` as consecutive chunks of at most 60 bytes; returns bytes written.
+fn putLiteralChunks(buf: []u8, literal: []const u8) usize {
+    var written: usize = 0;
+    var rest = literal;
+    while (rest.len > 0) {
+        const chunk_len = @min(rest.len, 60);
+        written += putLiteralChunk(buf[written..], rest[0..chunk_len]);
+        rest = rest[chunk_len..];
+    }
+    return written;
+}
+
 fn putLiteralChunk(buf: []u8, literal: []const u8) usize {
-    std.debug.assert(literal.len > 0 and literal.len <= 60);
+    std.debug.assert(literal.len > 0);
+    std.debug.assert(literal.len <= 60);
     const tag = @as(u8, @intCast((literal.len - 1) << 2)) | 0x00;
     buf[0] = tag;
     @memcpy(buf[1..][0..literal.len], literal);
@@ -339,7 +353,7 @@ test "snappy: no repetition" {
 
 test "snappy: simple repetition" {
     const allocator = testing.allocator;
-    const input = "AAAABBBB";
+    const input = "ABCD" ** 4;
 
     const compressed = try encode(allocator, input);
     defer allocator.free(compressed);
@@ -350,6 +364,26 @@ test "snappy: simple repetition" {
     defer allocator.free(decompressed);
 
     try testing.expectEqualSlices(u8, input, decompressed);
+}
+
+test "snappy: literals between matches and matches longer than one chunk round-trip" {
+    const allocator = testing.allocator;
+    const block = "0123456789abcdefghij";
+    const input = block ** 20 ++ "unique tail bytes" ++ block ** 5 ++ "x";
+
+    const compressed = try encode(allocator, input);
+    defer allocator.free(compressed);
+    try testing.expect(compressed.len < input.len / 4);
+
+    const decompressed = try decode(allocator, compressed);
+    defer allocator.free(decompressed);
+    try testing.expectEqualSlices(u8, input, decompressed);
+}
+
+test "snappy: claimed length beyond what the stream can expand to is rejected" {
+    // Varint 2^21 with a single literal chunk behind it.
+    const stream = [_]u8{ 0x80, 0x80, 0x80, 0x01, 0x00, 'a' };
+    try testing.expectError(error.CorruptedData, decode(testing.allocator, &stream));
 }
 
 test "snappy: long repetition" {
@@ -410,13 +444,13 @@ test "snappy: binary data" {
 
 test "snappy: large text with repetition" {
     const allocator = testing.allocator;
-    var input_list = std.ArrayList(u8).init(allocator);
-    defer input_list.deinit();
+    var input_list = std.ArrayList(u8).empty;
+    defer input_list.deinit(testing.allocator);
 
     const pattern = "The quick brown fox jumps over the lazy dog. ";
     var i: usize = 0;
     while (i < 100) : (i += 1) {
-        try input_list.appendSlice(pattern);
+        try input_list.appendSlice(testing.allocator, pattern);
     }
 
     const input = input_list.items;

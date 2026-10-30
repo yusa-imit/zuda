@@ -39,7 +39,7 @@ const Node = struct {
     freq: usize,
     byte: ?u8, // null for internal nodes
     left: ?*Node,
-    right: ?Node,
+    right: ?*Node,
 
     fn compare(_: void, a: *Node, b: *Node) std.math.Order {
         return std.math.order(a.freq, b.freq);
@@ -259,8 +259,8 @@ pub const HuffmanCoding = struct {
 
         if (self.root == null) return error.NoTreeBuilt;
 
-        var result = ArrayList(u8).init(self.allocator);
-        errdefer result.deinit();
+        var result = ArrayList(u8).empty;
+        errdefer result.deinit(self.allocator);
 
         var node = self.root.?;
         var bit_pos: usize = 0;
@@ -269,7 +269,7 @@ pub const HuffmanCoding = struct {
             // Single symbol case
             if (node.left == null and node.right == null) {
                 if (node.byte) |byte| {
-                    try result.append(byte);
+                    try result.append(self.allocator, byte);
                     bit_pos += 1;
                 }
                 continue;
@@ -289,14 +289,14 @@ pub const HuffmanCoding = struct {
 
             // Reached leaf
             if (node.byte) |byte| {
-                try result.append(byte);
+                try result.append(self.allocator, byte);
                 node = self.root.?;
             }
 
             bit_pos += 1;
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(self.allocator);
     }
 
     /// Get code for a symbol
@@ -621,8 +621,8 @@ test "Huffman: large data" {
     defer huff.deinit();
 
     // Generate large data with realistic distribution
-    var data = std.ArrayList(u8).init(allocator);
-    defer data.deinit();
+    var data = std.ArrayList(u8).empty;
+    defer data.deinit(allocator);
 
     var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
@@ -630,8 +630,8 @@ test "Huffman: large data" {
     for (0..1000) |_| {
         // Skewed distribution: 'a' very common, others rare
         const r = random.int(u8) % 100;
-        const byte = if (r < 70) 'a' else if (r < 85) 'b' else if (r < 95) 'c' else 'd';
-        try data.append(byte);
+        const byte: u8 = if (r < 70) 'a' else if (r < 85) 'b' else if (r < 95) 'c' else 'd';
+        try data.append(allocator, byte);
     }
 
     try huff.buildFromData(data.items);

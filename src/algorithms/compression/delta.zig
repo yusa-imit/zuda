@@ -12,7 +12,6 @@ const testing = std.testing;
 ///
 /// Time: O(n) for both encode and decode
 /// Space: O(n) - same size but often smaller values (better for entropy coding)
-
 /// Encode data using Delta Encoding
 ///
 /// Returns ArrayList where first element is the base value and remaining
@@ -35,21 +34,31 @@ pub fn encode(comptime T: type, allocator: Allocator, data: []const T) !std.Arra
         }
     }
 
-    var result = std.ArrayList(T).init(allocator);
-    errdefer result.deinit();
+    var result = std.ArrayList(T).empty;
+    errdefer result.deinit(allocator);
 
     if (data.len == 0) return result;
 
     // First element is the base value
-    try result.append(data[0]);
+    try result.append(allocator, data[0]);
 
     // Remaining elements are deltas
     for (data[1..], 1..) |value, i| {
-        const delta = value - data[i - 1];
-        try result.append(delta);
+        const delta = sub(T, value, data[i - 1]);
+        try result.append(allocator, delta);
     }
 
     return result;
+}
+
+/// Difference that wraps for integers, so every integer sequence round-trips.
+fn sub(comptime T: type, a: T, b: T) T {
+    return if (@typeInfo(T) == .int) a -% b else a - b;
+}
+
+/// Sum that wraps for integers; the inverse of `sub`.
+fn add(comptime T: type, a: T, b: T) T {
+    return if (@typeInfo(T) == .int) a +% b else a + b;
 }
 
 /// Decode delta-encoded data back to original form
@@ -84,7 +93,7 @@ pub fn decode(comptime T: type, allocator: Allocator, encoded: []const T) ![]T {
 
     // Reconstruct by accumulating deltas
     for (encoded[1..], 1..) |delta, i| {
-        output[i] = output[i - 1] + delta;
+        output[i] = add(T, output[i - 1], delta);
     }
 
     return output;
@@ -104,25 +113,25 @@ pub fn encodeSecondOrder(comptime T: type, allocator: Allocator, data: []const T
         }
     }
 
-    var result = std.ArrayList(T).init(allocator);
-    errdefer result.deinit();
+    var result = std.ArrayList(T).empty;
+    errdefer result.deinit(allocator);
 
     if (data.len == 0) return result;
     if (data.len == 1) {
-        try result.append(data[0]);
+        try result.append(allocator, data[0]);
         return result;
     }
 
     // Base value and first delta
-    try result.append(data[0]);
-    try result.append(data[1] - data[0]);
+    try result.append(allocator, data[0]);
+    try result.append(allocator, sub(T, data[1], data[0]));
 
     // Second-order deltas (delta of deltas)
-    var prev_delta = data[1] - data[0];
+    var prev_delta = sub(T, data[1], data[0]);
     for (data[2..], 1..) |value, i| {
-        const current_delta = value - data[i];
-        const delta_delta = current_delta - prev_delta;
-        try result.append(delta_delta);
+        const current_delta = sub(T, value, data[i]);
+        const delta_delta = sub(T, current_delta, prev_delta);
+        try result.append(allocator, delta_delta);
         prev_delta = current_delta;
     }
 
@@ -151,13 +160,13 @@ pub fn decodeSecondOrder(comptime T: type, allocator: Allocator, encoded: []cons
 
     // Reconstruct base and first value
     output[0] = encoded[0];
-    output[1] = output[0] + encoded[1];
+    output[1] = add(T, output[0], encoded[1]);
 
     // Reconstruct from second-order deltas
     var current_delta = encoded[1];
     for (encoded[2..], 2..) |delta_delta, i| {
-        current_delta = current_delta + delta_delta;
-        output[i] = output[i - 1] + current_delta;
+        current_delta = add(T, current_delta, delta_delta);
+        output[i] = add(T, output[i - 1], current_delta);
     }
 
     return output;
@@ -172,8 +181,9 @@ pub fn averageDelta(comptime T: type, data: []const T) f64 {
 
     var sum: f64 = 0.0;
     for (data[1..], 1..) |value, i| {
-        const delta = @abs(value - data[i - 1]);
-        sum += @as(f64, @floatFromInt(delta));
+        const current: f64 = if (@typeInfo(T) == .int) @floatFromInt(value) else @floatCast(value);
+        const previous: f64 = if (@typeInfo(T) == .int) @floatFromInt(data[i - 1]) else @floatCast(data[i - 1]);
+        sum += @abs(current - previous);
     }
 
     return sum / @as(f64, @floatFromInt(data.len - 1));
@@ -186,7 +196,7 @@ pub fn averageDelta(comptime T: type, data: []const T) f64 {
 test "Delta: basic encoding" {
     const input = [_]i32{ 100, 102, 101, 105, 103 };
     var result = try encode(i32, testing.allocator, &input);
-    defer result.deinit();
+    defer result.deinit(testing.allocator);
 
     const expected = [_]i32{ 100, 2, -1, 4, -2 };
     try testing.expectEqualSlices(i32, &expected, result.items);
@@ -204,7 +214,7 @@ test "Delta: basic decoding" {
 test "Delta: roundtrip encode-decode" {
     const original = [_]i32{ 10, 15, 12, 20, 18, 25 };
     var encoded = try encode(i32, testing.allocator, &original);
-    defer encoded.deinit();
+    defer encoded.deinit(testing.allocator);
 
     const decoded = try decode(i32, testing.allocator, encoded.items);
     defer testing.allocator.free(decoded);
@@ -215,7 +225,7 @@ test "Delta: roundtrip encode-decode" {
 test "Delta: empty input" {
     const input: []const i32 = &[_]i32{};
     var encoded = try encode(i32, testing.allocator, input);
-    defer encoded.deinit();
+    defer encoded.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 0), encoded.items.len);
 
@@ -227,7 +237,7 @@ test "Delta: empty input" {
 test "Delta: single element" {
     const input = [_]i32{42};
     var encoded = try encode(i32, testing.allocator, &input);
-    defer encoded.deinit();
+    defer encoded.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 1), encoded.items.len);
     try testing.expectEqual(@as(i32, 42), encoded.items[0]);
@@ -236,7 +246,7 @@ test "Delta: single element" {
 test "Delta: constant sequence (all zeros)" {
     const input = [_]i32{ 100, 100, 100, 100 };
     var encoded = try encode(i32, testing.allocator, &input);
-    defer encoded.deinit();
+    defer encoded.deinit(testing.allocator);
 
     const expected = [_]i32{ 100, 0, 0, 0 };
     try testing.expectEqualSlices(i32, &expected, encoded.items);
@@ -245,7 +255,7 @@ test "Delta: constant sequence (all zeros)" {
 test "Delta: linear sequence" {
     const input = [_]i32{ 0, 5, 10, 15, 20 };
     var encoded = try encode(i32, testing.allocator, &input);
-    defer encoded.deinit();
+    defer encoded.deinit(testing.allocator);
 
     const expected = [_]i32{ 0, 5, 5, 5, 5 };
     try testing.expectEqualSlices(i32, &expected, encoded.items);
@@ -254,7 +264,7 @@ test "Delta: linear sequence" {
 test "Delta: negative values" {
     const input = [_]i32{ -10, -5, -8, -2 };
     var encoded = try encode(i32, testing.allocator, &input);
-    defer encoded.deinit();
+    defer encoded.deinit(testing.allocator);
 
     const expected = [_]i32{ -10, 5, -3, 6 };
     try testing.expectEqualSlices(i32, &expected, encoded.items);
@@ -263,17 +273,50 @@ test "Delta: negative values" {
 test "Delta: unsigned integers" {
     const input = [_]u32{ 100, 105, 102, 110 };
     var encoded = try encode(u32, testing.allocator, &input);
-    defer encoded.deinit();
+    defer encoded.deinit(testing.allocator);
 
     // Note: deltas can wrap for unsigned (5, -3 wraps, 8)
     try testing.expectEqual(@as(u32, 100), encoded.items[0]);
     try testing.expectEqual(@as(u32, 5), encoded.items[1]);
 }
 
+test "Delta: unsigned decreasing sequence round-trips" {
+    const input = [_]u32{ 100, 40, 90, 0, 4_000_000_000, 7 };
+    var encoded = try encode(u32, testing.allocator, &input);
+    defer encoded.deinit(testing.allocator);
+
+    const decoded = try decode(u32, testing.allocator, encoded.items);
+    defer testing.allocator.free(decoded);
+    try testing.expectEqualSlices(u32, &input, decoded);
+}
+
+test "Delta: signed extremes round-trip in both orders" {
+    const input = [_]i32{ std.math.maxInt(i32), std.math.minInt(i32), 0, std.math.maxInt(i32), -1 };
+    var first = try encode(i32, testing.allocator, &input);
+    defer first.deinit(testing.allocator);
+    var second = try encodeSecondOrder(i32, testing.allocator, &input);
+    defer second.deinit(testing.allocator);
+
+    const decoded_first = try decode(i32, testing.allocator, first.items);
+    defer testing.allocator.free(decoded_first);
+    try testing.expectEqualSlices(i32, &input, decoded_first);
+
+    const decoded_second = try decodeSecondOrder(i32, testing.allocator, second.items);
+    defer testing.allocator.free(decoded_second);
+    try testing.expectEqualSlices(i32, &input, decoded_second);
+}
+
+test "Delta: averageDelta on unsigned and float data" {
+    const unsigned = [_]u32{ 10, 4, 10 };
+    try testing.expectApproxEqAbs(@as(f64, 6.0), averageDelta(u32, &unsigned), 1e-9);
+    const floats = [_]f32{ 1.0, 0.5, 2.0 };
+    try testing.expectApproxEqAbs(@as(f64, 1.0), averageDelta(f32, &floats), 1e-6);
+}
+
 test "Delta: floating point" {
     const input = [_]f32{ 1.0, 1.5, 1.3, 2.0 };
     var encoded = try encode(f32, testing.allocator, &input);
-    defer encoded.deinit();
+    defer encoded.deinit(testing.allocator);
 
     const decoded = try decode(f32, testing.allocator, encoded.items);
     defer testing.allocator.free(decoded);
@@ -286,7 +329,7 @@ test "Delta: floating point" {
 test "Delta: second-order encoding" {
     const input = [_]i32{ 0, 1, 4, 9, 16 }; // y = x^2
     var encoded = try encodeSecondOrder(i32, testing.allocator, &input);
-    defer encoded.deinit();
+    defer encoded.deinit(testing.allocator);
 
     // Second-order deltas should be constant (2) for quadratic
     const expected = [_]i32{ 0, 1, 2, 2, 2 };
@@ -296,7 +339,7 @@ test "Delta: second-order encoding" {
 test "Delta: second-order roundtrip" {
     const original = [_]i32{ 5, 8, 13, 20, 29 };
     var encoded = try encodeSecondOrder(i32, testing.allocator, &original);
-    defer encoded.deinit();
+    defer encoded.deinit(testing.allocator);
 
     const decoded = try decodeSecondOrder(i32, testing.allocator, encoded.items);
     defer testing.allocator.free(decoded);
@@ -307,7 +350,7 @@ test "Delta: second-order roundtrip" {
 test "Delta: second-order empty" {
     const input: []const i32 = &[_]i32{};
     var encoded = try encodeSecondOrder(i32, testing.allocator, input);
-    defer encoded.deinit();
+    defer encoded.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 0), encoded.items.len);
 }
@@ -315,7 +358,7 @@ test "Delta: second-order empty" {
 test "Delta: second-order single element" {
     const input = [_]i32{42};
     var encoded = try encodeSecondOrder(i32, testing.allocator, &input);
-    defer encoded.deinit();
+    defer encoded.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 1), encoded.items.len);
     try testing.expectEqual(@as(i32, 42), encoded.items[0]);
@@ -341,7 +384,7 @@ test "Delta: large sequence" {
     }
 
     var encoded = try encode(i32, allocator, data);
-    defer encoded.deinit();
+    defer encoded.deinit(testing.allocator);
 
     const decoded = try decode(i32, allocator, encoded.items);
     defer allocator.free(decoded);
@@ -352,7 +395,7 @@ test "Delta: large sequence" {
 test "Delta: memory safety" {
     const input = [_]i32{ 1, 2, 3 };
     var encoded = try encode(i32, testing.allocator, &input);
-    defer encoded.deinit();
+    defer encoded.deinit(testing.allocator);
 
     const decoded = try decode(i32, testing.allocator, encoded.items);
     defer testing.allocator.free(decoded);

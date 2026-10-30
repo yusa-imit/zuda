@@ -18,6 +18,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored in a container, and lands on ~18 public functions instead of ~40.
 
 ### Changed
+- All 11 `algorithms/compression/*` files now run their tests under `zig build test`; `bwt`,
+  `deflate`, `delta`, `huffman`, `lz77`, `lzss`, `rle` and `snappy` did not compile on Zig 0.16.
+  Breaking: `rle.encode`, `delta.encode*`, `lz77.encode` and `lzss.encode*` return unmanaged lists
+  (free with `deinit(gpa)`); `lz77.decode` and `lzss.decode*` return `error.CorruptedData` for
+  malformed input (also `lzss` for a truncated reference); `lzss.Config.window_size` is capped at
+  4095 and the lookahead at `min_match_length + 15`, the limits of its packed fields; `rle`'s
+  compression ratio counts a run as 4 + `@sizeOf(T)` bytes. Bugs: `delta` overflowed on unsigned
+  and extreme signed data (now wraps) and `averageDelta` did not work for unsigned or float data;
+  `rle.wouldCompress` compared against the wrong element; `lz77` appended a stray zero byte when a
+  match reached the end and never emitted overlapping matches; `lzss` panicked after eight
+  literals and corrupted offsets of 4096; `snappy` lost data on matches over 64 bytes, never
+  emitted a copy after a literal run, panicked on long varints and trusted the claimed output
+  length; `huffman.Node.right` had the wrong type. `deflate` only implements stored blocks: its
+  docs now say so, empty input yields a valid final block, and a stream without a final block is
+  rejected.
 - All 23 `algorithms/sorting/*` files now run their tests under `zig build test` (22 were reached
   only through `pub const` re-exports, so their tests never ran); `bitonicsort`, `blocksort`,
   `mergesort`, `pancakesort`, `pigeonholesort` and `strandsort` did not compile on Zig 0.16.
