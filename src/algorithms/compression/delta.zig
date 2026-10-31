@@ -1,3 +1,10 @@
+//! Delta encoding: store the first value and the differences between consecutive values.
+//!
+//! Purpose: first-order and second-order encode and decode over any integer or float type `T`.
+//! Integer subtraction and addition wrap, so every integer sequence round-trips exactly.
+//! Ownership: functions take the caller's `allocator` per call and keep no state; `encode`
+//! returns an unmanaged list (free with `deinit(allocator)`) and `decode` an owned slice.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const testing = std.testing;

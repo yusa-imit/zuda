@@ -1,3 +1,11 @@
+//! Huffman coding: an optimal prefix-free code built from byte frequencies.
+//!
+//! Purpose: build a code table from data or frequencies, then encode and decode byte strings.
+//! Ownership: `HuffmanCoding` is a managed type; `init` stores the allocator, the tree and the code
+//! table belong to the value, and `deinit` releases them. `encode` and `decode` return slices that
+//! the caller frees with the same allocator.
+//! Precondition: `encode` and `decode` run only after `buildFromData` or `buildFromFrequencies`.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;

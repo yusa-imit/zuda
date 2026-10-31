@@ -1,3 +1,9 @@
+//! LZ4-style block compression: byte-oriented matching through a small hash table.
+//!
+//! Purpose: `encode` and `decode` trade ratio for speed; `Config` sets the hash table size.
+//! Ownership: functions take the caller's `allocator` per call and keep no state; the returned
+//! slice belongs to the caller. The hash table is allocated and freed inside each call.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const testing = std.testing;
