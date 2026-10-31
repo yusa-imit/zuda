@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored in a container, and lands on ~18 public functions instead of ~40.
 
 ### Changed
+- README: Zig 0.16 badge and text, 209 distributions, about 22,000 test blocks, install note for the
+  v2.3.0 tag (Zig 0.15.2) versus `main` (Zig 0.16.0), v2.0 roadmap ticked, next release is v3.0.0.
 - All 11 `algorithms/compression/*` files now run their tests under `zig build test`; `bwt`,
   `deflate`, `delta`, `huffman`, `lz77`, `lzss`, `rle` and `snappy` did not compile on Zig 0.16.
   Breaking: `rle.encode`, `delta.encode*`, `lz77.encode` and `lzss.encode*` return unmanaged lists
