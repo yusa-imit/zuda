@@ -2,10 +2,10 @@
 
 > **Z**ig **U**niversal **D**atastructures and **A**lgorithms
 
-A comprehensive, production-ready library of data structures, algorithms, and scientific computing for Zig 0.15+. The Zig-native alternative to NumPy/SciPy.
+A comprehensive, production-ready library of data structures, algorithms, and scientific computing for Zig 0.16. The Zig-native alternative to NumPy/SciPy.
 
 [![CI](https://github.com/yusa-imit/zuda/actions/workflows/ci.yml/badge.svg)](https://github.com/yusa-imit/zuda/actions)
-[![Zig](https://img.shields.io/badge/zig-0.15.x-orange)](https://ziglang.org/)
+[![Zig](https://img.shields.io/badge/zig-0.16-orange)](https://ziglang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
@@ -15,17 +15,17 @@ A comprehensive, production-ready library of data structures, algorithms, and sc
 ### v2.0 — Scientific Computing Platform (Stable) 🚀
 - **NDArray**: N-dimensional arrays with broadcasting, slicing, SIMD acceleration (4-8× speedup)
 - **Linear Algebra**: BLAS Level 1-3 with SIMD, decompositions (LU/QR/SVD/Cholesky/Eigen), solvers (solve/lstsq/inv/pinv)
-- **Statistics**: Descriptive stats, 8 probability distributions (PDF/CDF/sampling), hypothesis testing, regression
+- **Statistics**: Descriptive stats, 209 probability distributions (PDF/CDF/sampling), hypothesis testing, regression
 - **Signal Processing**: FFT/IFFT with real FFT optimization, windowing, convolution, filtering, spectral analysis
 - **Numerical Methods**: Integration (trapezoidal/Simpson/Romberg), root finding (bisection/Newton/Brent), interpolation, ODE solvers
 - **Optimization**: Unconstrained (gradient descent/BFGS/L-BFGS/Nelder-Mead), constrained (penalty/Lagrangian/QP), LP (simplex/interior-point), auto-diff
-- **4600+ Tests**: 100% passing with comprehensive coverage including cross-module integration
+- **Tests**: about 22,000 `test` blocks, run by `zig build test` and CI on every pull request
 - **Comprehensive Documentation**: 7 tutorial guides (3385 lines, 100+ examples), NumPy compatibility guide
 
 ### v1.x — Data Structures & Algorithms (Stable)
 - **100+ Data Structures**: Lists, trees, graphs, heaps, spatial indexes, probabilistic structures
 - **80+ Algorithms**: Sorting, graph algorithms, string matching, dynamic programming, geometry, math
-- **746 Tests**: Comprehensive test coverage including property-based and fuzz testing
+- **Test coverage**: unit, property-based, model-based and fuzz tests
 
 ### Core Design
 - **Allocator-First**: Every container accepts `std.mem.Allocator` for full control
@@ -41,13 +41,16 @@ A comprehensive, production-ready library of data structures, algorithms, and sc
 
 Add to your `build.zig.zon`:
 
+> The latest release tag, v2.3.0, builds with Zig 0.15.2. `main` requires Zig 0.16.0 and ships as
+> v3.0.0; until that tag exists, pin a commit URL if you build with 0.16.
+
 ```zig
 .{
     .name = "my-project",
     .version = "0.1.0",
     .dependencies = .{
         .zuda = .{
-            .url = "https://github.com/yusa-imit/zuda/archive/refs/tags/v2.0.0.tar.gz",
+            .url = "https://github.com/yusa-imit/zuda/archive/refs/tags/v2.3.0.tar.gz",
             .hash = "1220...", // Get via `zig fetch <url>`
         },
     },
@@ -236,7 +239,7 @@ Selected benchmarks (see [API.md](docs/API.md#performance-targets-v050) for full
 ## Testing
 
 ```bash
-# Run all 701 tests
+# Run the whole test suite (several minutes)
 zig build test
 
 # Cross-compile for 6 targets
@@ -294,14 +297,14 @@ See [examples/FFI_README.md](examples/FFI_README.md) for Python, Node.js, and ot
 - [x] **Phase 5**: Concurrent, persistent, exotic, C API, FFI
 - [x] **v1.0**: Documentation, decision guides, consumer migration support
 
-### v2.0 — Scientific Computing (In Progress)
-- [ ] **Phase 6**: NDArray foundation (multi-dimensional array, broadcasting, element-wise ops)
-- [ ] **Phase 7**: Linear algebra (BLAS, decompositions, solvers, sparse matrices)
-- [ ] **Phase 8**: Statistics & random (distributions, hypothesis testing, regression)
-- [ ] **Phase 9**: Transforms & signal processing (FFT, convolution, filtering)
-- [ ] **Phase 10**: Numerical methods (integration, interpolation, ODE solvers, root finding)
-- [ ] **Phase 11**: Optimization (gradient descent, L-BFGS, linear programming, auto-diff)
-- [ ] **Phase 12**: v2.0 integration, SIMD acceleration, NumPy compatibility guide
+### v2.0 — Scientific Computing (Shipped in v2.0.0)
+- [x] **Phase 6**: NDArray foundation (multi-dimensional array, broadcasting, element-wise ops)
+- [x] **Phase 7**: Linear algebra (BLAS, decompositions, solvers, sparse matrices)
+- [x] **Phase 8**: Statistics & random (distributions, hypothesis testing, regression)
+- [x] **Phase 9**: Transforms & signal processing (FFT, convolution, filtering)
+- [x] **Phase 10**: Numerical methods (integration, interpolation, ODE solvers, root finding)
+- [x] **Phase 11**: Optimization (gradient descent, L-BFGS, linear programming, auto-diff)
+- [x] **Phase 12**: v2.0 integration, SIMD acceleration, NumPy compatibility guide
 
 See [PRD.md](docs/PRD.md) for detailed roadmap and [milestones.md](docs/milestones.md) for progress tracking.
 
@@ -344,7 +347,7 @@ Contributions welcome! Please:
 - **v0.2.0**: Phase 2 complete — Trees, spatial structures, suffix arrays/trees
 - **v0.1.0**: Phase 1 complete — Foundations (lists, queues, heaps, hash tables)
 
-**Next**: v2.0.0 — Scientific computing platform (NDArray, linear algebra, statistics, FFT, numerical methods, optimization)
+**Next**: v3.0.0 — the Zig 0.16 release (`std.Io` injection, seeded PRNGs); see `CHANGELOG.md` and `docs/plans/`
 
 ---
 
