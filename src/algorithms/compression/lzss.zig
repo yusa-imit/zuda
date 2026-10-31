@@ -52,8 +52,10 @@
 ///
 /// ## Configuration Parameters
 ///
-/// - `window_size`: Sliding window size (default: 4096, typical: 2048-8192)
-/// - `lookahead_size`: Look-ahead buffer (default: 18, typical: 16-32)
+/// - `window_size`: Sliding window size (default: 4095; values above 4095 are clamped because
+///   offsets are stored in 12 bits)
+/// - `lookahead_size`: Look-ahead buffer (default: 18; clamped to `min_match_length + 15`
+///   because match lengths are stored in 4 bits)
 /// - `min_match_length`: Minimum match to encode (default: 3, typical: 2-4)
 ///
 /// ## Format
@@ -67,7 +69,7 @@
 /// - bit = 1: next item is 2 bytes (offset, length) packed
 ///
 /// (offset, length) encoding:
-/// - 12 bits for offset (0-4095 for window_size=4096)
+/// - 12 bits for offset (0-4095 for window_size=4095)
 /// - 4 bits for length (3-18 for min=3, lookahead=18)
 /// - Packed as: [offset_high:4 | length:4] [offset_low:8]
 /// ```
@@ -116,15 +118,20 @@
 /// vs. Deflate (LZ77+Huffman):
 /// - LZSS: simpler, faster decode
 /// - Deflate: better compression, widely supported
-
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
+/// Largest backward offset that fits the 12-bit offset field.
+pub const window_size_max: u16 = 4095;
+
+/// Largest value of the 4-bit length field (match length minus `min_match_length`).
+const length_extra_max: u8 = 15;
+
 /// Configuration for LZSS compression
 pub const Config = struct {
-    /// Sliding window size (must be power of 2 for efficient masking)
-    window_size: u16 = 4096,
+    /// Sliding window size; the 12-bit offset field caps it at `window_size_max`.
+    window_size: u16 = window_size_max,
     /// Look-ahead buffer size
     lookahead_size: u8 = 18,
     /// Minimum match length to encode (2-4 typical)
@@ -155,20 +162,20 @@ pub fn encode(allocator: Allocator, input: []const u8) !ArrayList(u8) {
 /// Space: O(w + L)
 pub fn encodeWithConfig(allocator: Allocator, input: []const u8, config: Config) !ArrayList(u8) {
     if (input.len == 0) {
-        return ArrayList(u8).init(allocator);
+        return ArrayList(u8).empty;
     }
 
-    var output = ArrayList(u8).init(allocator);
-    errdefer output.deinit();
+    var output = ArrayList(u8).empty;
+    errdefer output.deinit(allocator);
 
     var pos: usize = 0;
 
     while (pos < input.len) {
         // Collect up to 8 items for one flag byte
         var flag_byte: u8 = 0;
-        var flag_pos: u3 = 0;
-        var items = ArrayList(u8).init(allocator);
-        defer items.deinit();
+        var flag_pos: u4 = 0;
+        var items = ArrayList(u8).empty;
+        defer items.deinit(allocator);
 
         while (flag_pos < 8 and pos < input.len) {
             // Find longest match in sliding window
@@ -176,7 +183,7 @@ pub fn encodeWithConfig(allocator: Allocator, input: []const u8, config: Config)
 
             if (match.length >= config.min_match_length) {
                 // Encode as reference
-                flag_byte |= (@as(u8, 1) << flag_pos);
+                flag_byte |= (@as(u8, 1) << @intCast(flag_pos));
 
                 // Pack (offset, length) into 2 bytes
                 // offset: 12 bits (0-4095), length: 4 bits (encoded as length - min_match_length)
@@ -184,13 +191,13 @@ pub fn encodeWithConfig(allocator: Allocator, input: []const u8, config: Config)
                 const byte1 = @as(u8, @intCast((match.offset >> 4) & 0xFF));
                 const byte2 = @as(u8, @intCast(((match.offset & 0x0F) << 4) | (encoded_length & 0x0F)));
 
-                try items.append(byte1);
-                try items.append(byte2);
+                try items.append(allocator, byte1);
+                try items.append(allocator, byte2);
 
                 pos += match.length;
             } else {
                 // Encode as literal
-                try items.append(input[pos]);
+                try items.append(allocator, input[pos]);
                 pos += 1;
             }
 
@@ -198,8 +205,8 @@ pub fn encodeWithConfig(allocator: Allocator, input: []const u8, config: Config)
         }
 
         // Write flag byte followed by items
-        try output.append(flag_byte);
-        try output.appendSlice(items.items);
+        try output.append(allocator, flag_byte);
+        try output.appendSlice(allocator, items.items);
     }
 
     return output;
@@ -216,8 +223,10 @@ const Match = struct {
 /// Time: O(w × L) where w = window size, L = lookahead size
 /// Space: O(1)
 fn findLongestMatch(input: []const u8, pos: usize, config: Config) Match {
-    const window_start = if (pos > config.window_size) pos - config.window_size else 0;
-    const lookahead_end = @min(pos + config.lookahead_size, input.len);
+    const window_size = @min(config.window_size, window_size_max);
+    const lookahead_size = @min(config.lookahead_size, config.min_match_length +| length_extra_max);
+    const window_start = if (pos > window_size) pos - window_size else 0;
+    const lookahead_end = @min(pos + lookahead_size, input.len);
 
     var best_match = Match{ .offset = 0, .length = 0 };
 
@@ -244,11 +253,14 @@ fn findLongestMatch(input: []const u8, pos: usize, config: Config) Match {
     return best_match;
 }
 
+/// Errors returned for malformed compressed input.
+pub const DecodeError = error{ CorruptedData, OutOfMemory };
+
 /// Decode LZSS compressed data
 ///
 /// Time: O(m) where m = output length
 /// Space: O(w) for reconstruction window
-pub fn decode(allocator: Allocator, compressed: []const u8) ![]u8 {
+pub fn decode(allocator: Allocator, compressed: []const u8) DecodeError![]u8 {
     return decodeWithConfig(allocator, compressed, .{});
 }
 
@@ -256,13 +268,17 @@ pub fn decode(allocator: Allocator, compressed: []const u8) ![]u8 {
 ///
 /// Time: O(m)
 /// Space: O(w)
-pub fn decodeWithConfig(allocator: Allocator, compressed: []const u8, config: Config) ![]u8 {
+pub fn decodeWithConfig(
+    allocator: Allocator,
+    compressed: []const u8,
+    config: Config,
+) DecodeError![]u8 {
     if (compressed.len == 0) {
         return try allocator.alloc(u8, 0);
     }
 
-    var output = ArrayList(u8).init(allocator);
-    errdefer output.deinit();
+    var output = ArrayList(u8).empty;
+    errdefer output.deinit(allocator);
 
     var pos: usize = 0;
 
@@ -272,13 +288,13 @@ pub fn decodeWithConfig(allocator: Allocator, compressed: []const u8, config: Co
         pos += 1;
 
         // Process up to 8 items
-        var flag_pos: u3 = 0;
+        var flag_pos: u4 = 0;
         while (flag_pos < 8 and pos < compressed.len) {
-            const is_reference = (flag_byte & (@as(u8, 1) << flag_pos)) != 0;
+            const is_reference = (flag_byte & (@as(u8, 1) << @intCast(flag_pos))) != 0;
 
             if (is_reference) {
                 // Decode reference (offset, length)
-                if (pos + 1 >= compressed.len) break;
+                if (pos + 1 >= compressed.len) return error.CorruptedData;
 
                 const byte1 = compressed[pos];
                 const byte2 = compressed[pos + 1];
@@ -289,15 +305,17 @@ pub fn decodeWithConfig(allocator: Allocator, compressed: []const u8, config: Co
                 const encoded_length = byte2 & 0x0F;
                 const length = encoded_length + config.min_match_length;
 
+                if (offset == 0 or offset > output.items.len) return error.CorruptedData;
+
                 // Copy from window
                 const copy_start = output.items.len - offset;
                 var i: u8 = 0;
                 while (i < length) : (i += 1) {
-                    try output.append(output.items[copy_start + i]);
+                    try output.append(allocator, output.items[copy_start + i]);
                 }
             } else {
                 // Literal byte
-                try output.append(compressed[pos]);
+                try output.append(allocator, compressed[pos]);
                 pos += 1;
             }
 
@@ -305,7 +323,7 @@ pub fn decodeWithConfig(allocator: Allocator, compressed: []const u8, config: Co
         }
     }
 
-    return output.toOwnedSlice();
+    return output.toOwnedSlice(allocator);
 }
 
 /// Compute compression ratio
@@ -328,7 +346,7 @@ test "LZSS: empty input" {
     const allocator = testing.allocator;
 
     var compressed = try encode(allocator, "");
-    defer compressed.deinit();
+    defer compressed.deinit(testing.allocator);
     try expectEqual(@as(usize, 0), compressed.items.len);
 
     const decompressed = try decode(allocator, compressed.items);
@@ -341,7 +359,7 @@ test "LZSS: single character" {
 
     const input = "A";
     var compressed = try encode(allocator, input);
-    defer compressed.deinit();
+    defer compressed.deinit(testing.allocator);
 
     const decompressed = try decode(allocator, compressed.items);
     defer allocator.free(decompressed);
@@ -354,7 +372,7 @@ test "LZSS: no repetition (all literals)" {
 
     const input = "ABCDEFGH";
     var compressed = try encode(allocator, input);
-    defer compressed.deinit();
+    defer compressed.deinit(testing.allocator);
 
     const decompressed = try decode(allocator, compressed.items);
     defer allocator.free(decompressed);
@@ -368,7 +386,7 @@ test "LZSS: simple repetition" {
 
     const input = "ABCABCABC";
     var compressed = try encode(allocator, input);
-    defer compressed.deinit();
+    defer compressed.deinit(testing.allocator);
 
     const decompressed = try decode(allocator, compressed.items);
     defer allocator.free(decompressed);
@@ -383,7 +401,7 @@ test "LZSS: long repetition" {
 
     const input = "AAAAAAAAAAAAAAAA"; // 16 A's
     var compressed = try encode(allocator, input);
-    defer compressed.deinit();
+    defer compressed.deinit(testing.allocator);
 
     const decompressed = try decode(allocator, compressed.items);
     defer allocator.free(decompressed);
@@ -398,7 +416,7 @@ test "LZSS: pattern repetition" {
 
     const input = "ABCDABCDABCDABCD";
     var compressed = try encode(allocator, input);
-    defer compressed.deinit();
+    defer compressed.deinit(testing.allocator);
 
     const decompressed = try decode(allocator, compressed.items);
     defer allocator.free(decompressed);
@@ -411,7 +429,7 @@ test "LZSS: mixed literals and references" {
 
     const input = "Hello world! Hello again!";
     var compressed = try encode(allocator, input);
-    defer compressed.deinit();
+    defer compressed.deinit(testing.allocator);
 
     const decompressed = try decode(allocator, compressed.items);
     defer allocator.free(decompressed);
@@ -424,7 +442,7 @@ test "LZSS: overlapping matches" {
 
     const input = "ABABABABABAB"; // Overlapping AB pattern
     var compressed = try encode(allocator, input);
-    defer compressed.deinit();
+    defer compressed.deinit(testing.allocator);
 
     const decompressed = try decode(allocator, compressed.items);
     defer allocator.free(decompressed);
@@ -437,7 +455,7 @@ test "LZSS: binary data" {
 
     const input = &[_]u8{ 0x00, 0x01, 0x02, 0x00, 0x01, 0x02, 0xFF, 0xFE };
     var compressed = try encode(allocator, input);
-    defer compressed.deinit();
+    defer compressed.deinit(testing.allocator);
 
     const decompressed = try decode(allocator, compressed.items);
     defer allocator.free(decompressed);
@@ -456,7 +474,7 @@ test "LZSS: custom config - smaller window" {
     };
 
     var compressed = try encodeWithConfig(allocator, input, config);
-    defer compressed.deinit();
+    defer compressed.deinit(testing.allocator);
 
     const decompressed = try decodeWithConfig(allocator, compressed.items, config);
     defer allocator.free(decompressed);
@@ -469,13 +487,13 @@ test "LZSS: custom config - min match 2" {
 
     const input = "ABABCDCDEFEFGH";
     const config = Config{
-        .window_size = 4096,
+        .window_size = 4095,
         .lookahead_size = 18,
         .min_match_length = 2, // Encode 2-byte matches
     };
 
     var compressed = try encodeWithConfig(allocator, input, config);
-    defer compressed.deinit();
+    defer compressed.deinit(testing.allocator);
 
     const decompressed = try decodeWithConfig(allocator, compressed.items, config);
     defer allocator.free(decompressed);
@@ -487,16 +505,16 @@ test "LZSS: large text" {
     const allocator = testing.allocator;
 
     // Create large repetitive text
-    var input = ArrayList(u8).init(allocator);
-    defer input.deinit();
+    var input = ArrayList(u8).empty;
+    defer input.deinit(testing.allocator);
 
     var i: usize = 0;
     while (i < 100) : (i += 1) {
-        try input.appendSlice("Lorem ipsum dolor sit amet. ");
+        try input.appendSlice(testing.allocator, "Lorem ipsum dolor sit amet. ");
     }
 
     var compressed = try encode(allocator, input.items);
-    defer compressed.deinit();
+    defer compressed.deinit(testing.allocator);
 
     const decompressed = try decode(allocator, compressed.items);
     defer allocator.free(decompressed);
@@ -516,14 +534,14 @@ test "LZSS: edge case - maximum lookahead match" {
 
     // Create pattern longer than lookahead buffer
     const pattern = "0123456789ABCDEFGHIJ"; // 20 bytes > default lookahead (18)
-    var input = ArrayList(u8).init(allocator);
-    defer input.deinit();
+    var input = ArrayList(u8).empty;
+    defer input.deinit(testing.allocator);
 
-    try input.appendSlice(pattern);
-    try input.appendSlice(pattern); // Repeat
+    try input.appendSlice(testing.allocator, pattern);
+    try input.appendSlice(testing.allocator, pattern); // Repeat
 
     var compressed = try encode(allocator, input.items);
-    defer compressed.deinit();
+    defer compressed.deinit(testing.allocator);
 
     const decompressed = try decode(allocator, compressed.items);
     defer allocator.free(decompressed);
@@ -539,11 +557,56 @@ test "LZSS: memory safety - 10 iterations" {
     var i: usize = 0;
     while (i < 10) : (i += 1) {
         var compressed = try encode(allocator, input);
-        defer compressed.deinit();
+        defer compressed.deinit(testing.allocator);
 
         const decompressed = try decode(allocator, compressed.items);
         defer allocator.free(decompressed);
 
         try expectEqualSlices(u8, input, decompressed);
     }
+}
+
+test "LZSS: repeat at the 4096-byte window limit round-trips" {
+    const allocator = testing.allocator;
+
+    var input: [8192]u8 = undefined;
+    var state: u32 = 12345;
+    for (input[0..4096]) |*byte| {
+        state = state *% 1664525 +% 1013904223;
+        byte.* = @truncate(state >> 24);
+    }
+    @memcpy(input[4096..], input[0..4096]);
+
+    var compressed = try encodeWithConfig(allocator, &input, .{
+        .window_size = 4096,
+        .lookahead_size = 18,
+        .min_match_length = 3,
+    });
+    defer compressed.deinit(allocator);
+
+    const decompressed = try decode(allocator, compressed.items);
+    defer allocator.free(decompressed);
+    try expectEqualSlices(u8, &input, decompressed);
+}
+
+test "LZSS: lookahead above the 4-bit length field is clamped" {
+    const allocator = testing.allocator;
+
+    const input = "ab" ** 40;
+    const config = Config{ .window_size = 256, .lookahead_size = 40, .min_match_length = 2 };
+    var compressed = try encodeWithConfig(allocator, input, config);
+    defer compressed.deinit(allocator);
+
+    const decompressed = try decodeWithConfig(allocator, compressed.items, config);
+    defer allocator.free(decompressed);
+    try expectEqualSlices(u8, input, decompressed);
+}
+
+test "LZSS: corrupted streams are rejected" {
+    const allocator = testing.allocator;
+
+    // Flag byte says reference, but the offset points before the start of the output.
+    try testing.expectError(error.CorruptedData, decode(allocator, &[_]u8{ 0x01, 0x00, 0x10 }));
+    // Flag byte says reference, but only one of its two bytes is present.
+    try testing.expectError(error.CorruptedData, decode(allocator, &[_]u8{ 0x01, 0x00 }));
 }

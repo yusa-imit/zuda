@@ -26,7 +26,6 @@ const testing = std.testing;
 /// - More complex implementation
 /// - Requires high-precision arithmetic
 /// - Patent concerns (expired in 2015 for most variants)
-
 /// Frequency table entry
 pub const FrequencyEntry = struct {
     symbol: u8,

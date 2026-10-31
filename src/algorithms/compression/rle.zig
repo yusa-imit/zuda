@@ -12,7 +12,6 @@ const testing = std.testing;
 ///
 /// Time: O(n) for both encode and decode
 /// Space: O(n) worst case (all unique values), O(k) best case (k runs)
-
 /// Encode data using Run-Length Encoding
 ///
 /// Returns ArrayList of (count, value) pairs where each pair represents
@@ -29,8 +28,8 @@ const testing = std.testing;
 /// // result = [(3, 'A'), (2, 'B'), (1, 'C')]
 /// ```
 pub fn encode(comptime T: type, allocator: Allocator, data: []const T) !std.ArrayList(Run(T)) {
-    var runs = std.ArrayList(Run(T)).init(allocator);
-    errdefer runs.deinit();
+    var runs = std.ArrayList(Run(T)).empty;
+    errdefer runs.deinit(allocator);
 
     if (data.len == 0) return runs;
 
@@ -41,14 +40,14 @@ pub fn encode(comptime T: type, allocator: Allocator, data: []const T) !std.Arra
         if (std.meta.eql(value, current_value)) {
             current_count += 1;
         } else {
-            try runs.append(.{ .count = current_count, .value = current_value });
+            try runs.append(allocator, .{ .count = current_count, .value = current_value });
             current_value = value;
             current_count = 1;
         }
     }
 
     // Append final run
-    try runs.append(.{ .count = current_count, .value = current_value });
+    try runs.append(allocator, .{ .count = current_count, .value = current_value });
 
     return runs;
 }
@@ -101,7 +100,8 @@ pub fn compressionRatio(comptime T: type, original_len: usize, runs_len: usize) 
     if (runs_len == 0) return 0.0;
 
     const original_bytes = original_len * @sizeOf(T);
-    const compressed_bytes = runs_len * @sizeOf(Run(T));
+    // Wire size of a run: a u32 count followed by the value, without struct padding.
+    const compressed_bytes = runs_len * (@sizeOf(u32) + @sizeOf(T));
 
     return @as(f64, @floatFromInt(original_bytes)) / @as(f64, @floatFromInt(compressed_bytes));
 }
@@ -114,8 +114,8 @@ pub fn wouldCompress(comptime T: type, data: []const T) bool {
     if (data.len == 0) return false;
 
     var run_count: usize = 1;
-    for (data[1..]) |value| {
-        if (!std.meta.eql(value, data[run_count - 1])) {
+    for (data[1..], 0..) |value, previous_index| {
+        if (!std.meta.eql(value, data[previous_index])) {
             run_count += 1;
         }
     }
@@ -138,7 +138,7 @@ pub fn Run(comptime T: type) type {
 test "RLE: basic encoding" {
     const input = [_]u8{ 'A', 'A', 'A', 'B', 'B', 'C' };
     var runs = try encode(u8, testing.allocator, &input);
-    defer runs.deinit();
+    defer runs.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 3), runs.items.len);
     try testing.expectEqual(@as(u32, 3), runs.items[0].count);
@@ -165,7 +165,7 @@ test "RLE: basic decoding" {
 test "RLE: roundtrip encode-decode" {
     const original = [_]u8{ 1, 1, 1, 2, 2, 3, 3, 3, 3, 4 };
     var runs = try encode(u8, testing.allocator, &original);
-    defer runs.deinit();
+    defer runs.deinit(testing.allocator);
 
     const decoded = try decode(u8, testing.allocator, runs.items);
     defer testing.allocator.free(decoded);
@@ -176,7 +176,7 @@ test "RLE: roundtrip encode-decode" {
 test "RLE: empty input" {
     const input: []const u8 = &[_]u8{};
     var runs = try encode(u8, testing.allocator, input);
-    defer runs.deinit();
+    defer runs.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 0), runs.items.len);
 
@@ -188,7 +188,7 @@ test "RLE: empty input" {
 test "RLE: single element" {
     const input = [_]u8{'X'};
     var runs = try encode(u8, testing.allocator, &input);
-    defer runs.deinit();
+    defer runs.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 1), runs.items.len);
     try testing.expectEqual(@as(u32, 1), runs.items[0].count);
@@ -198,7 +198,7 @@ test "RLE: single element" {
 test "RLE: all identical" {
     const input = [_]u8{ 'Z', 'Z', 'Z', 'Z', 'Z' };
     var runs = try encode(u8, testing.allocator, &input);
-    defer runs.deinit();
+    defer runs.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 1), runs.items.len);
     try testing.expectEqual(@as(u32, 5), runs.items[0].count);
@@ -208,7 +208,7 @@ test "RLE: all identical" {
 test "RLE: all unique (worst case)" {
     const input = [_]u8{ 'A', 'B', 'C', 'D', 'E' };
     var runs = try encode(u8, testing.allocator, &input);
-    defer runs.deinit();
+    defer runs.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 5), runs.items.len);
     for (runs.items) |run| {
@@ -219,7 +219,7 @@ test "RLE: all unique (worst case)" {
 test "RLE: compression ratio - highly compressible" {
     const input = [_]u8{ 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A' };
     var runs = try encode(u8, testing.allocator, &input);
-    defer runs.deinit();
+    defer runs.deinit(testing.allocator);
 
     const ratio = compressionRatio(u8, input.len, runs.items.len);
     try testing.expect(ratio > 1.0); // Should compress well
@@ -228,14 +228,14 @@ test "RLE: compression ratio - highly compressible" {
 test "RLE: compression ratio - not compressible" {
     const input = [_]u8{ 'A', 'B', 'C', 'D' };
     var runs = try encode(u8, testing.allocator, &input);
-    defer runs.deinit();
+    defer runs.deinit(testing.allocator);
 
     const ratio = compressionRatio(u8, input.len, runs.items.len);
     try testing.expect(ratio < 1.0); // Should expand (worse than original)
 }
 
 test "RLE: wouldCompress check" {
-    const compressible = [_]u8{ 'A', 'A', 'A', 'B', 'B', 'B' };
+    const compressible = [_]u8{ 'A', 'A', 'A', 'A', 'A', 'A', 'B', 'B', 'B', 'B', 'B', 'B' };
     try testing.expect(wouldCompress(u8, &compressible));
 
     const not_compressible = [_]u8{ 'A', 'B', 'C', 'D' };
@@ -245,7 +245,7 @@ test "RLE: wouldCompress check" {
 test "RLE: numeric types" {
     const input = [_]i32{ 10, 10, 20, 20, 20, 30 };
     var runs = try encode(i32, testing.allocator, &input);
-    defer runs.deinit();
+    defer runs.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 3), runs.items.len);
     try testing.expectEqual(@as(u32, 2), runs.items[0].count);
@@ -261,7 +261,7 @@ test "RLE: large run count" {
     @memset(data, 'X');
 
     var runs = try encode(u8, allocator, data);
-    defer runs.deinit();
+    defer runs.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 1), runs.items.len);
     try testing.expectEqual(@as(u32, 10000), runs.items[0].count);
@@ -270,7 +270,7 @@ test "RLE: large run count" {
 test "RLE: memory safety" {
     const input = [_]u8{ 'A', 'A', 'B' };
     var runs = try encode(u8, testing.allocator, &input);
-    defer runs.deinit();
+    defer runs.deinit(testing.allocator);
 
     const decoded = try decode(u8, testing.allocator, runs.items);
     defer testing.allocator.free(decoded);

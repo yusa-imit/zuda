@@ -903,6 +903,17 @@ test {
     _ = @import("algorithms/geometry/polygon.zig");
     _ = @import("algorithms/geometry/rotating_calipers.zig");
     _ = @import("algorithms/geometry/voronoi.zig");
+    _ = @import("algorithms/compression/arithmetic.zig");
+    _ = @import("algorithms/compression/bwt.zig");
+    _ = @import("algorithms/compression/deflate.zig");
+    _ = @import("algorithms/compression/delta.zig");
+    _ = @import("algorithms/compression/huffman.zig");
+    _ = @import("algorithms/compression/lz4.zig");
+    _ = @import("algorithms/compression/lz77.zig");
+    _ = @import("algorithms/compression/lzss.zig");
+    _ = @import("algorithms/compression/rle.zig");
+    _ = @import("algorithms/compression/snappy.zig");
+    _ = @import("algorithms/compression/zstd.zig");
     _ = @import("algorithms/dynamic_programming/bitonic_subsequence.zig");
     _ = @import("algorithms/dynamic_programming/distinct_subsequences.zig");
     _ = @import("algorithms/dynamic_programming/edit_distance.zig");
