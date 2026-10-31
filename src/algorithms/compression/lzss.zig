@@ -1,3 +1,12 @@
+//! LZSS: LZ77 with flag bits, so a literal costs one byte plus a flag and a match costs two bytes.
+//!
+//! Purpose: `encode`/`decode` and the `WithConfig` forms. `Config.window_size` is capped at 4095
+//! and the lookahead at `min_match_length + 15`, the limits of the packed 12-bit offset and
+//! 4-bit length.
+//! A truncated or out-of-range reference returns `error.CorruptedData`.
+//! Ownership: functions take the caller's `allocator` per call and keep no state; `encode*` returns
+//! an unmanaged list (free with `deinit(allocator)`), `decode*` an owned slice.
+
 /// LZSS (Lempel-Ziv-Storer-Szymanski) Compression
 ///
 /// LZSS is an improved variant of LZ77 that addresses a key inefficiency:

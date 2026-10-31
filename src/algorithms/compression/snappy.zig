@@ -1,3 +1,11 @@
+//! Snappy-style compression: a fast byte-oriented format with literal and copy elements.
+//!
+//! Purpose: `encode` and `decode` plus `WithConfig` forms. Empty input is `error.EmptyInput` on
+//! encode; a malformed stream is `error.InvalidInput` or `error.CorruptedData` on decode, never an
+//! assertion, because the stream is user data.
+//! Ownership: functions take the caller's `allocator` per call and keep no state; the returned
+//! slice belongs to the caller.
+
 const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;

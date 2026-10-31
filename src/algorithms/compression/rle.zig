@@ -1,3 +1,11 @@
+//! Run-length encoding: replace each run of equal values with a (count, value) pair.
+//!
+//! Purpose: generic over the element type `T`; `Run(T)` is the pair type. `compressionRatio`
+//! counts a run as 4 bytes of count plus `@sizeOf(T)`; `wouldCompress` predicts whether encoding
+//! shrinks the data.
+//! Ownership: functions take the caller's `allocator` per call and keep no state; `encode`
+//! returns an unmanaged list (free with `deinit(allocator)`), `decode` an owned slice.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const testing = std.testing;

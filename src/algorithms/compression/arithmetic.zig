@@ -1,3 +1,11 @@
+//! Arithmetic coding: statistical compression of a byte string against a frequency table.
+//!
+//! Purpose: encode a byte string against its frequency table and decode it back.
+//! Ownership: `encode` and `decode` take the caller's `allocator` per call and keep no state; the
+//! returned `CompressionResult` and `DecompressionResult` own their buffers and are released with
+//! `deinit(allocator)` using the same allocator.
+//! Complexity: O(n) time over the input plus O(256) for the frequency table.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const testing = std.testing;

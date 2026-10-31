@@ -1,3 +1,11 @@
+//! LZ77: dictionary compression with a sliding window, emitting `Token` values.
+//!
+//! Purpose: `encode` turns bytes into (offset, length, next byte) tokens, `decode` replays them,
+//! including overlapping matches. Malformed tokens (offset beyond the output, zero offset with a
+//! length) return `error.CorruptedData`; they are data errors, not asserted.
+//! Ownership: `encode` returns an unmanaged list and `decode` an owned slice, both freed by
+//! the caller with the allocator passed to the call; no state is kept between calls.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;

@@ -1,3 +1,11 @@
+//! Burrows-Wheeler transform: a reversible permutation that groups similar bytes together.
+//!
+//! Purpose: `encode` returns the last column of the sorted rotations plus the row index of the
+//! original string; `decode` and `decodeFast` invert it. The transform alone does not shrink data.
+//! Ownership: every function takes the caller's `allocator` per call and keeps no state; the result
+//! buffers belong to the caller, and `BWTResult.deinit(allocator)` frees an encode result.
+//! Precondition: the `index` passed to `decode` comes from the matching `encode` call.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const testing = std.testing;
