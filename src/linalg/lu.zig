@@ -234,7 +234,7 @@ fn verifyDecomposition(comptime T: type, allocator: Allocator, original: NDArray
         for (0..n) |j| {
             var sum: T = 0;
             for (0..n) |k| {
-                const L_val = if (k < i + 1) result.L.data[i * n + k] else if (k == i) 1 else 0;
+                const L_val = if (k < i + 1) result.L.data[i * n + k] else if (k == i) @as(T, 1) else @as(T, 0);
                 const U_val = if (k <= j) result.U.data[k * n + j] else 0;
                 sum += L_val * U_val;
             }

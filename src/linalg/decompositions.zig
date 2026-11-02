@@ -2524,10 +2524,10 @@ test "svd: Hilbert matrix (ill-conditioned)" {
 
     // 4x4 Hilbert matrix (very ill-conditioned)
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        1,      0.5,    1.0/3, 0.25,
-        0.5,    1.0/3,  0.25,  0.2,
-        1.0/3,  0.25,   0.2,   1.0/6,
-        0.25,   0.2,    1.0/6, 1.0/7,
+        1,      0.5,    1.0 / 3.0, 0.25,
+        0.5,    1.0 / 3.0,  0.25,  0.2,
+        1.0 / 3.0,  0.25,   0.2,   1.0 / 6.0,
+        0.25,   0.2,    1.0 / 6.0, 1.0 / 7.0,
     }, .row_major);
     defer A.deinit();
 
@@ -2682,20 +2682,19 @@ pub fn EigResult(comptime T: type) type {
 }
 
 /// Verify that eigenvectors form an orthonormal set: V^T @ V = I
-fn verifyEigOrthonormality(comptime T: type, allocator: Allocator, V: NDArray(T, 2), tolerance: T) !void {
+fn verifyEigOrthonormality(comptime T: type, V: NDArray(T, 2), tolerance: T) !void {
     const m = V.shape[1];
 
     // Compute V^T @ V
-    var VT = try V.transpose(allocator);
-    defer VT.deinit();
+    const VT = V.transpose();
 
-    var VTV = try NDArray(T, 2).matmul(allocator, VT, V);
+    var VTV = try VT.matmul(&V);
     defer VTV.deinit();
 
     // Check that V^T @ V ≈ I
     for (0..m) |i| {
         for (0..m) |j| {
-            const val = VTV.get(&[_]usize{ i, j });
+            const val = try VTV.get(&[_]isize{ @intCast(i), @intCast(j) });
             if (i == j) {
                 // Diagonal should be 1
                 try testing.expectApproxEqAbs(val, @as(T, 1.0), tolerance);
@@ -2715,24 +2714,23 @@ fn verifyEigReconstruction(comptime T: type, allocator: Allocator, A: NDArray(T,
     var lambda = try NDArray(T, 2).zeros(allocator, &[_]usize{ n, n }, .row_major);
     defer lambda.deinit();
     for (0..n) |i| {
-        lambda.set(&[_]usize{ i, i }, eigenvalues.data[i]);
+        lambda.set(&[_]isize{ @intCast(i), @intCast(i) }, eigenvalues.data[i]);
     }
 
     // Compute V @ diag(λ) @ V^T
-    var V_lambda = try NDArray(T, 2).matmul(allocator, V, lambda);
+    var V_lambda = try V.matmul(&lambda);
     defer V_lambda.deinit();
 
-    var VT = try V.transpose(allocator);
-    defer VT.deinit();
+    const VT = V.transpose();
 
-    var A_reconstructed = try NDArray(T, 2).matmul(allocator, V_lambda, VT);
+    var A_reconstructed = try V_lambda.matmul(&VT);
     defer A_reconstructed.deinit();
 
     // Check reconstruction error
     for (0..n) |i| {
         for (0..n) |j| {
-            const a_val = A.get(&[_]usize{ i, j });
-            const r_val = A_reconstructed.get(&[_]usize{ i, j });
+            const a_val = try A.get(&[_]isize{ @intCast(i), @intCast(j) });
+            const r_val = try A_reconstructed.get(&[_]isize{ @intCast(i), @intCast(j) });
             try testing.expectApproxEqAbs(a_val, r_val, tolerance);
         }
     }
@@ -2752,24 +2750,24 @@ fn verifyEigProperty(comptime T: type, allocator: Allocator, A: NDArray(T, 2), V
     const n = A.shape[0];
 
     // Compute A @ V
-    var AV = try NDArray(T, 2).matmul(allocator, A, V);
+    var AV = try A.matmul(&V);
     defer AV.deinit();
 
     // Compute V @ diag(λ)
     var lambda = try NDArray(T, 2).zeros(allocator, &[_]usize{ n, n }, .row_major);
     defer lambda.deinit();
     for (0..n) |i| {
-        lambda.set(&[_]usize{ i, i }, eigenvalues.data[i]);
+        lambda.set(&[_]isize{ @intCast(i), @intCast(i) }, eigenvalues.data[i]);
     }
 
-    var V_lambda = try NDArray(T, 2).matmul(allocator, V, lambda);
+    var V_lambda = try V.matmul(&lambda);
     defer V_lambda.deinit();
 
     // Check A @ V ≈ V @ diag(λ)
     for (0..n) |i| {
         for (0..n) |j| {
-            const av_val = AV.get(&[_]usize{ i, j });
-            const vl_val = V_lambda.get(&[_]usize{ i, j });
+            const av_val = try AV.get(&[_]isize{ @intCast(i), @intCast(j) });
+            const vl_val = try V_lambda.get(&[_]isize{ @intCast(i), @intCast(j) });
             try testing.expectApproxEqAbs(av_val, vl_val, tolerance);
         }
     }
@@ -2782,8 +2780,8 @@ fn verifySymmetric(comptime T: type, A: NDArray(T, 2), tolerance: T) !void {
 
     for (0..n) |i| {
         for (0..n) |j| {
-            const a_val = A.get(&[_]usize{ i, j });
-            const at_val = A.get(&[_]usize{ j, i });
+            const a_val = try A.get(&[_]isize{ @intCast(i), @intCast(j) });
+            const at_val = try A.get(&[_]isize{ @intCast(j), @intCast(i) });
             try testing.expectApproxEqAbs(a_val, at_val, tolerance);
         }
     }
@@ -2798,8 +2796,8 @@ fn isSymmetricMatrix(comptime T: type, A: NDArray(T, 2), tolerance: T) !bool {
 
     for (0..n) |i| {
         for (0..n) |j| {
-            const a_val = A.get(&[_]usize{ i, j });
-            const at_val = A.get(&[_]usize{ j, i });
+            const a_val = try A.get(&[_]isize{ @intCast(i), @intCast(j) });
+            const at_val = try A.get(&[_]isize{ @intCast(j), @intCast(i) });
             const diff = @abs(a_val - at_val);
             if (diff > tolerance) {
                 return false;
@@ -2876,7 +2874,7 @@ pub fn eig(comptime T: type, A: NDArray(T, 2), allocator: Allocator) (NDArray(T,
     errdefer A_k.deinit();
     for (0..n) |i| {
         for (0..n) |j| {
-            A_k.data[i * n + j] = A.get(&[_]usize{ i, j });
+            A_k.data[i * n + j] = try A.get(&[_]isize{ @intCast(i), @intCast(j) });
         }
     }
 
@@ -2896,10 +2894,10 @@ pub fn eig(comptime T: type, A: NDArray(T, 2), allocator: Allocator) (NDArray(T,
         defer qr_result.deinit();
 
         // Update: A_{k+1} = R_k @ Q_k (matrix multiplication)
-        const R_Q = try NDArray(T, 2).matmul(allocator, qr_result.R, qr_result.Q);
+        const R_Q = try qr_result.R.matmul(&qr_result.Q);
 
         // Accumulate eigenvectors: V = V @ Q_k
-        const V_new = try NDArray(T, 2).matmul(allocator, V, qr_result.Q);
+        const V_new = try V.matmul(&qr_result.Q);
         V.deinit();
         V = V_new;
 
@@ -3003,7 +3001,7 @@ test "eig: 2x2 identity matrix" {
     try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, 1.0), 1e-10);
 
     // Eigenvectors should be orthonormal
-    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigOrthonormality(f64, result.eigenvectors, 1e-10);
 
     // Verify reconstruction
     try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
@@ -3027,7 +3025,7 @@ test "eig: 3x3 identity matrix" {
         try testing.expectApproxEqAbs(result.eigenvalues.data[i], @as(f64, 1.0), 1e-10);
     }
 
-    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigOrthonormality(f64, result.eigenvectors, 1e-10);
     try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
 }
 
@@ -3050,7 +3048,7 @@ test "eig: 4x4 identity matrix" {
         try testing.expectApproxEqAbs(result.eigenvalues.data[i], @as(f64, 1.0), 1e-10);
     }
 
-    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigOrthonormality(f64, result.eigenvectors, 1e-10);
     try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
 }
 
@@ -3070,7 +3068,7 @@ test "eig: 2x2 diagonal matrix" {
     try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f64, 5.0), 1e-10);
     try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, 3.0), 1e-10);
 
-    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigOrthonormality(f64, result.eigenvectors, 1e-10);
     try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
 }
 
@@ -3092,7 +3090,7 @@ test "eig: 3x3 diagonal matrix" {
     try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, 3.0), 1e-10);
     try testing.expectApproxEqAbs(result.eigenvalues.data[2], @as(f64, 2.0), 1e-10);
 
-    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigOrthonormality(f64, result.eigenvectors, 1e-10);
     try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
 }
 
@@ -3112,7 +3110,7 @@ test "eig: 2x2 simple symmetric matrix" {
     try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f64, 3.0), 1e-10);
     try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, -1.0), 1e-10);
 
-    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigOrthonormality(f64, result.eigenvectors, 1e-10);
     try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
     try verifyEigProperty(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
 }
@@ -3135,7 +3133,7 @@ test "eig: 3x3 simple symmetric matrix" {
     try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, 2.0), 1e-10);
     try testing.expectApproxEqAbs(result.eigenvalues.data[2], @as(f64, 1.0), 1e-10);
 
-    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigOrthonormality(f64, result.eigenvectors, 1e-10);
     try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
 }
 
@@ -3157,7 +3155,7 @@ test "eig: all zeros matrix" {
         try testing.expectApproxEqAbs(result.eigenvalues.data[i], @as(f64, 0.0), 1e-10);
     }
 
-    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigOrthonormality(f64, result.eigenvectors, 1e-10);
     try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
 }
 
@@ -3178,7 +3176,7 @@ test "eig: single eigenvalue with multiplicity" {
     try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f64, 2.0), 1e-10);
     try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, 2.0), 1e-10);
 
-    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigOrthonormality(f64, result.eigenvectors, 1e-10);
     try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
 }
 
@@ -3197,7 +3195,7 @@ test "eig: orthonormality validation" {
     defer result.deinit();
 
     // Verify V^T @ V = I
-    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigOrthonormality(f64, result.eigenvectors, 1e-10);
 }
 
 test "eig: reconstruction accuracy" {
@@ -3251,7 +3249,7 @@ test "eig: f32 precision" {
     try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f32, 3.0), 1e-5);
     try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f32, -1.0), 1e-5);
 
-    try verifyEigOrthonormality(f32, allocator, result.eigenvectors, 1e-5);
+    try verifyEigOrthonormality(f32, result.eigenvectors, 1e-5);
 }
 
 test "eig: f64 precision" {
@@ -3270,7 +3268,7 @@ test "eig: f64 precision" {
     try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f64, 3.0), 1e-10);
     try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, -1.0), 1e-10);
 
-    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigOrthonormality(f64, result.eigenvectors, 1e-10);
 }
 
 test "eig: small values (numerical stability)" {
@@ -3289,7 +3287,7 @@ test "eig: small values (numerical stability)" {
     try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f64, 3e-10), 1e-15);
     try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, -1e-10), 1e-15);
 
-    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-8);
+    try verifyEigOrthonormality(f64, result.eigenvectors, 1e-8);
 }
 
 test "eig: large values (numerical stability)" {
@@ -3308,7 +3306,7 @@ test "eig: large values (numerical stability)" {
     try testing.expectApproxEqAbs(result.eigenvalues.data[0], @as(f64, 3e10), 1e5);
     try testing.expectApproxEqAbs(result.eigenvalues.data[1], @as(f64, -1e10), 1e5);
 
-    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-8);
+    try verifyEigOrthonormality(f64, result.eigenvectors, 1e-8);
 }
 
 test "eig: memory cleanup — no leaks" {
@@ -3347,7 +3345,7 @@ test "eig: positive definite covariance matrix" {
         try testing.expect(result.eigenvalues.data[i] > 0);
     }
 
-    try verifyEigOrthonormality(f64, allocator, result.eigenvectors, 1e-10);
+    try verifyEigOrthonormality(f64, result.eigenvectors, 1e-10);
     try verifyEigReconstruction(f64, allocator, A, result.eigenvectors, result.eigenvalues, 1e-10);
 }
 

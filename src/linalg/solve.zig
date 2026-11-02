@@ -2505,7 +2505,7 @@ test "pinv: identity matrix — pinv(I) = I" {
 
     // pinv(I) should equal I
     for (0..9) |idx| {
-        const expected = if (idx % 4 == 0) 1.0 else 0.0;
+        const expected: f64 = if (idx % 4 == 0) 1.0 else 0.0;
         try testing.expectApproxEqAbs(expected, I_pinv.data[idx], 1e-10);
     }
 }
