@@ -155,7 +155,7 @@ fn solveOverdetermined(
 
     // Compute c = Q^T b (m×1 = m×m @ m×1)
     var c = try NDArray(T, 1).zeros(allocator, &[_]usize{m}, .row_major);
-    errdefer c.deinit();
+    defer c.deinit();
 
     for (0..m) |i| {
         var sum: T = 0;
@@ -170,6 +170,12 @@ fn solveOverdetermined(
     var x = try NDArray(T, 1).zeros(allocator, &[_]usize{n}, .row_major);
     errdefer x.deinit();
 
+    // A diagonal entry of R that is rounding noise relative to the largest one means the
+    // columns of A are linearly dependent.
+    var r_scale: T = 0;
+    for (0..n) |i| r_scale = @max(r_scale, @abs(R.data[i * n + i]));
+    const r_tol = r_scale * @as(T, @floatFromInt(m)) * 16 * std.math.floatEps(T);
+
     // Back substitution from row n-1 to 0
     for (0..n) |idx| {
         const i = n - 1 - idx;
@@ -182,16 +188,13 @@ fn solveOverdetermined(
 
         // R[i,i] should be non-zero for least squares solution to exist
         const Rii = R.data[i * n + i];
-        if (@abs(Rii) < 1e-15) {
-            c.deinit();
-            x.deinit();
+        if (@abs(Rii) <= r_tol) {
             return error.SingularMatrix;
         }
 
         x.data[i] = (c.data[i] - sum) / Rii;
     }
 
-    c.deinit();
     return x;
 }
 
@@ -800,9 +803,9 @@ test "solve: 3x3 general square matrix" {
 
     // A = [[2, 1, -1], [-3, -1, 2], [-2, 1, 2]], b = [8, -11, -3]
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
-        2, 1, -1,
+        2,  1,  -1,
         -3, -1, 2,
-        -2, 1, 2,
+        -2, 1,  2,
     }, .row_major);
     defer A.deinit();
 
@@ -1020,9 +1023,9 @@ test "solve: f32 precision general" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f32{
-        2, 1, -1,
+        2,  1,  -1,
         -3, -1, 2,
-        -2, 1, 2,
+        -2, 1,  2,
     }, .row_major);
     defer A.deinit();
 
@@ -1085,8 +1088,8 @@ test "solve: reconstruction Ax ≈ b (3x3 general)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
-        6, 2, 1,
-        2, 4, -1,
+        6, 2,  1,
+        2, 4,  -1,
         1, -1, 3,
     }, .row_major);
     defer A.deinit();
@@ -1138,9 +1141,9 @@ test "solve: memory cleanup — no leaks (general)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
-        2, 1, -1,
+        2,  1,  -1,
         -3, -1, 2,
-        -2, 1, 2,
+        -2, 1,  2,
     }, .row_major);
     defer A.deinit();
 
@@ -1177,7 +1180,7 @@ test "solve: negative values in system" {
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
         -2, 1,
-        1, -2,
+        1,  -2,
     }, .row_major);
     defer A.deinit();
 
@@ -1208,7 +1211,7 @@ test "solve: large values in system" {
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
         1000, 1,
-        1, 1000,
+        1,    1000,
     }, .row_major);
     defer A.deinit();
 
@@ -1239,9 +1242,9 @@ test "solve: nearly singular matrix (ill-conditioned)" {
 
     // Hilbert-like matrix (ill-conditioned but invertible)
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
-        1.0, 0.5, 1.0 / 3.0,
-        0.5, 1.0 / 3.0, 0.25,
-        1.0 / 3.0, 0.25, 0.2,
+        1.0,       0.5,       1.0 / 3.0,
+        0.5,       1.0 / 3.0, 0.25,
+        1.0 / 3.0, 0.25,      0.2,
     }, .row_major);
     defer A.deinit();
 
@@ -1337,8 +1340,11 @@ test "lstsq: 4x2 overdetermined with noise (minimal residual)" {
     }
     residual_norm = @sqrt(residual_norm);
 
-    // Residual should be small (minimized by least squares)
-    try testing.expect(residual_norm < 0.2);
+    // The normal equations give slope 3.3/5 = 0.66 and intercept 1.9 - 0.66 * 1.5 = 0.91,
+    // whose residual norm is sqrt(0.042) ~ 0.2049 (the minimum over all x).
+    try testing.expectApproxEqAbs(0.91, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(0.66, x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@sqrt(0.042), residual_norm, 1e-10);
 }
 
 test "lstsq: 5x3 overdetermined system" {
@@ -1468,7 +1474,11 @@ test "lstsq: f32 precision (1e-5 tolerance)" {
     }
     residual_norm = @sqrt(residual_norm);
 
-    try testing.expect(residual_norm < 0.1);
+    // The b above is not on a line: the least-squares fit is 0.8 + 0.8 t with residual
+    // sqrt(0.3), so the check is against the optimum, not against zero.
+    try testing.expectApproxEqAbs(@as(f32, 0.8), x.data[0], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 0.8), x.data[1], 1e-5);
+    try testing.expectApproxEqAbs(@sqrt(@as(f32, 0.3)), residual_norm, 1e-5);
 }
 
 test "lstsq: f64 precision (1e-10 tolerance)" {
@@ -1573,7 +1583,7 @@ test "lstsq: single column with weights (different scales)" {
     const allocator = testing.allocator;
 
     // A = [[2], [2], [2]] (3x1), b = [2, 4, 6]
-    // Solution: x = 1 (minimize ||[2x, 2x, 2x] - [2, 4, 6]||)
+    // Solution: x = 2 (minimize ||[2x, 2x, 2x] - [2, 4, 6]||: x = 2 * (2 + 4 + 6) / (4 * 3))
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 1 }, &[_]f64{
         2,
         2,
@@ -1587,7 +1597,7 @@ test "lstsq: single column with weights (different scales)" {
     var x = try solve(f64, A, b, allocator);
     defer x.deinit();
 
-    try testing.expectApproxEqAbs(1.5, x.data[0], 1e-10);
+    try testing.expectApproxEqAbs(2.0, x.data[0], 1e-10);
 }
 
 test "lstsq: zero b vector (overdetermined)" {
@@ -1665,10 +1675,12 @@ test "lstsq: large overdetermined system (100x50)" {
     var b_data = try allocator.alloc(f64, m);
     defer allocator.free(b_data);
 
-    // Fill with simple pattern (not truly random, but deterministic)
+    // Seeded pseudo-random entries: the product pattern (i + 1)(j + 1) is rank 1 and singular.
+    var prng = std.Random.DefaultPrng.init(0x5eed);
+    const random = prng.random();
     for (0..m) |i| {
         for (0..n) |j| {
-            A_data[i * n + j] = @as(f64, @floatFromInt((i + 1) * (j + 1))) / 1000.0;
+            A_data[i * n + j] = random.float(f64);
         }
         b_data[i] = @as(f64, @floatFromInt((i + 1) * 10)) / 100.0;
     }
@@ -1941,9 +1953,9 @@ test "inv: inverse property A @ A⁻¹ = I (3x3)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
-        2, 1, -1,
+        2,  1,  -1,
         -3, -1, 2,
-        -2, 1, 2,
+        -2, 1,  2,
     }, .row_major);
     defer A.deinit();
 
@@ -1979,9 +1991,9 @@ test "inv: inverse property A⁻¹ @ A = I (3x3)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
-        2, 1, -1,
+        2,  1,  -1,
         -3, -1, 2,
-        -2, 1, 2,
+        -2, 1,  2,
     }, .row_major);
     defer A.deinit();
 
@@ -2086,7 +2098,7 @@ test "inv: negative values in matrix" {
     // A = [[-2, 1], [1, -2]]
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
         -2, 1,
-        1, -2,
+        1,  -2,
     }, .row_major);
     defer A.deinit();
 
@@ -2122,7 +2134,7 @@ test "inv: large values in matrix" {
     // A = [[1000, 1], [1, 1000]]
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
         1000, 1,
-        1, 1000,
+        1,    1000,
     }, .row_major);
     defer A.deinit();
 
@@ -2157,7 +2169,7 @@ test "inv: small values in matrix" {
 
     // A = [[0.001, 0.0005], [0.0005, 0.002]]
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
-        0.001, 0.0005,
+        0.001,  0.0005,
         0.0005, 0.002,
     }, .row_major);
     defer A.deinit();
@@ -2192,9 +2204,9 @@ test "inv: ill-conditioned Hilbert matrix (invertible)" {
 
     // 3x3 Hilbert matrix (ill-conditioned but invertible)
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
-        1.0, 0.5, 1.0 / 3.0,
-        0.5, 1.0 / 3.0, 0.25,
-        1.0 / 3.0, 0.25, 0.2,
+        1.0,       0.5,       1.0 / 3.0,
+        0.5,       1.0 / 3.0, 0.25,
+        1.0 / 3.0, 0.25,      0.2,
     }, .row_major);
     defer A.deinit();
 
@@ -2264,9 +2276,9 @@ test "inv: f64 precision (3x3)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
-        2, 1, -1,
+        2,  1,  -1,
         -3, -1, 2,
-        -2, 1, 2,
+        -2, 1,  2,
     }, .row_major);
     defer A.deinit();
 
@@ -2354,9 +2366,9 @@ test "inv: memory cleanup — no leaks (3x3)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
-        2, 1, -1,
+        2,  1,  -1,
         -3, -1, 2,
-        -2, 1, 2,
+        -2, 1,  2,
     }, .row_major);
     defer A.deinit();
 
@@ -2549,8 +2561,8 @@ test "pinv: rank-1 matrix (outer product)" {
 
     // Rank-1 matrix: [1, 2, 3]^T × [4, 5]
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 2 }, &[_]f64{
-        4, 5,
-        8, 10,
+        4,  5,
+        8,  10,
         12, 15,
     }, .row_major);
     defer A.deinit();
@@ -2615,14 +2627,15 @@ test "pinv: zero rows (bottom rows all zeros)" {
     try testing.expect(A_pinv.shape[0] == 2 and A_pinv.shape[1] == 4);
 
     // Verify Moore-Penrose property 1: A A⁺ A = A
-    var temp = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 4, 2 }, .row_major);
+    // temp = A⁺ A is 2×2
+    var temp = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
     defer temp.deinit();
 
-    for (0..4) |i| {
+    for (0..2) |i| {
         for (0..2) |j| {
             var sum: f64 = 0;
             for (0..4) |k| {
-                sum += A_pinv.data[j * 4 + k] * A.data[k * 2 + i];
+                sum += A_pinv.data[i * 4 + k] * A.data[k * 2 + j];
             }
             temp.data[i * 2 + j] = sum;
         }
@@ -2928,15 +2941,15 @@ test "pinv: very tall matrix (10×2)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 10, 2 }, &[_]f64{
-        1, 1,
-        2, 1,
-        3, 1,
-        4, 1,
-        5, 1,
-        6, 1,
-        7, 1,
-        8, 1,
-        9, 1,
+        1,  1,
+        2,  1,
+        3,  1,
+        4,  1,
+        5,  1,
+        6,  1,
+        7,  1,
+        8,  1,
+        9,  1,
         10, 1,
     }, .row_major);
     defer A.deinit();
@@ -2948,14 +2961,15 @@ test "pinv: very tall matrix (10×2)" {
     try testing.expect(A_pinv.shape[0] == 2 and A_pinv.shape[1] == 10);
 
     // Verify Moore-Penrose property 1: AA⁺A = A
-    var temp = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 10, 2 }, .row_major);
+    // temp = A⁺ A is 2×2
+    var temp = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
     defer temp.deinit();
 
-    for (0..10) |i| {
+    for (0..2) |i| {
         for (0..2) |j| {
             var sum: f64 = 0;
             for (0..10) |k| {
-                sum += A_pinv.data[j * 10 + k] * A.data[k * 2 + i];
+                sum += A_pinv.data[i * 10 + k] * A.data[k * 2 + j];
             }
             temp.data[i * 2 + j] = sum;
         }
@@ -3040,14 +3054,15 @@ test "pinv: f32 precision (3×2)" {
     defer A_pinv.deinit();
 
     // Verify Moore-Penrose property 1: AA⁺A = A (f32 tolerance)
-    var temp = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 3, 2 }, .row_major);
+    // temp = A⁺ A is 2×2
+    var temp = try NDArray(f32, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
     defer temp.deinit();
 
-    for (0..3) |i| {
+    for (0..2) |i| {
         for (0..2) |j| {
             var sum: f32 = 0;
-            for (0..2) |k| {
-                sum += A_pinv.data[i * 2 + k] * A.data[k * 2 + j];
+            for (0..3) |k| {
+                sum += A_pinv.data[i * 3 + k] * A.data[k * 2 + j];
             }
             temp.data[i * 2 + j] = sum;
         }
@@ -3075,9 +3090,9 @@ test "pinv: f64 precision (4×3)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 3 }, &[_]f64{
-        1, 2, 3,
-        4, 5, 6,
-        7, 8, 9,
+        1,  2,  3,
+        4,  5,  6,
+        7,  8,  9,
         10, 11, 12,
     }, .row_major);
     defer A.deinit();
@@ -3086,14 +3101,15 @@ test "pinv: f64 precision (4×3)" {
     defer A_pinv.deinit();
 
     // Verify Moore-Penrose property 1: AA⁺A = A (f64 tolerance)
-    var temp = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 4, 3 }, .row_major);
+    // temp = A⁺ A is 3×3
+    var temp = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 3, 3 }, .row_major);
     defer temp.deinit();
 
-    for (0..4) |i| {
+    for (0..3) |i| {
         for (0..3) |j| {
             var sum: f64 = 0;
-            for (0..3) |k| {
-                sum += A_pinv.data[i * 3 + k] * A.data[k * 3 + j];
+            for (0..4) |k| {
+                sum += A_pinv.data[i * 4 + k] * A.data[k * 3 + j];
             }
             temp.data[i * 3 + j] = sum;
         }
@@ -3122,10 +3138,10 @@ test "pinv: ill-conditioned Hilbert matrix (rank-deficient)" {
 
     // 4×4 Hilbert matrix (ill-conditioned, low rank)
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        1.0, 0.5, 1.0 / 3.0, 0.25,
-        0.5, 1.0 / 3.0, 0.25, 0.2,
-        1.0 / 3.0, 0.25, 0.2, 1.0 / 6.0,
-        0.25, 0.2, 1.0 / 6.0, 1.0 / 7.0,
+        1.0,       0.5,       1.0 / 3.0, 0.25,
+        0.5,       1.0 / 3.0, 0.25,      0.2,
+        1.0 / 3.0, 0.25,      0.2,       1.0 / 6.0,
+        0.25,      0.2,       1.0 / 6.0, 1.0 / 7.0,
     }, .row_major);
     defer A.deinit();
 
@@ -3169,9 +3185,9 @@ test "pinv: small singular values (near machine epsilon) — cutoff test" {
 
     // Matrix with very small singular values
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
-        1e-10, 0, 0,
-        0, 1e-15, 0,
-        0, 0, 1,
+        1e-10, 0,     0,
+        0,     1e-15, 0,
+        0,     0,     1,
     }, .row_major);
     defer A.deinit();
 

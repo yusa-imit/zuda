@@ -461,7 +461,7 @@ test "cond: Hilbert 3x3" {
 
     // Hilbert matrix: H[i,j] = 1/(i+j+1)
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
-        1.0, 1.0 / 2.0, 1.0 / 3.0,
+        1.0,       1.0 / 2.0, 1.0 / 3.0,
         1.0 / 2.0, 1.0 / 3.0, 1.0 / 4.0,
         1.0 / 3.0, 1.0 / 4.0, 1.0 / 5.0,
     }, .row_major);
@@ -477,7 +477,7 @@ test "cond: Hilbert 4x4" {
 
     // Hilbert matrix 4x4: H[i,j] = 1/(i+j+1)
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        1.0, 1.0 / 2.0, 1.0 / 3.0, 1.0 / 4.0,
+        1.0,       1.0 / 2.0, 1.0 / 3.0, 1.0 / 4.0,
         1.0 / 2.0, 1.0 / 3.0, 1.0 / 4.0, 1.0 / 5.0,
         1.0 / 3.0, 1.0 / 4.0, 1.0 / 5.0, 1.0 / 6.0,
         1.0 / 4.0, 1.0 / 5.0, 1.0 / 6.0, 1.0 / 7.0,
@@ -508,9 +508,9 @@ test "cond: diagonal wide range 1e-6 to 1" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
-        1e-6, 0, 0,
-        0, 1e-3, 0,
-        0, 0, 1,
+        1e-6, 0,    0,
+        0,    1e-3, 0,
+        0,    0,    1,
     }, .row_major);
     defer A.deinit();
 
@@ -525,7 +525,7 @@ test "cond: stretched matrix high condition" {
     // Matrix with highly different singular values
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
         100, 0,
-        0, 1,
+        0,   1,
     }, .row_major);
     defer A.deinit();
 
@@ -610,8 +610,8 @@ test "cond: f64 precision with known cond" {
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
         10, 0, 0,
-        0, 5, 0,
-        0, 0, 1,
+        0,  5, 0,
+        0,  0, 1,
     }, .row_major);
     defer A.deinit();
 

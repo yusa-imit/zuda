@@ -844,6 +844,10 @@ test {
     _ = @import("linalg/sparse.zig");
     _ = @import("linalg/preconditioner.zig");
     _ = @import("linalg/iterative.zig");
+    _ = @import("linalg/decompositions.zig");
+    _ = @import("linalg/lu.zig");
+    _ = @import("linalg/solve.zig");
+    _ = @import("linalg/properties.zig");
     _ = @import("algorithms/backtracking/combination_sum.zig");
     _ = @import("algorithms/backtracking/hamiltonian.zig");
     _ = @import("algorithms/backtracking/knights_tour.zig");

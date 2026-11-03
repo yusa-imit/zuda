@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const testing = std.testing;
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const root = @import("../root.zig");
 const NDArray = root.ndarray.NDArray;
@@ -732,8 +733,9 @@ test "qr: large values (numerical stability)" {
     defer result.deinit();
 
     try verifyOrthogonality(f64, allocator, result.Q, 1e-8);
-    try verifyUpperTriangular(f64, result.R, 1e-8);
-    try verifyQRReconstruction(f64, allocator, A, result.Q, result.R, 1e-8);
+    try verifyUpperTriangular(f64, result.R, 1e-8 * 1e10);
+    // Entries are 1e10, so the absolute reconstruction tolerance scales with them.
+    try verifyQRReconstruction(f64, allocator, A, result.Q, result.R, 1e-8 * 1e10);
 }
 
 test "qr: orthonormality of columns (least squares application)" {
@@ -827,7 +829,7 @@ test "qr: invalid dimensions — m < n returns error" {
 /// // L = [[2, 0], [1, sqrt(2)]]
 /// // Verify: A ≈ L @ L^T
 /// ```
-pub fn cholesky(comptime T: type, A: NDArray(T, 2), allocator: Allocator) (NDArray(T, 2).Error || std.mem.Allocator.Error || error{NotPositiveDefinite, NonSquareMatrix})!NDArray(T, 2) {
+pub fn cholesky(comptime T: type, A: NDArray(T, 2), allocator: Allocator) (NDArray(T, 2).Error || std.mem.Allocator.Error || error{ NotPositiveDefinite, NonSquareMatrix })!NDArray(T, 2) {
     const n = A.shape[0];
     const m = A.shape[1];
 
@@ -1067,14 +1069,14 @@ test "cholesky: 3x3 simple SPD matrix" {
     defer L.deinit();
     // Compute L[0,0] = sqrt(4) = 2
     // Compute L[1,0] = 2/2 = 1, L[1,1] = sqrt(5-1) = 2
-    // Compute L[2,0] = 1/2 = 0.5, L[2,1] = (3-0.5*2)/2 = 1, L[2,2] = sqrt(6-0.5^2-1^2) = sqrt(4.75)
+    // Compute L[2,0] = 1/2 = 0.5, L[2,1] = (3-0.5*1)/2 = 1.25, L[2,2] = sqrt(6-0.5^2-1.25^2) = sqrt(4.1875)
     for (0..9) |i| L.data[i] = 0;
     L.data[0 * 3 + 0] = 2;
     L.data[1 * 3 + 0] = 1;
     L.data[1 * 3 + 1] = 2;
     L.data[2 * 3 + 0] = 0.5;
-    L.data[2 * 3 + 1] = 1;
-    L.data[2 * 3 + 2] = @sqrt(4.75);
+    L.data[2 * 3 + 1] = 1.25;
+    L.data[2 * 3 + 2] = @sqrt(4.1875);
 
     try verifyLowerTriangular(f64, L, 1e-10);
     try verifyCholeskyReconstruction(f64, allocator, A, L, 1e-9);
@@ -1178,8 +1180,8 @@ test "cholesky: f64 precision" {
     L.data[1 * 3 + 0] = 1;
     L.data[1 * 3 + 1] = 2;
     L.data[2 * 3 + 0] = 0.5;
-    L.data[2 * 3 + 1] = 1;
-    L.data[2 * 3 + 2] = @sqrt(4.75);
+    L.data[2 * 3 + 1] = 1.25;
+    L.data[2 * 3 + 2] = @sqrt(4.1875);
 
     try verifyLowerTriangular(f64, L, 1e-10);
     try verifyCholeskyReconstruction(f64, allocator, A, L, 1e-9);
@@ -1440,7 +1442,7 @@ pub fn SVDResult(comptime T: type) type {
     };
 }
 
-/// Compute Singular Value Decomposition (SVD) using Golub-Reinsch algorithm
+/// Compute Singular Value Decomposition (SVD) using one-sided Jacobi rotations
 ///
 /// Factorizes matrix A (m×n) into A = U @ diag(S) @ Vt where:
 /// - U is an m×k orthogonal matrix (left singular vectors), k = min(m,n)
@@ -1453,10 +1455,10 @@ pub fn SVDResult(comptime T: type) type {
 /// - Computing pseudo-inverses
 /// - Least squares solutions
 ///
-/// Algorithm: Golub-Reinsch
-/// 1. Bidiagonalize A via Householder reflections (O(mn²))
-/// 2. Apply QR iteration to bidiagonal matrix to find singular values (O(n³) worst case)
-/// 3. Accumulate orthogonal transformations to form U and V
+/// Algorithm: one-sided Jacobi (Hestenes), run on A when m >= n and on A^T otherwise
+/// 1. Rotate pairs of columns until all columns are mutually orthogonal (at most 60 sweeps)
+/// 2. Singular values are the column norms; the normalized columns form U
+/// 3. The accumulated rotations form V; left vectors of zero singular values are completed
 ///
 /// Parameters:
 /// - T: Numeric type (f32, f64)
@@ -1487,66 +1489,53 @@ pub fn svd(comptime T: type, A: NDArray(T, 2), allocator: Allocator) (NDArray(T,
     const m = A.shape[0];
     const n = A.shape[1];
     const k = @min(m, n);
+    // The Jacobi iteration needs a tall working matrix: factor A^T when A is wide.
+    const wide = m < n;
+    const rows = @max(m, n);
+    assert(rows >= k);
+    assert(rows == m or rows == n);
 
-    // Working copy of A (will be bidiagonalized in-place)
-    var B = try NDArray(T, 2).zeros(allocator, &[_]usize{ m, n }, .row_major);
-    errdefer B.deinit();
-
-    // Copy A into B, respecting input layout
-    for (0..m) |i| {
-        for (0..n) |j| {
-            B.data[i * n + j] = try A.get(&[_]isize{ @intCast(i), @intCast(j) });
-        }
-    }
-
-    // Initialize U as m×k identity
     var U = try NDArray(T, 2).zeros(allocator, &[_]usize{ m, k }, .row_major);
     errdefer U.deinit();
-    for (0..@min(m, k)) |i| {
-        U.data[i * k + i] = 1;
-    }
-
-    // Initialize Vt as k×n identity
     var Vt = try NDArray(T, 2).zeros(allocator, &[_]usize{ k, n }, .row_major);
     errdefer Vt.deinit();
-    for (0..@min(k, n)) |i| {
-        Vt.data[i * n + i] = 1;
-    }
-
-    // Singular values vector
     var S = try NDArray(T, 1).zeros(allocator, &[_]usize{k}, .row_major);
     errdefer S.deinit();
 
-    // Bidiagonalize B and accumulate transformations
-    try bidiagonalize(T, &B, &U, &Vt, allocator);
+    // The second half of `work` holds the k×k rotation matrix V.
+    const work = try allocator.alloc(T, rows * k + k * k);
+    defer allocator.free(work);
 
-    // Extract diagonal and superdiagonal
-    var diag = try allocator.alloc(T, k);
-    defer allocator.free(diag);
-    var super = try allocator.alloc(T, k);
-    defer allocator.free(super);
-
-    for (0..k) |i| {
-        diag[i] = B.data[i * n + i];
-        if (i < k - 1 and i + 1 < n) {
-            super[i] = B.data[i * n + (i + 1)];
-        } else {
-            super[i] = 0;
+    const w = work[0 .. rows * k];
+    const v = work[rows * k ..];
+    for (0..rows) |i| {
+        for (0..k) |j| {
+            const row: isize = @intCast(if (wide) j else i);
+            const col: isize = @intCast(if (wide) i else j);
+            w[i * k + j] = try A.get(&[_]isize{ row, col });
         }
     }
+    jacobiFactor(T, w, v, S.data, rows, k);
 
-    // QR iteration to diagonalize
-    try qrIterateBidiagonal(T, diag, super, &U, &Vt, k, m, n, allocator);
-
-    // Copy singular values (absolute values)
-    for (0..k) |i| {
-        S.data[i] = @abs(diag[i]);
+    // Tall: A = W S V^T, so U = W and Vt = V^T. Wide: A^T = W S V^T gives U = V, Vt = W^T.
+    for (0..k) |j| {
+        for (0..k) |i| {
+            if (wide) {
+                U.data[i * k + j] = v[i * k + j];
+            } else {
+                Vt.data[j * n + i] = v[i * k + j];
+            }
+        }
     }
-
-    // Sort in descending order
-    sortSingularValues(T, &S, &U, &Vt, k, m, n);
-
-    B.deinit();
+    for (0..rows) |i| {
+        for (0..k) |j| {
+            if (wide) {
+                Vt.data[j * n + i] = w[i * k + j];
+            } else {
+                U.data[i * k + j] = w[i * k + j];
+            }
+        }
+    }
 
     return SVDResult(T){
         .U = U,
@@ -1556,297 +1545,151 @@ pub fn svd(comptime T: type, A: NDArray(T, 2), allocator: Allocator) (NDArray(T,
     };
 }
 
-/// Bidiagonalize matrix B using Householder reflections
-fn bidiagonalize(comptime T: type, B: *NDArray(T, 2), U: *NDArray(T, 2), Vt: *NDArray(T, 2), allocator: Allocator) !void {
-    const m = B.shape[0];
-    const n = B.shape[1];
-    const k = @min(m, n);
+/// Maximum number of one-sided Jacobi sweeps; quadratic convergence needs about ten.
+const jacobi_sweeps_max: u32 = 60;
 
-    var householder_v = try allocator.alloc(T, @max(m, n));
-    defer allocator.free(householder_v);
+/// One-sided Jacobi (Hestenes) SVD of the tall row-major matrix `w` (rows×cols, rows >= cols).
+///
+/// On return `w` holds orthonormal left singular vectors as columns, `v` holds the right
+/// singular vectors as columns (cols×cols), and `s` holds the singular values in descending
+/// order. Left vectors of zero singular values are completed to an orthonormal set.
+fn jacobiFactor(comptime T: type, w: []T, v: []T, s: []T, rows: usize, cols: usize) void {
+    assert(rows >= cols);
+    assert(w.len == rows * cols);
+    assert(v.len == cols * cols);
+    assert(s.len == cols);
 
-    for (0..k) |i| {
-        // Left Householder to zero column i below diagonal
-        if (i < m) {
-            const col_size = m - i;
-            @memset(householder_v[0..col_size], 0);
+    @memset(v, 0);
+    for (0..cols) |i| v[i * cols + i] = 1;
 
-            // Extract column
-            for (i..m) |row| {
-                householder_v[row - i] = B.data[row * n + i];
-            }
-
-            // Compute Householder vector
-            var norm: T = 0;
-            for (0..col_size) |idx| {
-                norm += householder_v[idx] * householder_v[idx];
-            }
-            norm = @sqrt(norm);
-
-            if (norm > 1e-15) {
-                const sign: T = if (householder_v[0] >= 0) 1 else -1;
-                householder_v[0] += sign * norm;
-
-                var h_norm: T = 0;
-                for (0..col_size) |idx| {
-                    h_norm += householder_v[idx] * householder_v[idx];
-                }
-                h_norm = @sqrt(h_norm);
-
-                if (h_norm > 1e-15) {
-                    for (0..col_size) |idx| {
-                        householder_v[idx] /= h_norm;
-                    }
-
-                    // Apply to B[i:, i:]
-                    for (i..n) |col| {
-                        var dot: T = 0;
-                        for (i..m) |row| {
-                            dot += householder_v[row - i] * B.data[row * n + col];
-                        }
-                        for (i..m) |row| {
-                            B.data[row * n + col] -= 2 * dot * householder_v[row - i];
-                        }
-                    }
-
-                    // Apply to U
-                    for (0..m) |row| {
-                        var dot: T = 0;
-                        for (i..m) |col| {
-                            if (col < k) {
-                                dot += U.data[row * k + col] * householder_v[col - i];
-                            }
-                        }
-                        for (i..m) |col| {
-                            if (col < k) {
-                                U.data[row * k + col] -= 2 * dot * householder_v[col - i];
-                            }
-                        }
-                    }
-                }
+    const rotation_tol: T = switch (T) {
+        f32 => 1e-7,
+        else => 1e-15,
+    };
+    for (0..jacobi_sweeps_max) |_| {
+        var rotated = false;
+        for (0..cols) |p| {
+            for (p + 1..cols) |q| {
+                if (jacobiRotate(T, w, v, rows, cols, p, q, rotation_tol)) rotated = true;
             }
         }
+        if (!rotated) break;
+    }
 
-        // Right Householder to zero row i after superdiagonal
-        if (i < k - 1 and i + 1 < n) {
-            const row_size = n - i - 1;
-            @memset(householder_v[0..row_size], 0);
+    for (0..cols) |j| {
+        var sum: T = 0;
+        for (0..rows) |i| sum += w[i * cols + j] * w[i * cols + j];
+        s[j] = @sqrt(sum);
+    }
+    jacobiSort(T, w, v, s, rows, cols);
+    jacobiNormalize(T, w, s, rows, cols);
+    for (1..cols) |j| assert(s[j - 1] >= s[j]);
+}
 
-            // Extract row
-            for (i + 1..n) |col| {
-                householder_v[col - i - 1] = B.data[i * n + col];
-            }
+/// Rotate columns `p` and `q` of `w` (and of `v`) until they are orthogonal.
+/// Returns true if a rotation was applied.
+fn jacobiRotate(comptime T: type, w: []T, v: []T, rows: usize, cols: usize, p: usize, q: usize, tol: T) bool {
+    assert(p < q);
+    assert(q < cols);
 
-            var norm: T = 0;
-            for (0..row_size) |idx| {
-                norm += householder_v[idx] * householder_v[idx];
-            }
-            norm = @sqrt(norm);
+    var alpha: T = 0;
+    var beta: T = 0;
+    var gamma: T = 0;
+    for (0..rows) |i| {
+        const wp = w[i * cols + p];
+        const wq = w[i * cols + q];
+        alpha += wp * wp;
+        beta += wq * wq;
+        gamma += wp * wq;
+    }
+    if (gamma == 0) return false;
+    if (@abs(gamma) <= tol * @sqrt(alpha) * @sqrt(beta)) return false;
 
-            if (norm > 1e-15) {
-                const sign: T = if (householder_v[0] >= 0) 1 else -1;
-                householder_v[0] += sign * norm;
+    const zeta = (beta - alpha) / (2 * gamma);
+    const sign: T = if (zeta >= 0) 1 else -1;
+    const t = sign / (@abs(zeta) + @sqrt(1 + zeta * zeta));
+    const c = 1 / @sqrt(1 + t * t);
+    const sn = c * t;
+    for (0..rows) |i| {
+        const wp = w[i * cols + p];
+        const wq = w[i * cols + q];
+        w[i * cols + p] = c * wp - sn * wq;
+        w[i * cols + q] = sn * wp + c * wq;
+    }
+    for (0..cols) |i| {
+        const vp = v[i * cols + p];
+        const vq = v[i * cols + q];
+        v[i * cols + p] = c * vp - sn * vq;
+        v[i * cols + q] = sn * vp + c * vq;
+    }
+    return true;
+}
 
-                var h_norm: T = 0;
-                for (0..row_size) |idx| {
-                    h_norm += householder_v[idx] * householder_v[idx];
-                }
-                h_norm = @sqrt(h_norm);
+/// Selection sort of the singular values in descending order, permuting columns of `w` and `v`.
+fn jacobiSort(comptime T: type, w: []T, v: []T, s: []T, rows: usize, cols: usize) void {
+    assert(s.len == cols);
+    assert(w.len == rows * cols);
+    for (0..cols) |i| {
+        var max_index = i;
+        for (i + 1..cols) |j| {
+            if (s[j] > s[max_index]) max_index = j;
+        }
+        if (max_index == i) continue;
+        std.mem.swap(T, &s[i], &s[max_index]);
+        for (0..rows) |r| std.mem.swap(T, &w[r * cols + i], &w[r * cols + max_index]);
+        for (0..cols) |r| std.mem.swap(T, &v[r * cols + i], &v[r * cols + max_index]);
+    }
+}
 
-                if (h_norm > 1e-15) {
-                    for (0..row_size) |idx| {
-                        householder_v[idx] /= h_norm;
-                    }
-
-                    // Apply to B[i:, i+1:]
-                    for (i..m) |row| {
-                        var dot: T = 0;
-                        for (i + 1..n) |col| {
-                            dot += B.data[row * n + col] * householder_v[col - i - 1];
-                        }
-                        for (i + 1..n) |col| {
-                            B.data[row * n + col] -= 2 * dot * householder_v[col - i - 1];
-                        }
-                    }
-
-                    // Apply to Vt
-                    for (i + 1..k) |row| {
-                        if (row < Vt.shape[0]) {
-                            var dot: T = 0;
-                            for (0..n) |col| {
-                                dot += Vt.data[row * n + col] * householder_v[row - i - 1];
-                            }
-                            for (0..n) |col| {
-                                Vt.data[row * n + col] -= 2 * dot * householder_v[row - i - 1];
-                            }
-                        }
-                    }
-                }
-            }
+/// Scale the columns of `w` to unit length; columns of numerically zero singular values are
+/// replaced by unit vectors orthogonal to all earlier columns (and their `s` entry becomes 0).
+fn jacobiNormalize(comptime T: type, w: []T, s: []T, rows: usize, cols: usize) void {
+    assert(rows >= cols);
+    assert(s.len == cols);
+    const s_max: T = if (cols > 0) s[0] else 0;
+    const zero_tol = s_max * std.math.floatEps(T) * @as(T, @floatFromInt(rows));
+    for (0..cols) |j| {
+        if (s[j] > zero_tol) {
+            for (0..rows) |i| w[i * cols + j] /= s[j];
+        } else {
+            s[j] = 0;
+            jacobiComplete(T, w, rows, cols, j);
         }
     }
 }
 
-/// QR iteration with Wilkinson shift on bidiagonal matrix
-fn qrIterateBidiagonal(comptime T: type, diag: []T, super: []T, U: *NDArray(T, 2), Vt: *NDArray(T, 2), k: usize, m: usize, n: usize, allocator: Allocator) !void {
-    _ = allocator;
-    const max_iter = 30 * k;
-    const tol = @sqrt(@as(T, switch (T) {
-        f32 => 1.19e-7,
-        f64 => 2.22e-16,
-        else => 1e-10,
-    }));
-
-    var iter: usize = 0;
-    while (iter < max_iter) : (iter += 1) {
-        // Check convergence
-        var converged = true;
-        for (0..k - 1) |i| {
-            if (@abs(super[i]) > tol * (@abs(diag[i]) + @abs(diag[i + 1]) + 1e-15)) {
-                converged = false;
-                break;
-            }
-        }
-        if (converged) break;
-
-        // Find largest unreduced block
-        var p: usize = k - 1;
-        while (p > 0) {
-            if (@abs(super[p - 1]) <= tol * (@abs(diag[p - 1]) + @abs(diag[p]) + 1e-15)) {
-                super[p - 1] = 0;
-                p -= 1;
-            } else {
-                break;
-            }
-        }
-
-        if (p == 0) break;
-
-        var q: usize = p - 1;
-        while (q > 0) {
-            if (@abs(super[q - 1]) <= tol * (@abs(diag[q - 1]) + @abs(diag[q]) + 1e-15)) {
-                super[q - 1] = 0;
-                break;
-            }
-            q -= 1;
-        }
-
-        // Wilkinson shift
-        const d = (diag[p - 1] - diag[p]) / 2;
-        const mu_sign: T = if (d >= 0) 1 else -1;
-        const denom = d + mu_sign * @sqrt(d * d + super[p - 1] * super[p - 1]);
-        const mu = if (@abs(denom) > 1e-15) diag[p] - (super[p - 1] * super[p - 1]) / denom else diag[p];
-
-        // QR sweep
-        var x = diag[q] - mu;
-        var z = super[q];
-
-        for (q..p) |i| {
-            // Givens rotation
-            const r = @sqrt(x * x + z * z);
-            if (r < tol) {
-                if (i + 1 <= p) {
-                    x = diag[i + 1];
-                    z = if (i + 1 < p) super[i + 1] else 0;
-                }
-                continue;
-            }
-
-            const c = x / r;
-            const s = z / r;
-
-            // Apply rotation (right side)
-            if (i > q) {
-                super[i - 1] = r;
-            }
-
-            const old_diag_i = diag[i];
-            const old_super_i = super[i];
-            diag[i] = c * old_diag_i + s * old_super_i;
-            super[i] = -s * old_diag_i + c * old_super_i;
-
-            z = s * diag[i + 1];
-            diag[i + 1] = c * diag[i + 1];
-
-            // Apply to Vt
-            for (0..n) |col| {
-                if (i < k and i + 1 < k) {
-                    const vi = Vt.data[i * n + col];
-                    const vi1 = Vt.data[(i + 1) * n + col];
-                    Vt.data[i * n + col] = c * vi + s * vi1;
-                    Vt.data[(i + 1) * n + col] = -s * vi + c * vi1;
-                }
-            }
-
-            // Second Givens (left side)
-            x = diag[i];
-            const r2 = @sqrt(x * x + z * z);
-            if (r2 < tol) {
-                if (i < p - 1) {
-                    x = super[i];
-                    z = 0;
-                }
-                continue;
-            }
-
-            const c2 = x / r2;
-            const s2 = z / r2;
-
-            diag[i] = r2;
-            const old_super_i2 = super[i];
-            super[i] = c2 * old_super_i2 + s2 * diag[i + 1];
-            diag[i + 1] = -s2 * old_super_i2 + c2 * diag[i + 1];
-
-            if (i < p - 1) {
-                x = super[i];
-                z = s2 * super[i + 1];
-                super[i + 1] = c2 * super[i + 1];
-            }
-
-            // Apply to U
-            for (0..m) |row| {
-                if (i < k and i + 1 < k) {
-                    const ui = U.data[row * k + i];
-                    const ui1 = U.data[row * k + (i + 1)];
-                    U.data[row * k + i] = c2 * ui + s2 * ui1;
-                    U.data[row * k + (i + 1)] = -s2 * ui + c2 * ui1;
-                }
-            }
+/// Fill column `j` of `w` with the unit vector (among e_0..e_{rows-1}) whose residual after
+/// projecting out columns 0..j-1 is largest, then normalize that residual.
+fn jacobiComplete(comptime T: type, w: []T, rows: usize, cols: usize, j: usize) void {
+    assert(j < cols);
+    assert(j < rows);
+    var best_norm: T = -1;
+    var best_row: usize = 0;
+    for (0..rows) |candidate| {
+        // Residual norm^2 of e_candidate is 1 - sum_c w[candidate][c]^2 over finished columns.
+        var captured: T = 0;
+        for (0..j) |c| captured += w[candidate * cols + c] * w[candidate * cols + c];
+        if (1 - captured > best_norm) {
+            best_norm = 1 - captured;
+            best_row = candidate;
         }
     }
-}
+    assert(best_norm > 0);
 
-/// Sort singular values in descending order and permute U, Vt accordingly
-fn sortSingularValues(comptime T: type, S: *NDArray(T, 1), U: *NDArray(T, 2), Vt: *NDArray(T, 2), k: usize, m: usize, n: usize) void {
-    for (0..k) |i| {
-        var max_idx = i;
-        for (i + 1..k) |j| {
-            if (S.data[j] > S.data[max_idx]) {
-                max_idx = j;
-            }
-        }
-
-        if (max_idx != i) {
-            // Swap singular values
-            const temp_s = S.data[i];
-            S.data[i] = S.data[max_idx];
-            S.data[max_idx] = temp_s;
-
-            // Swap columns of U
-            for (0..m) |row| {
-                const temp_u = U.data[row * k + i];
-                U.data[row * k + i] = U.data[row * k + max_idx];
-                U.data[row * k + max_idx] = temp_u;
-            }
-
-            // Swap rows of Vt
-            for (0..n) |col| {
-                const temp_vt = Vt.data[i * n + col];
-                Vt.data[i * n + col] = Vt.data[max_idx * n + col];
-                Vt.data[max_idx * n + col] = temp_vt;
-            }
+    for (0..rows) |i| w[i * cols + j] = if (i == best_row) 1 else 0;
+    // Two passes of modified Gram-Schmidt restore orthogonality lost to rounding.
+    for (0..2) |_| {
+        for (0..j) |c| {
+            var dot: T = 0;
+            for (0..rows) |i| dot += w[i * cols + c] * w[i * cols + j];
+            for (0..rows) |i| w[i * cols + j] -= dot * w[i * cols + c];
         }
     }
+    var norm: T = 0;
+    for (0..rows) |i| norm += w[i * cols + j] * w[i * cols + j];
+    norm = @sqrt(norm);
+    assert(norm > 0);
+    for (0..rows) |i| w[i * cols + j] /= norm;
 }
 
 /// Verify that U^T @ U = I (orthogonality of left singular vectors)
@@ -2144,7 +1987,7 @@ test "svd: 3x3 non-identity matrix" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
-        2, 3, 1,
+        2, 3,  1,
         6, 13, 5,
         2, 19, 10,
     }, .row_major);
@@ -2171,9 +2014,9 @@ test "svd: 4x4 non-identity matrix" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        1, 2,  3,  4,
-        5, 6,  7,  8,
-        9, 10, 11, 12,
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
         13, 14, 15, 17,
     }, .row_major);
     defer A.deinit();
@@ -2218,9 +2061,9 @@ test "svd: tall matrix 5x3 (m > n)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 5, 3 }, &[_]f64{
-        1, 2, 3,
-        4, 5, 6,
-        7, 8, 9,
+        1,  2,  3,
+        4,  5,  6,
+        7,  8,  9,
         10, 11, 12,
         13, 14, 15,
     }, .row_major);
@@ -2299,8 +2142,8 @@ test "svd: wide matrix 3x5 (m < n)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 5 }, &[_]f64{
-        1, 2, 3, 4, 5,
-        6, 7, 8, 9, 10,
+        1,  2,  3,  4,  5,
+        6,  7,  8,  9,  10,
         11, 12, 13, 14, 15,
     }, .row_major);
     defer A.deinit();
@@ -2516,7 +2359,8 @@ test "svd: large values (numerical stability)" {
     try verifySVDOrthogonalityU(f64, allocator, result.U, 1e-8);
     try verifySVDOrthogonalityVt(f64, allocator, result.Vt, 1e-8);
     try verifySVDDescending(f64, result.S);
-    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-8);
+    // Entries are 1e10, so the absolute reconstruction tolerance scales with them.
+    try verifySVDReconstruction(f64, allocator, A, result.U, result.S, result.Vt, 1e-8 * 1e10);
 }
 
 test "svd: Hilbert matrix (ill-conditioned)" {
@@ -2524,10 +2368,10 @@ test "svd: Hilbert matrix (ill-conditioned)" {
 
     // 4x4 Hilbert matrix (very ill-conditioned)
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        1,      0.5,    1.0 / 3.0, 0.25,
-        0.5,    1.0 / 3.0,  0.25,  0.2,
-        1.0 / 3.0,  0.25,   0.2,   1.0 / 6.0,
-        0.25,   0.2,    1.0 / 6.0, 1.0 / 7.0,
+        1,         0.5,       1.0 / 3.0, 0.25,
+        0.5,       1.0 / 3.0, 0.25,      0.2,
+        1.0 / 3.0, 0.25,      0.2,       1.0 / 6.0,
+        0.25,      0.2,       1.0 / 6.0, 1.0 / 7.0,
     }, .row_major);
     defer A.deinit();
 
@@ -2813,10 +2657,9 @@ fn isSymmetricMatrix(comptime T: type, A: NDArray(T, 2), tolerance: T) !bool {
 /// - V is an n×n orthogonal matrix with eigenvectors as columns
 /// - λ is an n vector of eigenvalues (real for symmetric matrices)
 ///
-/// The QR algorithm iteratively applies QR decomposition:
-/// - A_k = Q_k R_k
-/// - A_{k+1} = R_k Q_k
-/// - Converges to diagonal form with eigenvalues on diagonal
+/// The cyclic Jacobi method applies plane rotations J that zero one off-diagonal pair at a time:
+/// - A_{k+1} = J^T A_k J, quadratically convergent, at most 60 sweeps
+/// - The product of the rotations is the orthogonal eigenvector matrix
 ///
 /// Parameters:
 /// - T: Numeric type (f32, f64)
@@ -2830,7 +2673,7 @@ fn isSymmetricMatrix(comptime T: type, A: NDArray(T, 2), tolerance: T) !bool {
 /// - error.NonSymmetricMatrix if A != A^T
 /// - error.OutOfMemory if allocation fails
 ///
-/// Time: O(n³) for QR iteration (typically 30*n iterations)
+/// Time: O(n³) per sweep (typically 6-10 sweeps)
 /// Space: O(n²) for working matrices
 ///
 /// Example:
@@ -2844,7 +2687,7 @@ fn isSymmetricMatrix(comptime T: type, A: NDArray(T, 2), tolerance: T) !bool {
 /// // result.eigenvalues contains [3.618..., 1.381...] (descending)
 /// // result.eigenvectors columns are orthonormal eigenvectors
 /// ```
-pub fn eig(comptime T: type, A: NDArray(T, 2), allocator: Allocator) (NDArray(T, 2).Error || NDArray(T, 1).Error || std.mem.Allocator.Error || error{InvalidDimensions, NonSymmetricMatrix})!EigResult(T) {
+pub fn eig(comptime T: type, A: NDArray(T, 2), allocator: Allocator) (NDArray(T, 2).Error || NDArray(T, 1).Error || std.mem.Allocator.Error || error{ InvalidDimensions, NonSymmetricMatrix })!EigResult(T) {
     const n = A.shape[0];
     const m = A.shape[1];
 
@@ -2878,50 +2721,8 @@ pub fn eig(comptime T: type, A: NDArray(T, 2), allocator: Allocator) (NDArray(T,
         }
     }
 
-    // QR iteration: max iterations = 30 * n (empirical choice)
-    const max_iterations = 30 * n;
-    const convergence_tol = tolerance;
-
-    var iteration: usize = 0;
-    while (iteration < max_iterations) : (iteration += 1) {
-        // QR decomposition of A_k
-        var qr_result = qr(T, A_k, allocator) catch |err| {
-            switch (err) {
-                error.InvalidDimensions => return error.InvalidDimensions,
-                else => return err,
-            }
-        };
-        defer qr_result.deinit();
-
-        // Update: A_{k+1} = R_k @ Q_k (matrix multiplication)
-        const R_Q = try qr_result.R.matmul(&qr_result.Q);
-
-        // Accumulate eigenvectors: V = V @ Q_k
-        const V_new = try V.matmul(&qr_result.Q);
-        V.deinit();
-        V = V_new;
-
-        // Check convergence: if off-diagonal elements are small, stop
-        var off_diag_norm: T = 0;
-        for (0..n) |i| {
-            for (0..n) |j| {
-                if (i != j) {
-                    const val = R_Q.data[i * n + j];
-                    off_diag_norm += val * val;
-                }
-            }
-        }
-        off_diag_norm = @sqrt(off_diag_norm);
-
-        // Replace A_k with R_Q
-        A_k.deinit();
-        A_k = R_Q;
-
-        // Convergence check
-        if (off_diag_norm < convergence_tol) {
-            break;
-        }
-    }
+    // Cyclic Jacobi sweeps: A_k ends diagonal, V accumulates the eigenvectors.
+    jacobiEigen(T, A_k.data, V.data, n);
 
     // Extract eigenvalues from diagonal of converged A_k
     var eigenvalues = try NDArray(T, 1).zeros(allocator, &[_]usize{n}, .row_major);
@@ -3331,8 +3132,8 @@ test "eig: positive definite covariance matrix" {
 
     // Covariance-like SPD matrix
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
-        4, 1, 0.5,
-        1, 3, 0.2,
+        4,   1,   0.5,
+        1,   3,   0.2,
         0.5, 0.2, 2,
     }, .row_major);
     defer A.deinit();
@@ -3391,4 +3192,67 @@ test "eig: non-symmetric matrix rejection" {
 
     const result = eig(f64, A, allocator);
     try testing.expectError(error.NonSymmetricMatrix, result);
+}
+
+/// Maximum number of cyclic Jacobi sweeps for the symmetric eigenproblem.
+const jacobi_eigen_sweeps_max: u32 = 60;
+
+/// Cyclic Jacobi diagonalization of the symmetric row-major n×n matrix `a`.
+///
+/// On return the diagonal of `a` holds the eigenvalues and the columns of `v` (n×n, row-major,
+/// updated in place) have been rotated by the same orthogonal transform, so a caller that
+/// passes the identity gets the eigenvectors.
+fn jacobiEigen(comptime T: type, a: []T, v: []T, n: usize) void {
+    assert(a.len == n * n);
+    assert(v.len == n * n);
+
+    for (0..jacobi_eigen_sweeps_max) |_| {
+        var off: T = 0;
+        var total: T = 0;
+        for (0..n) |i| {
+            for (0..n) |j| {
+                total += a[i * n + j] * a[i * n + j];
+                if (i != j) off += a[i * n + j] * a[i * n + j];
+            }
+        }
+        const eps = std.math.floatEps(T);
+        if (off <= eps * eps * total) break;
+
+        for (0..n) |p| {
+            for (p + 1..n) |q| jacobiEigenRotate(T, a, v, n, p, q);
+        }
+    }
+}
+
+/// Apply the Jacobi rotation that zeroes `a[p][q]`, accumulating it into `v`.
+fn jacobiEigenRotate(comptime T: type, a: []T, v: []T, n: usize, p: usize, q: usize) void {
+    assert(p < q);
+    assert(q < n);
+
+    const apq = a[p * n + q];
+    if (apq == 0) return;
+
+    const theta = (a[q * n + q] - a[p * n + p]) / (2 * apq);
+    const sign: T = if (theta >= 0) 1 else -1;
+    const t = sign / (@abs(theta) + @sqrt(theta * theta + 1));
+    const c = 1 / @sqrt(t * t + 1);
+    const s = t * c;
+    for (0..n) |k| {
+        const akp = a[k * n + p];
+        const akq = a[k * n + q];
+        a[k * n + p] = c * akp - s * akq;
+        a[k * n + q] = s * akp + c * akq;
+    }
+    for (0..n) |k| {
+        const apk = a[p * n + k];
+        const aqk = a[q * n + k];
+        a[p * n + k] = c * apk - s * aqk;
+        a[q * n + k] = s * apk + c * aqk;
+    }
+    for (0..n) |k| {
+        const vkp = v[k * n + p];
+        const vkq = v[k * n + q];
+        v[k * n + p] = c * vkp - s * vkq;
+        v[k * n + q] = s * vkp + c * vkq;
+    }
 }

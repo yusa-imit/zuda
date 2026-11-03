@@ -105,9 +105,9 @@ pub fn lu(comptime T: type, allocator: Allocator, A: NDArray(T, 2)) (NDArray(T, 
 
     // Compute singularity tolerance: sqrt(machine epsilon) for the type
     const epsilon = switch (T) {
-        f32 => 1.19209e-7,  // sqrt(epsilon_f32 ≈ 1.19209e-7)
-        f64 => 1.49012e-8,  // sqrt(epsilon_f64 ≈ 2.22045e-16)
-        else => 1e-15,      // fallback for other types
+        f32 => 1.19209e-7, // sqrt(epsilon_f32 ≈ 1.19209e-7)
+        f64 => 1.49012e-8, // sqrt(epsilon_f64 ≈ 2.22045e-16)
+        else => 1e-15, // fallback for other types
     };
 
     // Allocate result matrices (copies of A for in-place computation)
@@ -207,9 +207,9 @@ pub fn lu(comptime T: type, allocator: Allocator, A: NDArray(T, 2)) (NDArray(T, 
     };
 }
 
-/// Verify that matrices satisfy PLU decomposition property: A = PLU
+/// Verify that matrices satisfy the decomposition property P @ A = L @ U
 ///
-/// Reconstructs A from P, L, U and checks ||A - PLU|| < tolerance.
+/// Checks ||P @ A - L @ U|| < tolerance.
 ///
 /// Parameters:
 /// - T: Numeric type
@@ -242,20 +242,21 @@ fn verifyDecomposition(comptime T: type, allocator: Allocator, original: NDArray
         }
     }
 
-    // Compute P @ (L @ U)
+    // Compute P @ A with the layout-aware accessor
     for (0..n) |i| {
         for (0..n) |j| {
             var sum: T = 0;
             for (0..n) |k| {
-                sum += result.P.data[i * n + k] * temp1.data[k * n + j];
+                const a_val = try original.get(&[_]isize{ @intCast(k), @intCast(j) });
+                sum += result.P.data[i * n + k] * a_val;
             }
             temp2.data[i * n + j] = sum;
         }
     }
 
-    // Compare: ||A - P@L@U|| < tolerance
+    // Compare: ||P@A - L@U|| < tolerance
     for (0..n * n) |idx| {
-        const diff = @abs(original.data[idx] - temp2.data[idx]);
+        const diff = @abs(temp1.data[idx] - temp2.data[idx]);
         try testing.expect(diff < tolerance);
     }
 }
@@ -267,7 +268,7 @@ fn verifyDecomposition(comptime T: type, allocator: Allocator, original: NDArray
 test "lu: 2x2 identity matrix" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 2}, &[_]f64{
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
         1, 0,
         0, 1,
     }, .row_major);
@@ -300,7 +301,7 @@ test "lu: 2x2 identity matrix" {
 test "lu: 3x3 identity matrix" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 3}, &[_]f64{
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
         1, 0, 0,
         0, 1, 0,
         0, 0, 1,
@@ -317,7 +318,7 @@ test "lu: 3x3 identity matrix" {
 test "lu: 2x2 non-identity matrix" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 2}, &[_]f64{
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
         1, 2,
         3, 4,
     }, .row_major);
@@ -333,8 +334,8 @@ test "lu: 2x2 non-identity matrix" {
 test "lu: 3x3 non-identity matrix" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 3}, &[_]f64{
-        2, 3, 1,
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        2, 3,  1,
         6, 13, 5,
         2, 19, 10,
     }, .row_major);
@@ -351,25 +352,30 @@ test "lu: permutation correctness — requires pivoting" {
     const allocator = testing.allocator;
 
     // Matrix where pivoting is essential
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 3}, &[_]f64{
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
         0, 1, 2,
-        1, 2, 3,
-        2, 3, 4,
+        1, 2, 4,
+        2, 3, 5,
     }, .row_major);
     defer A.deinit();
 
     var result = try lu(f64, allocator, A);
     defer result.deinit();
 
-    // Pivot array should be valid permutation (all entries < n, all unique)
-    var seen = try allocator.alloc(bool, result.pivots.len);
-    defer allocator.free(seen);
-    @memset(seen, false);
-
-    for (result.pivots) |pivot| {
+    // pivots[i] = j records that row i was swapped with row j >= i (LAPACK style), so replaying
+    // the swaps on the identity must give P. Row 0 of this matrix has a zero pivot, so a swap
+    // must have happened.
+    var replay = [_]usize{ 0, 1, 2 };
+    var swapped = false;
+    for (result.pivots, 0..) |pivot, i| {
+        try testing.expect(pivot >= i);
         try testing.expect(pivot < result.pivots.len);
-        try testing.expect(!seen[pivot]);
-        seen[pivot] = true;
+        if (pivot != i) swapped = true;
+        std.mem.swap(usize, &replay[i], &replay[pivot]);
+    }
+    try testing.expect(swapped);
+    for (replay, 0..) |source_row, i| {
+        try testing.expectEqual(@as(f64, 1.0), result.P.data[i * 3 + source_row]);
     }
 
     // P should be a valid permutation matrix
@@ -392,7 +398,7 @@ test "lu: permutation correctness — requires pivoting" {
 test "lu: L properties — lower triangular with unit diagonal" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 3}, &[_]f64{
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
         4, 3, 2,
         1, 6, 5,
         7, 8, 9,
@@ -417,7 +423,7 @@ test "lu: L properties — lower triangular with unit diagonal" {
 test "lu: U properties — upper triangular" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 3}, &[_]f64{
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
         4, 3, 2,
         1, 6, 5,
         7, 8, 9,
@@ -438,10 +444,10 @@ test "lu: U properties — upper triangular" {
 test "lu: P properties — valid permutation matrix" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 3}, &[_]f64{
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
         1, 2, 3,
         4, 5, 6,
-        7, 8, 9,
+        7, 8, 10,
     }, .row_major);
     defer A.deinit();
 
@@ -478,7 +484,7 @@ test "lu: P properties — valid permutation matrix" {
 test "lu: singular matrix detection — all zeros" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{2, 2}, .row_major);
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 2, 2 }, .row_major);
     defer A.deinit();
 
     const err = lu(f64, allocator, A);
@@ -489,7 +495,7 @@ test "lu: singular matrix detection — rank deficient" {
     const allocator = testing.allocator;
 
     // Rank 1 matrix: all rows are multiples
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 3}, &[_]f64{
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
         1, 2, 3,
         2, 4, 6,
         3, 6, 9,
@@ -503,7 +509,7 @@ test "lu: singular matrix detection — rank deficient" {
 test "lu: non-square matrix error" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 3}, &[_]f64{
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 3 }, &[_]f64{
         1, 2, 3,
         4, 5, 6,
     }, .row_major);
@@ -516,7 +522,7 @@ test "lu: non-square matrix error" {
 test "lu: f32 precision" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{2, 2}, &[_]f32{
+    var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f32{
         1.5, 2.5,
         3.5, 4.5,
     }, .row_major);
@@ -531,7 +537,7 @@ test "lu: f32 precision" {
 test "lu: f64 precision" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 3}, &[_]f64{
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
         0.12, 0.34, 0.56,
         0.78, 0.90, 0.12,
         0.34, 0.56, 0.78,
@@ -548,10 +554,10 @@ test "lu: ill-conditioned matrix" {
     const allocator = testing.allocator;
 
     // Hilbert matrix: notoriously ill-conditioned
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 3}, &[_]f64{
-        1.0, 0.5, 1.0/3.0,
-        0.5, 1.0/3.0, 0.25,
-        1.0/3.0, 0.25, 0.2,
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        1.0,       0.5,       1.0 / 3.0,
+        0.5,       1.0 / 3.0, 0.25,
+        1.0 / 3.0, 0.25,      0.2,
     }, .row_major);
     defer A.deinit();
 
@@ -565,11 +571,11 @@ test "lu: ill-conditioned matrix" {
 test "lu: reconstruction accuracy 4x4 random" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{4, 4}, &[_]f64{
-        1.2, 2.3, 3.4, 4.5,
-        5.6, 6.7, 7.8, 8.9,
-        9.0, 8.1, 7.2, 6.3,
-        5.4, 4.5, 3.6, 2.7,
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
+        2, 1, 1, 0,
+        4, 3, 3, 1,
+        8, 7, 9, 5,
+        6, 7, 9, 8,
     }, .row_major);
     defer A.deinit();
 
@@ -582,7 +588,7 @@ test "lu: reconstruction accuracy 4x4 random" {
 test "lu: memory cleanup — no leaks" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 3}, &[_]f64{
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
         2, 1, 1,
         4, 3, 3,
         8, 7, 9,
@@ -598,12 +604,12 @@ test "lu: memory cleanup — no leaks" {
 test "lu: 5x5 matrix decomposition" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{5, 5}, &[_]f64{
-        1, 2, 3, 4, 5,
-        6, 7, 8, 9, 10,
-        11, 12, 13, 14, 15,
-        16, 17, 18, 19, 20,
-        21, 22, 23, 24, 26,  // Last diagonal element slightly off to avoid singularity
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 5, 5 }, &[_]f64{
+        11, 2,  3,  4,  5,
+        6,  17, 8,  9,  10,
+        11, 12, 23, 14, 15,
+        16, 17, 18, 29, 20,
+        21, 22, 23, 24, 35, // Diagonal shifted by 10: rows alone are an arithmetic progression (rank 2)
     }, .row_major);
     defer A.deinit();
 
@@ -616,7 +622,7 @@ test "lu: 5x5 matrix decomposition" {
 test "lu: diagonal matrix" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 3}, &[_]f64{
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
         2, 0, 0,
         0, 3, 0,
         0, 0, 5,
@@ -647,7 +653,7 @@ test "lu: diagonal matrix" {
 test "lu: triangular matrix (already upper triangular)" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 3}, &[_]f64{
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
         1, 2, 3,
         0, 4, 5,
         0, 0, 6,
@@ -663,10 +669,10 @@ test "lu: triangular matrix (already upper triangular)" {
 test "lu: negative values" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 3}, &[_]f64{
-        -1, 2, -3,
-        4, -5, 6,
-        -7, 8, -9,
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
+        -1, 2,  -3,
+        4,  -5, 6,
+        -7, 8,  -10,
     }, .row_major);
     defer A.deinit();
 
@@ -679,7 +685,7 @@ test "lu: negative values" {
 test "lu: column-major layout" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 2}, &[_]f64{
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
         1, 3,
         2, 4,
     }, .column_major);
@@ -694,10 +700,10 @@ test "lu: column-major layout" {
 test "lu: small pivots handled correctly" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{3, 3}, &[_]f64{
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{
         0.001, 2, 3,
-        1, 5, 6,
-        2, 8, 9,
+        1,     5, 6,
+        2,     8, 9,
     }, .row_major);
     defer A.deinit();
 
@@ -711,7 +717,7 @@ test "lu: small pivots handled correctly" {
 test "lu: 2x2 simple integer matrix" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{2, 2}, &[_]f64{
+    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{
         2, 1,
         1, 3,
     }, .row_major);
