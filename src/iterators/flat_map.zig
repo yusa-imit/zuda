@@ -153,54 +153,50 @@ fn OptionalSliceIterator(comptime T: type) type {
 
 // Transform functions for testing
 
-/// Create an iterator yielding integers from 1 to n (inclusive)
+// Inner iterators borrow static storage: a helper that returned a slice of its own stack frame
+// would hand the iterator a dangling pointer.
+const range_values = [_]i32{ 1, 2, 3, 4, 5 };
+
+/// Create an iterator yielding integers from 1 to n (inclusive, at most 5).
 fn range(n: i32) SliceIterator(i32) {
-    // For testing, we use pre-allocated ranges
-    // This is a simplified approach; a real range would use comptime or allocator
-    var result: [5]i32 = undefined;
-    var len: usize = 0;
-    var i: i32 = 1;
-    while (i <= n and len < 5) : (i += 1) {
-        result[len] = i;
-        len += 1;
-    }
-    return SliceIterator(i32).init(result[0..len]);
+    std.debug.assert(n >= 0);
+    const len: usize = @min(@as(usize, @intCast(n)), range_values.len);
+    return SliceIterator(i32).init(range_values[0..len]);
 }
 
-/// Replicate element n times
+const replicate_max = 10;
+const replicate_values = blk: {
+    var table: [replicate_max + 1][replicate_max]i32 = undefined;
+    for (0..replicate_max + 1) |n| {
+        for (0..replicate_max) |i| table[n][i] = @intCast(n);
+    }
+    break :blk table;
+};
+
+/// Replicate element n times (0 <= n <= 10).
 fn replicateSlice(n: i32) SliceIterator(i32) {
-    var result: [10]i32 = undefined;
-    for (0..@intCast(n)) |i| {
-        result[i] = n;
-    }
-    return SliceIterator(i32).init(result[0..@intCast(n)]);
+    std.debug.assert(n >= 0);
+    std.debug.assert(n <= replicate_max);
+    const len: usize = @intCast(n);
+    return SliceIterator(i32).init(replicate_values[len][0..len]);
 }
 
-/// Convert an int to a slice of its digits (as f64)
-fn digits(n: i32) SliceIterator(f64) {
-    var result: [10]f64 = undefined;
-    var abs_n: i32 = if (n < 0) -n else n;
-    var len: usize = 0;
-
-    if (abs_n == 0) {
-        result[0] = 0.0;
-        len = 1;
-    } else {
-        while (abs_n > 0) : (abs_n = @divTrunc(abs_n, 10)) {
-            const digit: f64 = @floatFromInt(@mod(abs_n, 10));
-            result[len] = digit;
-            len += 1;
-        }
-        // Reverse to get proper order
-        var i: usize = 0;
-        var j: usize = len - 1;
-        while (i < j) {
-            std.mem.swap(f64, &result[i], &result[j]);
-            i += 1;
-            j -= 1;
-        }
+const digits_max = 100;
+const digits_values = blk: {
+    var table: [digits_max][2]f64 = undefined;
+    for (0..digits_max) |n| {
+        table[n] = .{ @floatFromInt(n / 10), @floatFromInt(n % 10) };
     }
-    return SliceIterator(f64).init(result[0..len]);
+    break :blk table;
+};
+
+/// Convert an int in 0..99 to a slice of its decimal digits (as f64, most significant first).
+fn digits(n: i32) SliceIterator(f64) {
+    std.debug.assert(n >= 0);
+    std.debug.assert(n < digits_max);
+    const index: usize = @intCast(n);
+    const start: usize = if (n < 10) 1 else 0;
+    return SliceIterator(f64).init(digits_values[index][start..]);
 }
 
 // -- Tests (15+ comprehensive cases) --

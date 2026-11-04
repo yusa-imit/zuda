@@ -110,8 +110,8 @@ fn toBool(x: i32) bool {
 
 test "map: basic transformation with i32" {
     var numbers = [_]i32{ 1, 2, 3 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var map = Map(i32, i32, SliceIterator(i32)).init(&iter, double);
+    const iter = SliceIterator(i32).init(&numbers);
+    var map = Map(i32, i32, SliceIterator(i32)).init(iter, double);
 
     try testing.expectEqual(2, map.next());
     try testing.expectEqual(4, map.next());
@@ -121,8 +121,8 @@ test "map: basic transformation with i32" {
 
 test "map: type transformation i32 to f32" {
     var numbers = [_]i32{ 1, 2, 3 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var map = Map(i32, f32, SliceIterator(i32)).init(&iter, intToFloat);
+    const iter = SliceIterator(i32).init(&numbers);
+    var map = Map(i32, f32, SliceIterator(i32)).init(iter, intToFloat);
 
     try testing.expectEqual(1.0, map.next());
     try testing.expectEqual(2.0, map.next());
@@ -132,8 +132,8 @@ test "map: type transformation i32 to f32" {
 
 test "map: empty iterator returns null immediately" {
     var numbers = [_]i32{};
-    var iter = SliceIterator(i32).init(&numbers);
-    var map = Map(i32, i32, SliceIterator(i32)).init(&iter, double);
+    const iter = SliceIterator(i32).init(&numbers);
+    var map = Map(i32, i32, SliceIterator(i32)).init(iter, double);
 
     try testing.expectEqual(null, map.next());
     try testing.expectEqual(null, map.next());
@@ -141,8 +141,8 @@ test "map: empty iterator returns null immediately" {
 
 test "map: single element" {
     var numbers = [_]i32{42};
-    var iter = SliceIterator(i32).init(&numbers);
-    var map = Map(i32, i32, SliceIterator(i32)).init(&iter, double);
+    const iter = SliceIterator(i32).init(&numbers);
+    var map = Map(i32, i32, SliceIterator(i32)).init(iter, double);
 
     try testing.expectEqual(84, map.next());
     try testing.expectEqual(null, map.next());
@@ -150,9 +150,9 @@ test "map: single element" {
 
 test "map: chained transformations" {
     var numbers = [_]i32{ 1, 2, 3 };
-    var iter1 = SliceIterator(i32).init(&numbers);
-    var map1 = Map(i32, i32, SliceIterator(i32)).init(&iter1, double);
-    var map2 = Map(i32, i32, @TypeOf(map1)).init(&map1, addTen);
+    const iter1 = SliceIterator(i32).init(&numbers);
+    const map1 = Map(i32, i32, SliceIterator(i32)).init(iter1, double);
+    var map2 = Map(i32, i32, @TypeOf(map1)).init(map1, addTen);
 
     // First: double (1 -> 2, 2 -> 4, 3 -> 6)
     // Second: addTen (2 -> 12, 4 -> 14, 6 -> 16)
@@ -164,10 +164,10 @@ test "map: chained transformations" {
 
 test "map: three-level chained transformations" {
     var numbers = [_]i32{ 1, 2 };
-    var iter1 = SliceIterator(i32).init(&numbers);
-    var map1 = Map(i32, i32, SliceIterator(i32)).init(&iter1, double);
-    var map2 = Map(i32, i32, @TypeOf(map1)).init(&map1, addTen);
-    var map3 = Map(i32, i32, @TypeOf(map2)).init(&map2, negate);
+    const iter1 = SliceIterator(i32).init(&numbers);
+    const map1 = Map(i32, i32, SliceIterator(i32)).init(iter1, double);
+    const map2 = Map(i32, i32, @TypeOf(map1)).init(map1, addTen);
+    var map3 = Map(i32, i32, @TypeOf(map2)).init(map2, negate);
 
     // First: double (1 -> 2, 2 -> 4)
     // Second: addTen (2 -> 12, 4 -> 14)
@@ -179,21 +179,21 @@ test "map: three-level chained transformations" {
 
 test "map: transform to bool" {
     var numbers = [_]i32{ -2, -1, 0, 1, 2 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var map = Map(i32, bool, SliceIterator(i32)).init(&iter, toBool);
+    const iter = SliceIterator(i32).init(&numbers);
+    var map = Map(i32, bool, SliceIterator(i32)).init(iter, toBool);
 
     try testing.expectEqual(false, map.next()); // -2 > 0
     try testing.expectEqual(false, map.next()); // -1 > 0
     try testing.expectEqual(false, map.next()); // 0 > 0
-    try testing.expectEqual(true, map.next());  // 1 > 0
-    try testing.expectEqual(true, map.next());  // 2 > 0
+    try testing.expectEqual(true, map.next()); // 1 > 0
+    try testing.expectEqual(true, map.next()); // 2 > 0
     try testing.expectEqual(null, map.next());
 }
 
 test "map: transform negative numbers" {
     var numbers = [_]i32{ -5, -3, 0, 3, 5 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var map = Map(i32, i32, SliceIterator(i32)).init(&iter, negate);
+    const iter = SliceIterator(i32).init(&numbers);
+    var map = Map(i32, i32, SliceIterator(i32)).init(iter, negate);
 
     try testing.expectEqual(5, map.next());
     try testing.expectEqual(3, map.next());
@@ -205,8 +205,8 @@ test "map: transform negative numbers" {
 
 test "map: exhaustion requires multiple next calls" {
     var numbers = [_]i32{1};
-    var iter = SliceIterator(i32).init(&numbers);
-    var map = Map(i32, i32, SliceIterator(i32)).init(&iter, double);
+    const iter = SliceIterator(i32).init(&numbers);
+    var map = Map(i32, i32, SliceIterator(i32)).init(iter, double);
 
     try testing.expectEqual(2, map.next());
     try testing.expectEqual(null, map.next());
@@ -220,8 +220,8 @@ test "map: large dataset transformation" {
         numbers[i] = @intCast(i);
     }
 
-    var iter = SliceIterator(i32).init(&numbers);
-    var map = Map(i32, i32, SliceIterator(i32)).init(&iter, double);
+    const iter = SliceIterator(i32).init(&numbers);
+    var map = Map(i32, i32, SliceIterator(i32)).init(iter, double);
 
     for (0..1000) |i| {
         const expected: i32 = @intCast(i * 2);
@@ -232,8 +232,8 @@ test "map: large dataset transformation" {
 
 test "map: identity transformation" {
     var numbers = [_]i32{ 1, 2, 3 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var map = Map(i32, i32, SliceIterator(i32)).init(&iter, identity);
+    const iter = SliceIterator(i32).init(&numbers);
+    var map = Map(i32, i32, SliceIterator(i32)).init(iter, identity);
 
     try testing.expectEqual(1, map.next());
     try testing.expectEqual(2, map.next());
@@ -247,8 +247,8 @@ fn identity(x: i32) i32 {
 
 test "map: type transformation f32 to i32" {
     var numbers = [_]f32{ 1.5, 2.7, 3.2 };
-    var iter = SliceIterator(f32).init(&numbers);
-    var map = Map(f32, i32, SliceIterator(f32)).init(&iter, floatToInt);
+    const iter = SliceIterator(f32).init(&numbers);
+    var map = Map(f32, i32, SliceIterator(f32)).init(iter, floatToInt);
 
     try testing.expectEqual(1, map.next());
     try testing.expectEqual(2, map.next());
@@ -258,8 +258,8 @@ test "map: type transformation f32 to i32" {
 
 test "map: pointer preservation through transforms" {
     var numbers = [_]i32{ 10, 20, 30 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var map = Map(i32, i32, SliceIterator(i32)).init(&iter, double);
+    const iter = SliceIterator(i32).init(&numbers);
+    var map = Map(i32, i32, SliceIterator(i32)).init(iter, double);
 
     const val1 = map.next();
     const val2 = map.next();
@@ -274,11 +274,11 @@ test "map: state isolation between independent maps" {
     var numbers1 = [_]i32{ 1, 2, 3 };
     var numbers2 = [_]i32{ 10, 20, 30 };
 
-    var iter1 = SliceIterator(i32).init(&numbers1);
-    var map1 = Map(i32, i32, SliceIterator(i32)).init(&iter1, double);
+    const iter1 = SliceIterator(i32).init(&numbers1);
+    var map1 = Map(i32, i32, SliceIterator(i32)).init(iter1, double);
 
-    var iter2 = SliceIterator(i32).init(&numbers2);
-    var map2 = Map(i32, i32, SliceIterator(i32)).init(&iter2, addTen);
+    const iter2 = SliceIterator(i32).init(&numbers2);
+    var map2 = Map(i32, i32, SliceIterator(i32)).init(iter2, addTen);
 
     try testing.expectEqual(2, map1.next());
     try testing.expectEqual(20, map2.next());
@@ -291,24 +291,25 @@ test "map: state isolation between independent maps" {
 }
 
 test "map: with struct field access" {
-    const Point = struct { x: i32, y: i32 };
     var points = [_]Point{ .{ .x = 1, .y = 2 }, .{ .x = 3, .y = 4 } };
-    var iter = SliceIterator(Point).init(&points);
-    var map = Map(Point, i32, SliceIterator(Point)).init(&iter, getX);
+    const iter = SliceIterator(Point).init(&points);
+    var map = Map(Point, i32, SliceIterator(Point)).init(iter, getX);
 
     try testing.expectEqual(1, map.next());
     try testing.expectEqual(3, map.next());
     try testing.expectEqual(null, map.next());
 }
 
-fn getX(p: struct { x: i32, y: i32 }) i32 {
+const Point = struct { x: i32, y: i32 };
+
+fn getX(p: Point) i32 {
     return p.x;
 }
 
 test "map: transform with complex computation" {
     var numbers = [_]i32{ 2, 3, 4, 5 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var map = Map(i32, i32, SliceIterator(i32)).init(&iter, square);
+    const iter = SliceIterator(i32).init(&numbers);
+    var map = Map(i32, i32, SliceIterator(i32)).init(iter, square);
 
     try testing.expectEqual(4, map.next());
     try testing.expectEqual(9, map.next());
@@ -323,8 +324,8 @@ fn square(x: i32) i32 {
 
 test "map: zero transformation result" {
     var numbers = [_]i32{ 0, 1, 2 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var map = Map(i32, i32, SliceIterator(i32)).init(&iter, multi_zero);
+    const iter = SliceIterator(i32).init(&numbers);
+    var map = Map(i32, i32, SliceIterator(i32)).init(iter, multi_zero);
 
     try testing.expectEqual(0, map.next());
     try testing.expectEqual(0, map.next());
@@ -340,8 +341,8 @@ fn multi_zero(x: i32) i32 {
 test "map: maximum values handling" {
     const max_i32 = std.math.maxInt(i32);
     var numbers = [_]i32{max_i32};
-    var iter = SliceIterator(i32).init(&numbers);
-    var map = Map(i32, i32, SliceIterator(i32)).init(&iter, identity);
+    const iter = SliceIterator(i32).init(&numbers);
+    var map = Map(i32, i32, SliceIterator(i32)).init(iter, identity);
 
     try testing.expectEqual(max_i32, map.next());
 }
@@ -349,8 +350,8 @@ test "map: maximum values handling" {
 test "map: minimum values handling" {
     const min_i32 = std.math.minInt(i32);
     var numbers = [_]i32{min_i32};
-    var iter = SliceIterator(i32).init(&numbers);
-    var map = Map(i32, i32, SliceIterator(i32)).init(&iter, identity);
+    const iter = SliceIterator(i32).init(&numbers);
+    var map = Map(i32, i32, SliceIterator(i32)).init(iter, identity);
 
     try testing.expectEqual(min_i32, map.next());
 }

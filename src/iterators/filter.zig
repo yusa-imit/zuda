@@ -90,11 +90,11 @@ fn SliceIterator(comptime T: type) type {
 // -- Predicate functions for testing --
 
 fn isEven(x: i32) bool {
-    return x % 2 == 0;
+    return @rem(x, 2) == 0;
 }
 
 fn isOdd(x: i32) bool {
-    return x % 2 != 0;
+    return @rem(x, 2) != 0;
 }
 
 fn isPositive(x: i32) bool {
@@ -151,8 +151,8 @@ fn stringIsLongerThanThree(s: []const u8) bool {
 
 test "filter: basic filtering keeps evens" {
     var numbers = [_]i32{ 1, 2, 3, 4, 5, 6 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isEven);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isEven);
 
     try testing.expectEqual(2, filter.next());
     try testing.expectEqual(4, filter.next());
@@ -162,8 +162,8 @@ test "filter: basic filtering keeps evens" {
 
 test "filter: basic filtering keeps odds" {
     var numbers = [_]i32{ 1, 2, 3, 4, 5, 6 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isOdd);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isOdd);
 
     try testing.expectEqual(1, filter.next());
     try testing.expectEqual(3, filter.next());
@@ -173,8 +173,8 @@ test "filter: basic filtering keeps odds" {
 
 test "filter: empty iterator returns null" {
     var numbers = [_]i32{};
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isEven);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isEven);
 
     try testing.expectEqual(null, filter.next());
     try testing.expectEqual(null, filter.next());
@@ -182,8 +182,8 @@ test "filter: empty iterator returns null" {
 
 test "filter: filter all out (predicate always false)" {
     var numbers = [_]i32{ 1, 3, 5, 7 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, alwaysFalse);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, alwaysFalse);
 
     try testing.expectEqual(null, filter.next());
     try testing.expectEqual(null, filter.next());
@@ -191,8 +191,8 @@ test "filter: filter all out (predicate always false)" {
 
 test "filter: filter none out (predicate always true)" {
     var numbers = [_]i32{ 1, 2, 3 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, alwaysTrue);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, alwaysTrue);
 
     try testing.expectEqual(1, filter.next());
     try testing.expectEqual(2, filter.next());
@@ -202,8 +202,8 @@ test "filter: filter none out (predicate always true)" {
 
 test "filter: single element passes predicate" {
     var numbers = [_]i32{42};
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isEven);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isEven);
 
     try testing.expectEqual(42, filter.next());
     try testing.expectEqual(null, filter.next());
@@ -211,17 +211,17 @@ test "filter: single element passes predicate" {
 
 test "filter: single element fails predicate" {
     var numbers = [_]i32{41};
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isEven);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isEven);
 
     try testing.expectEqual(null, filter.next());
 }
 
 test "filter: chained filters (evens then > 10)" {
     var numbers = [_]i32{ 2, 4, 6, 8, 10, 12, 14, 16 };
-    var iter1 = SliceIterator(i32).init(&numbers);
-    var filter1 = Filter(i32, SliceIterator(i32)).init(&iter1, isEven);
-    var filter2 = Filter(i32, @TypeOf(filter1)).init(&filter1, isGreaterThanTen);
+    const iter1 = SliceIterator(i32).init(&numbers);
+    const filter1 = Filter(i32, SliceIterator(i32)).init(iter1, isEven);
+    var filter2 = Filter(i32, @TypeOf(filter1)).init(filter1, isGreaterThanTen);
 
     try testing.expectEqual(12, filter2.next());
     try testing.expectEqual(14, filter2.next());
@@ -231,9 +231,9 @@ test "filter: chained filters (evens then > 10)" {
 
 test "filter: chained filters (odds then < 5)" {
     var numbers = [_]i32{ 1, 3, 5, 7, 9, 11 };
-    var iter1 = SliceIterator(i32).init(&numbers);
-    var filter1 = Filter(i32, SliceIterator(i32)).init(&iter1, isOdd);
-    var filter2 = Filter(i32, @TypeOf(filter1)).init(&filter1, isLessThanFive);
+    const iter1 = SliceIterator(i32).init(&numbers);
+    const filter1 = Filter(i32, SliceIterator(i32)).init(iter1, isOdd);
+    var filter2 = Filter(i32, @TypeOf(filter1)).init(filter1, isLessThanFive);
 
     try testing.expectEqual(1, filter2.next());
     try testing.expectEqual(3, filter2.next());
@@ -242,8 +242,8 @@ test "filter: chained filters (odds then < 5)" {
 
 test "filter: type i32 positive numbers" {
     var numbers = [_]i32{ -5, -2, 0, 3, 8, -1 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isPositive);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isPositive);
 
     try testing.expectEqual(3, filter.next());
     try testing.expectEqual(8, filter.next());
@@ -252,8 +252,8 @@ test "filter: type i32 positive numbers" {
 
 test "filter: type i32 negative numbers" {
     var numbers = [_]i32{ 5, -2, 0, 3, -8, 1 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isNegative);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isNegative);
 
     try testing.expectEqual(-2, filter.next());
     try testing.expectEqual(-8, filter.next());
@@ -262,8 +262,8 @@ test "filter: type i32 negative numbers" {
 
 test "filter: type f32 positive floats" {
     var numbers = [_]f32{ -1.5, 2.3, 0.0, 4.7, -0.5 };
-    var iter = SliceIterator(f32).init(&numbers);
-    var filter = Filter(f32, SliceIterator(f32)).init(&iter, isFloatPositive);
+    const iter = SliceIterator(f32).init(&numbers);
+    var filter = Filter(f32, SliceIterator(f32)).init(iter, isFloatPositive);
 
     try testing.expectEqual(2.3, filter.next());
     try testing.expectEqual(4.7, filter.next());
@@ -272,8 +272,8 @@ test "filter: type f32 positive floats" {
 
 test "filter: type bool filtering trues" {
     var bools = [_]bool{ false, true, false, true, true };
-    var iter = SliceIterator(bool).init(&bools);
-    var filter = Filter(bool, SliceIterator(bool)).init(&iter, isTrue);
+    const iter = SliceIterator(bool).init(&bools);
+    var filter = Filter(bool, SliceIterator(bool)).init(iter, isTrue);
 
     try testing.expectEqual(true, filter.next());
     try testing.expectEqual(true, filter.next());
@@ -283,8 +283,8 @@ test "filter: type bool filtering trues" {
 
 test "filter: type bool filtering falses" {
     var bools = [_]bool{ true, false, true, false, false };
-    var iter = SliceIterator(bool).init(&bools);
-    var filter = Filter(bool, SliceIterator(bool)).init(&iter, isFalse);
+    const iter = SliceIterator(bool).init(&bools);
+    var filter = Filter(bool, SliceIterator(bool)).init(iter, isFalse);
 
     try testing.expectEqual(false, filter.next());
     try testing.expectEqual(false, filter.next());
@@ -294,8 +294,8 @@ test "filter: type bool filtering falses" {
 
 test "filter: non-zero values" {
     var numbers = [_]i32{ 0, 1, 0, 2, 0, -3, 0 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isNonZero);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isNonZero);
 
     try testing.expectEqual(1, filter.next());
     try testing.expectEqual(2, filter.next());
@@ -309,8 +309,8 @@ test "filter: large dataset (1000 elements)" {
         numbers[i] = @intCast(i);
     }
 
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isEven);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isEven);
 
     var count: usize = 0;
     while (filter.next()) |_| {
@@ -322,8 +322,8 @@ test "filter: large dataset (1000 elements)" {
 test "filter: boundary condition - max i32 value" {
     const max_i32 = std.math.maxInt(i32);
     var numbers = [_]i32{ max_i32, 1, 2 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isEven);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isEven);
 
     try testing.expectEqual(2, filter.next());
     try testing.expectEqual(null, filter.next());
@@ -332,17 +332,18 @@ test "filter: boundary condition - max i32 value" {
 test "filter: boundary condition - min i32 value" {
     const min_i32 = std.math.minInt(i32);
     var numbers = [_]i32{ min_i32, 1, 2 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isEven);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isEven);
 
+    try testing.expectEqual(min_i32, filter.next());
     try testing.expectEqual(2, filter.next());
     try testing.expectEqual(null, filter.next());
 }
 
 test "filter: zero values specific test" {
     var numbers = [_]i32{ 0, 0, 1, 0, 2 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isNonZero);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isNonZero);
 
     try testing.expectEqual(1, filter.next());
     try testing.expectEqual(2, filter.next());
@@ -351,8 +352,8 @@ test "filter: zero values specific test" {
 
 test "filter: iterator exhaustion with multiple next calls" {
     var numbers = [_]i32{ 1, 3, 5 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isOdd);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isOdd);
 
     try testing.expectEqual(1, filter.next());
     try testing.expectEqual(3, filter.next());
@@ -366,11 +367,11 @@ test "filter: state isolation between independent filters" {
     var numbers1 = [_]i32{ 1, 2, 3, 4, 5, 6 };
     var numbers2 = [_]i32{ 10, 15, 20, 25, 30 };
 
-    var iter1 = SliceIterator(i32).init(&numbers1);
-    var filter1 = Filter(i32, SliceIterator(i32)).init(&iter1, isEven);
+    const iter1 = SliceIterator(i32).init(&numbers1);
+    var filter1 = Filter(i32, SliceIterator(i32)).init(iter1, isEven);
 
-    var iter2 = SliceIterator(i32).init(&numbers2);
-    var filter2 = Filter(i32, SliceIterator(i32)).init(&iter2, isPositive);
+    const iter2 = SliceIterator(i32).init(&numbers2);
+    var filter2 = Filter(i32, SliceIterator(i32)).init(iter2, isPositive);
 
     try testing.expectEqual(2, filter1.next());
     try testing.expectEqual(10, filter2.next());
@@ -389,7 +390,7 @@ test "filter: struct type filtering" {
 
     const pointXIsEven = struct {
         fn pred(p: Point) bool {
-            return p.x % 2 == 0;
+            return @rem(p.x, 2) == 0;
         }
     };
 
@@ -399,8 +400,8 @@ test "filter: struct type filtering" {
         .{ .x = 3, .y = 4 },
         .{ .x = 4, .y = 5 },
     };
-    var iter = SliceIterator(Point).init(&points);
-    var filter = Filter(Point, SliceIterator(Point)).init(&iter, pointXIsEven.pred);
+    const iter = SliceIterator(Point).init(&points);
+    var filter = Filter(Point, SliceIterator(Point)).init(iter, pointXIsEven.pred);
 
     const p1 = filter.next();
     try testing.expect(p1 != null);
@@ -415,8 +416,8 @@ test "filter: struct type filtering" {
 
 test "filter: float type with complex predicate" {
     var numbers = [_]f32{ 1.0, 2.5, 3.0, 4.5, 5.0 };
-    var iter = SliceIterator(f32).init(&numbers);
-    var filter = Filter(f32, SliceIterator(f32)).init(&iter, isFloatGreaterThanTwo);
+    const iter = SliceIterator(f32).init(&numbers);
+    var filter = Filter(f32, SliceIterator(f32)).init(iter, isFloatGreaterThanTwo);
 
     try testing.expectEqual(2.5, filter.next());
     try testing.expectEqual(3.0, filter.next());
@@ -427,32 +428,32 @@ test "filter: float type with complex predicate" {
 
 test "filter: alternating elements (sparse filtering)" {
     var numbers = [_]i32{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isEven);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isEven);
 
     // Should get 2, 4, 6, 8, 10
     var count: usize = 0;
     while (filter.next()) |val| {
         count += 1;
-        try testing.expectEqual(0, val % 2);
+        try testing.expectEqual(0, @rem(val, 2));
     }
     try testing.expectEqual(5, count);
 }
 
 test "filter: three-level chained filters" {
     var numbers = [_]i32{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
-    var iter1 = SliceIterator(i32).init(&numbers);
-    var filter1 = Filter(i32, SliceIterator(i32)).init(&iter1, isEven); // 2, 4, 6, 8, 10, 12, 14, 16
-    var filter2 = Filter(i32, @TypeOf(filter1)).init(&filter1, isGreaterThanTen); // 12, 14, 16
-    var filter3 = Filter(i32, @TypeOf(filter2)).init(&filter2, isLessThanFive); // none (since min is 12)
+    const iter1 = SliceIterator(i32).init(&numbers);
+    const filter1 = Filter(i32, SliceIterator(i32)).init(iter1, isEven); // 2, 4, 6, 8, 10, 12, 14, 16
+    const filter2 = Filter(i32, @TypeOf(filter1)).init(filter1, isGreaterThanTen); // 12, 14, 16
+    var filter3 = Filter(i32, @TypeOf(filter2)).init(filter2, isLessThanFive); // none (since min is 12)
 
     try testing.expectEqual(null, filter3.next());
 }
 
 test "filter: consecutive false predicates followed by true" {
     var numbers = [_]i32{ 1, 3, 5, 7, 9, 2 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isEven);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isEven);
 
     // First five are all odd, so predicate is false; last is even
     try testing.expectEqual(2, filter.next());
@@ -461,8 +462,8 @@ test "filter: consecutive false predicates followed by true" {
 
 test "filter: all elements at end pass predicate" {
     var numbers = [_]i32{ 1, 3, 5, 2, 4, 6 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isEven);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isEven);
 
     // Odds at start, evens at end
     try testing.expectEqual(2, filter.next());
@@ -473,8 +474,8 @@ test "filter: all elements at end pass predicate" {
 
 test "filter: negative and positive mixed" {
     var numbers = [_]i32{ -10, -5, 0, 5, 10, -3, 8 };
-    var iter = SliceIterator(i32).init(&numbers);
-    var filter = Filter(i32, SliceIterator(i32)).init(&iter, isEven);
+    const iter = SliceIterator(i32).init(&numbers);
+    var filter = Filter(i32, SliceIterator(i32)).init(iter, isEven);
 
     try testing.expectEqual(-10, filter.next());
     try testing.expectEqual(0, filter.next());
