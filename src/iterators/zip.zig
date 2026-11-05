@@ -516,7 +516,7 @@ test "zip: alternating access pattern" {
     var second_iter = SliceIterator(i32).init(&second);
     var zipped = Zip(i32, i32, SliceIterator(i32), SliceIterator(i32)).init(&first_iter, &second_iter);
 
-    var results: [5]struct { a: i32, b: i32 } = undefined;
+    var results: [5]@typeInfo(@TypeOf(zipped.next())).optional.child = undefined;
     var idx: usize = 0;
 
     while (zipped.next()) |pair| {

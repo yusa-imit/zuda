@@ -36,7 +36,7 @@ const Allocator = std.mem.Allocator;
 ///
 /// Time: O(n) where n = number of elements | Space: O(n)
 pub fn collect(comptime T: type, allocator: Allocator, iter: anytype) !ArrayList(T) {
-    var result: ArrayList(T) = .{};
+    var result: ArrayList(T) = .empty;
     errdefer result.deinit(allocator);
 
     while (iter.next()) |value| {
@@ -241,7 +241,7 @@ fn intToFloat(x: i32) f32 {
 test "collect: basic collect from small iterator to ArrayList" {
     const allocator = testing.allocator;
     var numbers = [_]i32{ 1, 2, 3 };
-    const slice_iter = SliceIterator(i32).init(&numbers);
+    var slice_iter = SliceIterator(i32).init(&numbers);
 
     var result = try collect(i32, allocator, &slice_iter);
     defer result.deinit(allocator);
@@ -255,7 +255,7 @@ test "collect: basic collect from small iterator to ArrayList" {
 test "collect: empty iterator returns empty ArrayList" {
     const allocator = testing.allocator;
     var numbers = [_]i32{};
-    const slice_iter = SliceIterator(i32).init(&numbers);
+    var slice_iter = SliceIterator(i32).init(&numbers);
 
     var result = try collect(i32, allocator, &slice_iter);
     defer result.deinit(allocator);
@@ -266,7 +266,7 @@ test "collect: empty iterator returns empty ArrayList" {
 test "collect: single element iterator" {
     const allocator = testing.allocator;
     var numbers = [_]i32{42};
-    const slice_iter = SliceIterator(i32).init(&numbers);
+    var slice_iter = SliceIterator(i32).init(&numbers);
 
     var result = try collect(i32, allocator, &slice_iter);
     defer result.deinit(allocator);
@@ -282,7 +282,7 @@ test "collect: large dataset (1000 elements)" {
         numbers[i] = @intCast(i);
     }
 
-    const slice_iter = SliceIterator(i32).init(&numbers);
+    var slice_iter = SliceIterator(i32).init(&numbers);
     var result = try collect(i32, allocator, &slice_iter);
     defer result.deinit(allocator);
 
@@ -296,7 +296,7 @@ test "collect: after filter adaptor" {
     const allocator = testing.allocator;
     var numbers = [_]i32{ 1, 2, 3, 4, 5, 6 };
     const slice_iter = SliceIterator(i32).init(&numbers);
-    const filter = FilterIterator(i32, SliceIterator(i32)).init(slice_iter, isEven);
+    var filter = FilterIterator(i32, SliceIterator(i32)).init(slice_iter, isEven);
 
     var result = try collect(i32, allocator, &filter);
     defer result.deinit(allocator);
@@ -311,7 +311,7 @@ test "collect: after map adaptor" {
     const allocator = testing.allocator;
     var numbers = [_]i32{ 1, 2, 3 };
     const slice_iter = SliceIterator(i32).init(&numbers);
-    const map = MapIterator(i32, i32, SliceIterator(i32)).init(slice_iter, double);
+    var map = MapIterator(i32, i32, SliceIterator(i32)).init(slice_iter, double);
 
     var result = try collect(i32, allocator, &map);
     defer result.deinit(allocator);
@@ -328,7 +328,7 @@ test "collect: after chain adaptor" {
     var numbers2 = [_]i32{ 3, 4 };
     const iter1 = SliceIterator(i32).init(&numbers1);
     const iter2 = SliceIterator(i32).init(&numbers2);
-    const chain = ChainIterator(i32, SliceIterator(i32)).init(iter1, iter2);
+    var chain = ChainIterator(i32, SliceIterator(i32)).init(iter1, iter2);
 
     var result = try collect(i32, allocator, &chain);
     defer result.deinit(allocator);
@@ -344,7 +344,7 @@ test "collect: after take adaptor" {
     const allocator = testing.allocator;
     var numbers = [_]i32{ 1, 2, 3, 4, 5 };
     const slice_iter = SliceIterator(i32).init(&numbers);
-    const take = TakeIterator(i32, SliceIterator(i32)).init(slice_iter, 3);
+    var take = TakeIterator(i32, SliceIterator(i32)).init(slice_iter, 3);
 
     var result = try collect(i32, allocator, &take);
     defer result.deinit(allocator);
@@ -359,7 +359,7 @@ test "collect: after skip adaptor" {
     const allocator = testing.allocator;
     var numbers = [_]i32{ 1, 2, 3, 4, 5 };
     const slice_iter = SliceIterator(i32).init(&numbers);
-    const skip = SkipIterator(i32, SliceIterator(i32)).init(slice_iter, 2);
+    var skip = SkipIterator(i32, SliceIterator(i32)).init(slice_iter, 2);
 
     var result = try collect(i32, allocator, &skip);
     defer result.deinit(allocator);
@@ -374,7 +374,7 @@ test "collect: enumerate pairs (collects struct)" {
     const allocator = testing.allocator;
     var numbers = [_]i32{ 10, 20, 30 };
     const slice_iter = SliceIterator(i32).init(&numbers);
-    const enum_iter = EnumerateIterator(i32, SliceIterator(i32)).init(slice_iter);
+    var enum_iter = EnumerateIterator(i32, SliceIterator(i32)).init(slice_iter);
 
     const PairType = EnumerateIterator(i32, SliceIterator(i32)).Pair;
     var result = try collect(PairType, allocator, &enum_iter);
@@ -393,7 +393,7 @@ test "collect: f32 type collection" {
     const allocator = testing.allocator;
     var numbers = [_]i32{ 1, 2, 3 };
     const slice_iter = SliceIterator(i32).init(&numbers);
-    const map = MapIterator(i32, f32, SliceIterator(i32)).init(slice_iter, intToFloat);
+    var map = MapIterator(i32, f32, SliceIterator(i32)).init(slice_iter, intToFloat);
 
     var result = try collect(f32, allocator, &map);
     defer result.deinit(allocator);
@@ -407,7 +407,7 @@ test "collect: f32 type collection" {
 test "collect: bool type collection" {
     const allocator = testing.allocator;
     var bools = [_]bool{ true, false, true, true };
-    const slice_iter = SliceIterator(bool).init(&bools);
+    var slice_iter = SliceIterator(bool).init(&bools);
 
     var result = try collect(bool, allocator, &slice_iter);
     defer result.deinit(allocator);
@@ -428,7 +428,7 @@ test "collect: struct type collection" {
         .{ .x = 3, .y = 4 },
         .{ .x = 5, .y = 6 },
     };
-    const slice_iter = SliceIterator(Point).init(&points);
+    var slice_iter = SliceIterator(Point).init(&points);
 
     var result = try collect(Point, allocator, &slice_iter);
     defer result.deinit(allocator);
@@ -445,7 +445,7 @@ test "collect: struct type collection" {
 test "collect: deinit required - no memory leaks with std.testing.allocator" {
     const allocator = testing.allocator;
     var numbers = [_]i32{ 1, 2, 3, 4, 5 };
-    const slice_iter = SliceIterator(i32).init(&numbers);
+    var slice_iter = SliceIterator(i32).init(&numbers);
 
     var result = try collect(i32, allocator, &slice_iter);
     // Allocator automatically detects leaks if deinit is not called properly
@@ -457,7 +457,7 @@ test "collect: boundary - take zero elements" {
     const allocator = testing.allocator;
     var numbers = [_]i32{ 1, 2, 3 };
     const slice_iter = SliceIterator(i32).init(&numbers);
-    const take = TakeIterator(i32, SliceIterator(i32)).init(slice_iter, 0);
+    var take = TakeIterator(i32, SliceIterator(i32)).init(slice_iter, 0);
 
     var result = try collect(i32, allocator, &take);
     defer result.deinit(allocator);
@@ -469,7 +469,7 @@ test "collect: boundary - skip all elements" {
     const allocator = testing.allocator;
     var numbers = [_]i32{ 1, 2, 3 };
     const slice_iter = SliceIterator(i32).init(&numbers);
-    const skip = SkipIterator(i32, SliceIterator(i32)).init(slice_iter, 3);
+    var skip = SkipIterator(i32, SliceIterator(i32)).init(slice_iter, 3);
 
     var result = try collect(i32, allocator, &skip);
     defer result.deinit(allocator);
@@ -483,7 +483,7 @@ test "collect: combined adaptors - map then filter then take" {
     const slice_iter = SliceIterator(i32).init(&numbers);
     const map = MapIterator(i32, i32, SliceIterator(i32)).init(slice_iter, double);
     const filter = FilterIterator(i32, MapIterator(i32, i32, SliceIterator(i32))).init(map, isEven);
-    const take = TakeIterator(i32, FilterIterator(i32, MapIterator(i32, i32, SliceIterator(i32)))).init(filter, 2);
+    var take = TakeIterator(i32, FilterIterator(i32, MapIterator(i32, i32, SliceIterator(i32)))).init(filter, 2);
 
     var result = try collect(i32, allocator, &take);
     defer result.deinit(allocator);
@@ -499,7 +499,7 @@ test "collect: combined adaptors - map then filter then take" {
 test "collect: u8 type collection" {
     const allocator = testing.allocator;
     var bytes = [_]u8{ 10, 20, 30, 40, 50 };
-    const slice_iter = SliceIterator(u8).init(&bytes);
+    var slice_iter = SliceIterator(u8).init(&bytes);
 
     var result = try collect(u8, allocator, &slice_iter);
     defer result.deinit(allocator);
@@ -512,7 +512,7 @@ test "collect: u8 type collection" {
 test "collect: ArrayList returned is properly initialized" {
     const allocator = testing.allocator;
     var numbers = [_]i32{ 1, 2 };
-    const slice_iter = SliceIterator(i32).init(&numbers);
+    var slice_iter = SliceIterator(i32).init(&numbers);
 
     var result = try collect(i32, allocator, &slice_iter);
     defer result.deinit(allocator);

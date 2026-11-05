@@ -80,23 +80,23 @@ pub fn Partition(comptime T: type, comptime _: type) type {
             predicate_fn: *const fn (T) bool,
         ) !Self {
             // Single pass: collect elements into ArrayLists, then convert to owned slices
-            var true_list = std.ArrayList(T).init(allocator);
-            errdefer true_list.deinit();
-            var false_list = std.ArrayList(T).init(allocator);
-            errdefer false_list.deinit();
+            var true_list: std.ArrayList(T) = .empty;
+            errdefer true_list.deinit(allocator);
+            var false_list: std.ArrayList(T) = .empty;
+            errdefer false_list.deinit(allocator);
 
             var iter = base_iter;
             while (iter.next()) |value| {
                 if (predicate_fn(value)) {
-                    try true_list.append(value);
+                    try true_list.append(allocator, value);
                 } else {
-                    try false_list.append(value);
+                    try false_list.append(allocator, value);
                 }
             }
 
             // Convert to owned slices (transfers ownership to caller)
-            const true_slice = try true_list.toOwnedSlice();
-            const false_slice = try false_list.toOwnedSlice();
+            const true_slice = try true_list.toOwnedSlice(allocator);
+            const false_slice = try false_list.toOwnedSlice(allocator);
 
             return .{
                 .allocator = allocator,
