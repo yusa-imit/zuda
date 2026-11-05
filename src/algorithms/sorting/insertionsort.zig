@@ -1,3 +1,9 @@
+//! Insertion sort: stable, adaptive sort that is best for short or nearly sorted input.
+//! `binaryInsertionSort` finds each insertion point by binary search, which cuts comparisons to
+//! O(n log n) but leaves element moves at O(n²).
+//! Time: O(n) best case, O(n²) average and worst | Space: O(1).
+//! Ownership: sorts the caller's slice in place; never allocates.
+
 const std = @import("std");
 const testing = std.testing;
 const Order = std.math.Order;
@@ -29,7 +35,6 @@ const Order = std.math.Order;
 /// - When stability is critical (e.g., multi-key sorting)
 /// - Real-time data streams (online property)
 /// - Subroutine in IntroSort, TimSort for small partitions
-
 /// Sorts a slice using insertion sort with default ascending order
 ///
 /// Time: O(n²) average, O(n) best (sorted), O(n²) worst (reverse sorted)

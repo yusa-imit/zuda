@@ -179,14 +179,14 @@ test "heapSort - negative numbers" {
 test "heapSort - large array" {
     const n = 1000;
     var arr: [n]i32 = undefined;
-    
+
     // Fill with descending values
     for (0..n) |i| {
         arr[i] = @intCast(n - i);
     }
-    
+
     heapSortAsc(i32, &arr);
-    
+
     // Verify sorted
     for (0..n) |i| {
         try testing.expectEqual(@as(i32, @intCast(i + 1)), arr[i]);
@@ -195,15 +195,15 @@ test "heapSort - large array" {
 
 test "heapSort - custom comparison (strings by length)" {
     var arr = [_][]const u8{ "hello", "a", "world", "ab", "xyz" };
-    
+
     const Context = struct {
         fn lessThan(_: @This(), a: []const u8, b: []const u8) bool {
             return a.len < b.len;
         }
     };
-    
+
     heapSort([]const u8, &arr, Context{}, Context.lessThan);
-    
+
     // Verify sorted by length
     try testing.expectEqual(1, arr[0].len); // "a"
     try testing.expectEqual(2, arr[1].len); // "ab"
@@ -228,22 +228,22 @@ test "heapSort - stability check (not stable)" {
         key: i32,
         value: u8,
     };
-    
+
     var arr = [_]Item{
         .{ .key = 3, .value = 'a' },
         .{ .key = 1, .value = 'b' },
         .{ .key = 3, .value = 'c' },
         .{ .key = 2, .value = 'd' },
     };
-    
+
     const Context = struct {
         fn lessThan(_: @This(), a: Item, b: Item) bool {
             return a.key < b.key;
         }
     };
-    
+
     heapSort(Item, &arr, Context{}, Context.lessThan);
-    
+
     // Verify keys are sorted (order of equal keys may vary)
     try testing.expectEqual(@as(i32, 1), arr[0].key);
     try testing.expectEqual(@as(i32, 2), arr[1].key);
@@ -258,9 +258,9 @@ test "heapSort - worst case performance" {
     for (0..n) |i| {
         arr[i] = @intCast(n - i);
     }
-    
+
     heapSortAsc(i32, &arr);
-    
+
     // Verify O(n log n) behavior by checking correctness
     for (0..n) |i| {
         try testing.expectEqual(@as(i32, @intCast(i + 1)), arr[i]);

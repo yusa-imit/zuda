@@ -1,3 +1,8 @@
+//! Cocktail shaker sort: bubble sort that alternates forward and backward passes. Stable and
+//! adaptive: sorted input is detected after one forward pass, O(n). Otherwise O(n²) time.
+//! Teaching algorithm; prefer `insertionsort` or `timsort` for real data.
+//! Space: O(1). Ownership: sorts the caller's slice in place; never allocates.
+
 const std = @import("std");
 const testing = std.testing;
 const Order = std.math.Order;

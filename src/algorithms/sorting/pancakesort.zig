@@ -1,3 +1,10 @@
+//! Pancake sort: sorts by reversing prefixes of the slice (flips). Uses at most 2n - 3 flips;
+//! `maxFlipsBound` gives the bound and `pancakeSortCountFlips` the count of a real run. Not
+//! stable.
+//! Time: O(n²) | Space: O(1).
+//! Ownership: sorts the caller's slice in place. Only `pancakeSortSequence` allocates: it returns
+//! a list of flip sizes that the caller owns and must `deinit` with the same allocator.
+
 const std = @import("std");
 const testing = std.testing;
 const Order = std.math.Order;

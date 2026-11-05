@@ -1,3 +1,10 @@
+//! Strand sort: pulls ascending strands out of the input and merges them into the output. Stable.
+//! Fast on input that already consists of a few ascending runs.
+//! Time: O(n²) worst case, O(n) when sorted | Space: O(n) for the input copy, strand and output.
+//! Ownership: every entry point allocates its working lists from the caller's allocator and frees
+//! them before return, also on error; the result is written back into the caller's slice.
+//! `getAllStrands` returns lists the caller owns.
+
 const std = @import("std");
 const testing = std.testing;
 const Order = std.math.Order;

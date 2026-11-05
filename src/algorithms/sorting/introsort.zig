@@ -1,3 +1,9 @@
+//! Introsort: quicksort that falls back to heapsort past a depth limit of 2·log2(n). This keeps
+//! the O(n log n) worst case; slices of 16 elements or fewer finish with insertion sort. The
+//! recursion depth is bounded by the depth limit. Not stable.
+//! Time: O(n log n) | Space: O(log n) stack.
+//! Ownership: sorts the caller's slice in place; the sort itself never allocates.
+
 const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
@@ -140,7 +146,8 @@ pub fn IntroSort(
 
                 // Choose larger child
                 if (child + 1 < heap_size and
-                    compareFn(context, items[start + child], items[start + child + 1]) == .lt) {
+                    compareFn(context, items[start + child], items[start + child + 1]) == .lt)
+                {
                     child += 1;
                 }
 
@@ -430,7 +437,10 @@ test "IntroSort - result preserves all input elements" {
     for (0..10) |v| {
         var found = false;
         for (items) |x| {
-            if (x == @as(i32, @intCast(v))) { found = true; break; }
+            if (x == @as(i32, @intCast(v))) {
+                found = true;
+                break;
+            }
         }
         try testing.expect(found);
     }

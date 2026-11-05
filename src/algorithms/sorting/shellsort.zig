@@ -1,3 +1,8 @@
+//! Shell sort: insertion sort over a shrinking sequence of gaps. The gap sequence (see
+//! `GapSequence`) decides the running time; the worst case is between O(n log² n) and O(n²)
+//! depending on the sequence. Not stable.
+//! Space: O(1). Ownership: sorts the caller's slice in place; the sort itself never allocates.
+
 const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
@@ -34,7 +39,6 @@ const Allocator = std.mem.Allocator;
 /// - When simple implementation is preferred over optimal O(n log n)
 /// - Embedded systems, real-time constraints
 /// - Educational purposes (understanding gap-based sorting)
-
 /// Gap sequence types
 pub const GapSequence = enum {
     /// Shell's original sequence: n/2, n/4, ..., 1

@@ -1,3 +1,10 @@
+//! Merge sort variants: top-down, bottom-up and natural (run-detecting) merge sort. All three are
+//! stable and run in O(n log n); the natural variant is O(n) on sorted input.
+//! Space: O(n) auxiliary buffer.
+//! Ownership: each sorter stores the allocator passed to `init`. `sort` allocates its auxiliary
+//! buffer (and, for the natural variant, a run list) from it and frees both before return, also
+//! on error. The caller's slice is sorted in place.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

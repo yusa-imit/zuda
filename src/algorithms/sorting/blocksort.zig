@@ -1,3 +1,11 @@
+//! Block merge sort: stable sort that merges natural runs found in the input. This is a
+//! simplified variant that favours correctness over the optimal O(1)-space bound of full
+//! Grail/Block sort. Stable.
+//! Time: O(n) on sorted input, O(n log n) otherwise | Space: O(n) bookkeeping for the run list.
+//! Ownership: `BlockSort(T, Context, lessThanFn)` stores the allocator passed to `init` and uses
+//! it for the run list during `sort`; the caller's slice is sorted in place and nothing outlives
+//! the call.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

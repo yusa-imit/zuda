@@ -1,3 +1,10 @@
+//! Bucket sort: distribution sort for data spread roughly uniformly over its range. Elements are
+//! scattered into `num_buckets` buckets, each bucket is sorted, and the buckets are concatenated
+//! back into the input slice.
+//! Time: O(n + k) average for uniform data, O(n²) worst case | Space: O(n + k) for k buckets.
+//! Ownership: the caller's slice is sorted in place; the bucket array and its lists are allocated
+//! from the caller's allocator per call and freed before return, also on error.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const testing = std.testing;
