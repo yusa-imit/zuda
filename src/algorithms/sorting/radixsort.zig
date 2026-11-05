@@ -1,3 +1,10 @@
+//! Radix sort: non-comparative integer sort over fixed-width digits. Digits are bytes (base 256).
+//! `sortLSD` processes the least significant byte first with a stable counting pass per byte.
+//! `sortMSD` starts at the most significant byte and recurses on buckets.
+//! Time: O(d · (n + 256)) for d = @sizeOf(T) | Space: O(n + 256), plus O(d) stack for `sortMSD`.
+//! Ownership: sorts the caller's slice in place; each call allocates its auxiliary buffer from
+//! the caller's allocator and frees it before return, also on error.
+
 const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
@@ -105,7 +112,7 @@ pub fn RadixSort(comptime T: type) type {
             }
 
             // Copy back
-            @memcpy(items[start..end], aux[0..end - start]);
+            @memcpy(items[start..end], aux[0 .. end - start]);
 
             // Recursively sort each bucket
             if (byte_idx > 0) {

@@ -1,3 +1,9 @@
+//! Bogo sort: shuffle until sorted. Educational only; do not use in production. Expected
+//! O((n+1)!) time, unbounded worst case. Every entry point takes an explicit `seed: u64`, so a
+//! run is reproducible. `bogoSortBounded` takes `iterations_max` and returns
+//! `error.MaxIterationsExceeded` instead of looping forever. Not stable.
+//! Space: O(1). Ownership: sorts the caller's slice in place; never allocates.
+
 const std = @import("std");
 const testing = std.testing;
 const Order = std.math.Order;

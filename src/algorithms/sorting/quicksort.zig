@@ -1,3 +1,10 @@
+//! Quicksort: classic partition-and-recurse sort, plus 3-way and dual-pivot variants. The 3-way
+//! form handles many equal keys in O(n); the dual-pivot form partitions into three ranges per
+//! pass. Not stable.
+//! Time: O(n log n) average, O(n²) worst case | Space: O(log n) stack.
+//! Ownership: sorts the caller's slice in place; never allocates. For a guaranteed O(n log n)
+//! bound use `introsort`.
+
 const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;

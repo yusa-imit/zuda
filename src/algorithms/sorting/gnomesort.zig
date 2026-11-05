@@ -50,7 +50,7 @@ pub fn gnomeSort(
     comptime lessThan: fn (lhs: T, rhs: T) bool,
 ) void {
     if (items.len <= 1) return;
-    
+
     var pos: usize = 0;
     while (pos < items.len) {
         // At start or current >= previous: move forward
@@ -111,7 +111,7 @@ pub fn gnomeSortOptimized(
     comptime lessThan: fn (lhs: T, rhs: T) bool,
 ) void {
     if (items.len <= 1) return;
-    
+
     var pos: usize = 0;
     while (pos < items.len) {
         if (pos == 0 or !lessThan(items[pos], items[pos - 1])) {
@@ -120,7 +120,7 @@ pub fn gnomeSortOptimized(
             // Swap and move backward
             std.mem.swap(T, &items[pos], &items[pos - 1]);
             pos -= 1;
-            
+
             // After swap, continue moving backward until in order
             // This is the optimization - we don't jump back to previous position
             while (pos > 0 and lessThan(items[pos], items[pos - 1])) {
@@ -213,21 +213,21 @@ test "gnome sort - custom comparison" {
         x: i32,
         y: i32,
     };
-    
+
     var points = [_]Point{
         .{ .x = 5, .y = 2 },
         .{ .x = 1, .y = 8 },
         .{ .x = 3, .y = 4 },
     };
-    
+
     const lessThan = struct {
         fn lt(a: Point, b: Point) bool {
             return a.x < b.x;
         }
     }.lt;
-    
+
     gnomeSort(Point, &points, lessThan);
-    
+
     try testing.expectEqual(@as(i32, 1), points[0].x);
     try testing.expectEqual(@as(i32, 3), points[1].x);
     try testing.expectEqual(@as(i32, 5), points[2].x);
@@ -254,13 +254,13 @@ test "gnome sort - u8 type" {
 
 test "gnome sort - optimized variant" {
     var arr = [_]i32{ 5, 2, 8, 1, 9, 3 };
-    
+
     const lessThan = struct {
         fn lt(a: i32, b: i32) bool {
             return a < b;
         }
     }.lt;
-    
+
     gnomeSortOptimized(i32, &arr, lessThan);
     try testing.expectEqualSlices(i32, &[_]i32{ 1, 2, 3, 5, 8, 9 }, &arr);
 }
@@ -268,16 +268,16 @@ test "gnome sort - optimized variant" {
 test "gnome sort - optimized vs standard consistency" {
     var arr1 = [_]i32{ 9, 3, 7, 1, 5, 2, 8, 4, 6 };
     var arr2 = arr1;
-    
+
     const lessThan = struct {
         fn lt(a: i32, b: i32) bool {
             return a < b;
         }
     }.lt;
-    
+
     gnomeSort(i32, &arr1, lessThan);
     gnomeSortOptimized(i32, &arr2, lessThan);
-    
+
     try testing.expectEqualSlices(i32, &arr1, &arr2);
 }
 
@@ -306,7 +306,7 @@ test "gnome sort - stability test" {
         key: i32,
         value: u8,
     };
-    
+
     var items = [_]Item{
         .{ .key = 3, .value = 1 },
         .{ .key = 1, .value = 2 },
@@ -314,22 +314,22 @@ test "gnome sort - stability test" {
         .{ .key = 2, .value = 4 },
         .{ .key = 3, .value = 5 },
     };
-    
+
     const lessThan = struct {
         fn lt(a: Item, b: Item) bool {
             return a.key < b.key;
         }
     }.lt;
-    
+
     gnomeSort(Item, &items, lessThan);
-    
+
     // Verify sorted by key
     try testing.expectEqual(@as(i32, 1), items[0].key);
     try testing.expectEqual(@as(i32, 2), items[1].key);
     try testing.expectEqual(@as(i32, 3), items[2].key);
     try testing.expectEqual(@as(i32, 3), items[3].key);
     try testing.expectEqual(@as(i32, 3), items[4].key);
-    
+
     // Verify stability - items with key=3 should maintain order (1, 3, 5)
     try testing.expectEqual(@as(u8, 1), items[2].value);
     try testing.expectEqual(@as(u8, 3), items[3].value);

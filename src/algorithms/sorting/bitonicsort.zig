@@ -1,3 +1,14 @@
+//! Bitonic sort: a data-oblivious sorting network with O(log² n) parallel depth. The comparison
+//! sequence depends only on the length, never on the values. The network needs a power-of-two
+//! length; `bitonicSortAny` copies the input into a buffer padded to the next power of two with
+//! the maximum element, then copies the sorted prefix back. Not stable.
+//! Time: O(n log² n) work | Space: O(1) in place for power-of-two input, O(n) for
+//! `bitonicSortAny`.
+//! Ownership: sorts the caller's slice in place; only `bitonicSortAny` allocates (one scratch
+//! buffer from the caller's allocator, freed before return; `error.Overflow` if the padded length
+//! does not fit). A length that is not a power of two on the in-place entry points returns
+//! `error.InvalidLength`.
+
 const std = @import("std");
 const testing = std.testing;
 const Order = std.math.Order;

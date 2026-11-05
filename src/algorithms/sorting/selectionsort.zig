@@ -1,3 +1,8 @@
+//! Selection sort: repeatedly moves the minimum of the unsorted suffix to the front. Not stable,
+//! not adaptive (O(n²) comparisons on any input), but it performs only O(n) swaps, which suits
+//! media where writes are costly. `countSwaps` reports the swap count of a run.
+//! Space: O(1). Ownership: sorts the caller's slice in place; never allocates.
+
 const std = @import("std");
 const testing = std.testing;
 

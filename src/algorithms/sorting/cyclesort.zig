@@ -1,3 +1,9 @@
+//! Cycle sort: in-place sort that writes each element to its final position at most once. Useful
+//! when writes are far more expensive than reads (flash, EEPROM). `countWrites` reports how many
+//! writes a run performs. Not stable.
+//! Time: O(n²) comparisons, at most n writes | Space: O(1).
+//! Ownership: sorts the caller's slice in place; never allocates.
+
 const std = @import("std");
 const testing = std.testing;
 const Order = std.math.Order;
@@ -31,7 +37,6 @@ const Order = std.math.Order;
 /// - Embedded systems where write endurance matters
 /// - Educational purposes (understanding optimal write algorithms)
 /// - Situations where minimizing writes is more critical than minimizing comparisons
-
 /// Sorts an array in-place using cycle sort with a custom comparison function
 ///
 /// Time: O(n²) comparisons, O(n) writes

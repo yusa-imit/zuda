@@ -1,3 +1,9 @@
+//! Comb sort: bubble sort that compares elements a shrinking gap apart. The gap starts at the
+//! slice length and is divided by 1.3 on each pass until it reaches 1, which removes small values
+//! stuck near the end ("turtles") that slow bubble sort down. Not stable.
+//! Time: O(n²) worst case, about O(n log n) on random data | Space: O(1).
+//! Ownership: sorts the caller's slice in place; never allocates.
+
 const std = @import("std");
 const testing = std.testing;
 const Order = std.math.Order;
@@ -47,7 +53,6 @@ const Order = std.math.Order;
 ///
 /// - Włodzimierz Dobosiewicz (1980) — Original publication
 /// - Stephen Lacey and Richard Box (1991) — Analysis and shrink factor 1.3
-
 /// Comb Sort with custom comparison function
 ///
 /// Sorts the slice in-place using Comb Sort algorithm with a custom comparison function.

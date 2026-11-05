@@ -1,3 +1,9 @@
+//! Timsort: stable hybrid of insertion sort and merge sort that exploits existing runs. Finds
+//! ascending and descending runs, extends short ones with insertion sort and merges them.
+//! Time: O(n) on sorted input, O(n log n) worst case | Space: O(n) merge buffer.
+//! Ownership: sorts the caller's slice in place; each call allocates one merge buffer from the
+//! caller's allocator and frees it before return, also on error.
+
 const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;

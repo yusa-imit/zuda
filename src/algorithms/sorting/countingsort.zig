@@ -1,3 +1,10 @@
+//! Counting sort: non-comparative sort for integers whose range is small. Counts occurrences of
+//! each value, then writes the values back in order. Stable.
+//! Time: O(n + k) for range k = max - min + 1 | Space: O(n + k).
+//! Ownership: `CountingSort(T).sort` and `sortWithRange` sort the caller's slice in place; they
+//! allocate a count table and an output buffer from the caller's allocator per call and free both
+//! before return, also on error.
+
 const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
