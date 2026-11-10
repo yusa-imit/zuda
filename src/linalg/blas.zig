@@ -28,6 +28,13 @@ const root = @import("../root.zig");
 const NDArray = root.ndarray.NDArray;
 const simd_blas = @import("simd_blas.zig");
 
+/// Deep copy of `source` with the same shape and layout; caller owns the result.
+/// `NDArray` has no `clone`, so this goes through `fromSlice`.
+fn cloneArray(source: anytype) !@TypeOf(source) {
+    const Array = @TypeOf(source);
+    return Array.fromSlice(source.allocator, &source.shape, source.data, source.layout);
+}
+
 /// Compute inner product (dot product) of two vectors
 ///
 /// Parameters:
@@ -1127,8 +1134,8 @@ test "nrm2: auto-dispatch — large n=1024 SIMD correctness" {
     }
 
     const norm = try nrm2(f64, x);
-    // sum(i²) for i=0..1023 = n(n-1)(2n-1)/6 = 1024*1023*2047/6 = 358,372,352
-    const expected_sum_sq: f64 = 358372352.0;
+    // sum(i²) for i=0..1023 = 1023*1024*2047/6 = 2,144,338,944/6 = 357,389,824
+    const expected_sum_sq: f64 = 357389824.0;
     try testing.expectApproxEqAbs(@sqrt(expected_sum_sq), norm, 1e-6);
 }
 
@@ -1156,8 +1163,8 @@ test "nrm2: auto-dispatch — f32 type support (n=128)" {
     }
 
     const norm = try nrm2(f32, x);
-    // sum(i²) for i=0..127 = 127*128*255/6 = 685,440
-    const expected_sum_sq: f32 = 685440.0;
+    // sum(i²) for i=0..127 = 127*128*255/6 = 4,145,280/6 = 690,880
+    const expected_sum_sq: f32 = 690880.0;
     try testing.expectApproxEqAbs(@sqrt(expected_sum_sq), norm, 1e-3);
 }
 
@@ -3200,7 +3207,7 @@ test "gemm: identity matrices" {
     // Verify C is identity
     for (0..3) |i| {
         for (0..3) |j| {
-            const expected = if (i == j) 1.0 else 0.0;
+            const expected: f64 = if (i == j) 1.0 else 0.0;
             try testing.expectApproxEqAbs(expected, C.data[i * 3 + j], 1e-10);
         }
     }
@@ -3290,12 +3297,12 @@ test "gemm: f32 precision" {
     defer C.deinit();
 
     // A*B = [[0.5*2 + 1.5*1, 0.5*1 + 1.5*2], [2.5*2 + 3.5*1, 2.5*1 + 3.5*2]]
-    //     = [[2.5, 3.5], [7.5, 9.5]]
+    //     = [[2.5, 3.5], [8.5, 9.5]]
     try gemm(f32, 1.0, A, B, 0.0, &C);
 
     try testing.expectApproxEqAbs(@as(f32, 2.5), C.data[0], 1e-5);
     try testing.expectApproxEqAbs(@as(f32, 3.5), C.data[1], 1e-5);
-    try testing.expectApproxEqAbs(@as(f32, 7.5), C.data[2], 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 8.5), C.data[2], 1e-5);
     try testing.expectApproxEqAbs(@as(f32, 9.5), C.data[3], 1e-5);
 }
 
@@ -3710,7 +3717,7 @@ test "gemm: correctness at 64x64 with beta=0 (pure matrix multiply)" {
     for (0..size) |i| {
         for (0..size) |j| {
             const idx = i * size + j;
-            const expected = if (i == j) 6.0 else 0.0;
+            const expected: f64 = if (i == j) 6.0 else 0.0;
             try testing.expectApproxEqAbs(expected, C.data[idx], 1e-10);
         }
     }
@@ -3847,7 +3854,7 @@ test "gemm: mixed scaling with alpha and beta at 64x64" {
     for (0..size) |i| {
         for (0..size) |j| {
             const idx = i * size + j;
-            const expected = if (i == j) 6.5 else 3.0;
+            const expected: f64 = if (i == j) 6.5 else 3.0;
             try testing.expectApproxEqAbs(expected, C.data[idx], 1e-10);
         }
     }
@@ -3920,7 +3927,7 @@ test "gemm: tall matrix 64x16 inner dimension triggers dispatch" {
 /// defer x.deinit();
 /// try trmv(f64, 'U', 'N', 'N', A, &x);  // x = [1+2+3, 4+5, 6] = [6, 9, 6]
 /// ```
-pub fn trmv(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 2).Error)!void {
+pub fn trmv(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 2).Error || std.mem.Allocator.Error)!void {
     // Validate square matrix
     if (A.shape[0] != A.shape[1]) {
         return error.DimensionMismatch;
@@ -4052,7 +4059,7 @@ pub fn trmv(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x
 /// defer x.deinit();
 /// try trsv(f64, 'U', 'N', 'N', A, &x);  // Solve A*x = [5, 6]
 /// ```
-pub fn trsv(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 2).Error)!void {
+pub fn trsv(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 2).Error || std.mem.Allocator.Error)!void {
     // Validate square matrix
     if (A.shape[0] != A.shape[1]) {
         return error.DimensionMismatch;
@@ -4174,7 +4181,7 @@ pub fn trsv(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x
 /// defer B.deinit();
 /// try trmm(f64, 'L', 'U', 'N', 'N', 1.0, A, &B);  // B = A*B
 /// ```
-pub fn trmm(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alpha: T, A: NDArray(T, 2), B: *NDArray(T, 2)) (NDArray(T, 2).Error)!void {
+pub fn trmm(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alpha: T, A: NDArray(T, 2), B: *NDArray(T, 2)) (NDArray(T, 2).Error || std.mem.Allocator.Error)!void {
     // Validate square matrix A
     if (A.shape[0] != A.shape[1]) {
         return error.DimensionMismatch;
@@ -4924,12 +4931,12 @@ test "trmv: lower triangular with unit diagonal" {
     var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1, 2, 3 }, .row_major);
     defer x.deinit();
 
-    // With unit diagonal: A*x = [1 + 0, 2*1 + 2 + 0, 3*1 + 4*2 + 3] = [1, 4, 16]
+    // With unit diagonal: A*x = [1, 2*1 + 2, 3*1 + 4*2 + 3] = [1, 4, 14]
     try trmv(f64, 'L', 'N', 'U', A, &x);
 
     try testing.expectApproxEqAbs(1.0, x.data[0], 1e-10);
     try testing.expectApproxEqAbs(4.0, x.data[1], 1e-10);
-    try testing.expectApproxEqAbs(16.0, x.data[2], 1e-10);
+    try testing.expectApproxEqAbs(14.0, x.data[2], 1e-10);
 }
 
 test "trmv: upper triangular transpose (acts like lower)" {
@@ -5196,12 +5203,12 @@ test "trmv dispatch: threshold boundary n=63 (scalar fallback)" {
     try trmv(f64, 'U', 'N', 'N', A, &x);
 
     // Expected: x[i] = sum(A[i,j] for j in i..n) = sum(i+j+1 for j in i..n)
-    // For i=62: sum(j in 62..63) = (62+62+1) + (62+63+1) = 125 + 126 = 251
-    const expected_62 = 251.0;
+    // For i=62: only j=62 remains (n=63) = 62+62+1 = 125
+    const expected_62 = 125.0;
     try testing.expectApproxEqAbs(expected_62, x.data[62], 1e-9);
 
-    // For i=0: sum(j in 0..63) = sum(0+j+1 for j in 0..63) = sum(1..64) = 64*65/2 = 2080
-    const expected_0 = 2080.0;
+    // For i=0: sum(j+1 for j in 0..63) = sum(1..63) = 63*64/2 = 2016
+    const expected_0 = 2016.0;
     try testing.expectApproxEqAbs(expected_0, x.data[0], 1e-9);
 }
 
@@ -5232,12 +5239,12 @@ test "trmv dispatch: threshold boundary n=64 (SIMD path)" {
 
     try trmv(f64, 'U', 'N', 'N', A, &x);
 
-    // For i=0: sum(0+j+1 for j in 0..64) = sum(1..65) = 65*66/2 = 2145
-    const expected_0 = 2145.0;
+    // For i=0: sum(0+j+1 for j in 0..64) = sum(1..64) = 64*65/2 = 2080
+    const expected_0 = 2080.0;
     try testing.expectApproxEqAbs(expected_0, x.data[0], 1e-9);
 
-    // For i=63: sum(63+j+1 for j in 63..64) = (63+63+1) + (63+64+1) = 127 + 128 = 255
-    const expected_63 = 255.0;
+    // For i=63: only j=63 remains (n=64) = 63+63+1 = 127
+    const expected_63 = 127.0;
     try testing.expectApproxEqAbs(expected_63, x.data[63], 1e-9);
 }
 
@@ -5267,8 +5274,8 @@ test "trmv dispatch: above threshold n=65 (SIMD path)" {
 
     try trmv(f64, 'U', 'N', 'N', A, &x);
 
-    // For i=0: sum(1..66) = 66*67/2 = 2211
-    const expected_0 = 2211.0;
+    // For i=0: sum(1..65) = 65*66/2 = 2145
+    const expected_0 = 2145.0;
     try testing.expectApproxEqAbs(expected_0, x.data[0], 1e-9);
 }
 
@@ -5793,6 +5800,14 @@ test "trsv dispatch: large matrix n=128 all parameter combinations" {
             }
         }
 
+        // Unit diagonal: the stored diagonal (2i+1) is ignored and treated as 1,
+        // so the diagonal term of b[i] is 1 instead of 2i+1.
+        if (diag == 'U') {
+            for (0..n) |i| {
+                data_b[i] -= @as(f64, @floatFromInt(2 * i));
+            }
+        }
+
         var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ n, n }, data_A, .row_major);
         defer A.deinit();
         var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, data_b, .row_major);
@@ -6312,7 +6327,7 @@ pub fn trace(comptime T: type, A: NDArray(T, 2)) (NDArray(T, 2).Error)!T {
 /// defer A.deinit();
 /// const d = try det(f64, A);  // 1*4 - 2*3 = -2
 /// ```
-pub fn det(comptime T: type, A: NDArray(T, 2)) (NDArray(T, 2).Error)!T {
+pub fn det(comptime T: type, A: NDArray(T, 2)) (NDArray(T, 2).Error || std.mem.Allocator.Error)!T {
     // Validate square matrix
     if (A.shape[0] != A.shape[1]) {
         return error.DimensionMismatch;
@@ -6321,7 +6336,7 @@ pub fn det(comptime T: type, A: NDArray(T, 2)) (NDArray(T, 2).Error)!T {
     const n = A.shape[0];
 
     // Clone matrix for in-place LU decomposition (don't modify original)
-    var LU = try A.clone();
+    var LU = try cloneArray(A);
     defer LU.deinit();
 
     var sign: T = 1.0; // Track row swaps for sign correction
@@ -6491,7 +6506,7 @@ test "trace: large matrix 10x10" {
 
     // Create 10x10 diagonal matrix with values 1, 2, ..., 10 on diagonal
     var data: [100]f64 = undefined;
-    for (data) |*v| v.* = 0;
+    for (&data) |*v| v.* = 0;
     for (0..10) |i| {
         data[i * 10 + i] = @floatFromInt(i + 1);
     }
@@ -6780,7 +6795,7 @@ test "det: large 5x5 matrix" {
     //      [0, 0, 0, 0, 6]]
     // det = 2*3*4*5*6 = 720
     var data: [25]f64 = undefined;
-    for (data) |*v| v.* = 0;
+    for (&data) |*v| v.* = 0;
     data[0] = 2;
     data[6] = 3;
     data[12] = 4;
@@ -7018,7 +7033,7 @@ test "norm1: large vector n=100" {
     // x = [1, 1, 1, ..., 1] (100 ones)
     // ||x||₁ = 100
     var data: [100]f64 = undefined;
-    for (data) |*v| v.* = 1.0;
+    for (&data) |*v| v.* = 1.0;
 
     var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{100}, &data, .row_major);
     defer x.deinit();
@@ -7126,7 +7141,7 @@ test "norm2: large vector n=100" {
     // x = [1, 1, 1, ..., 1] (100 ones)
     // ||x||₂ = √100 = 10
     var data: [100]f64 = undefined;
-    for (data) |*v| v.* = 1.0;
+    for (&data) |*v| v.* = 1.0;
 
     var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{100}, &data, .row_major);
     defer x.deinit();
@@ -7234,7 +7249,7 @@ test "normInf: large vector n=100" {
     // x = [1, 2, 3, ..., 100]
     // ||x||∞ = 100
     var data: [100]f64 = undefined;
-    for (data, 0..) |*v, i| v.* = @floatFromInt(i + 1);
+    for (&data, 0..) |*v, i| v.* = @floatFromInt(i + 1);
 
     var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{100}, &data, .row_major);
     defer x.deinit();
@@ -7366,7 +7381,7 @@ test "normFrobenius: 10x10 diagonal matrix" {
     // D = diag(1, 2, 3, ..., 10)
     // ||D||_F = √(1² + 2² + 3² + ... + 10²) = √(1+4+9+16+25+36+49+64+81+100) = √385
     var data: [100]f64 = undefined;
-    for (data) |*v| v.* = 0;
+    for (&data) |*v| v.* = 0;
     for (0..10) |i| {
         data[i * 10 + i] = @floatFromInt(i + 1);
     }
@@ -7417,7 +7432,7 @@ test "normFrobenius: equivalence with frobenius as vector norm" {
 /// Errors:
 ///   - DimensionMismatch: if x.shape[0] != A.shape[0]
 ///   - NotSquare: if A is not square
-pub fn syr(comptime T: type, uplo: u8, alpha: T, x: NDArray(T, 1), A: *NDArray(T, 2)) (NDArray(T, 1).Error)!void {
+pub fn syr(comptime T: type, uplo: u8, alpha: T, x: NDArray(T, 1), A: *NDArray(T, 2)) (NDArray(T, 1).Error || error{NotSquare})!void {
     // Validate matrix is square
     if (A.shape[0] != A.shape[1]) {
         return error.NotSquare;
@@ -7547,7 +7562,7 @@ test "syr: alpha=0 (no-op, preserves matrix)" {
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 0, 4, 5, 0, 0, 6 }, .row_major);
     defer A.deinit();
 
-    const original = try A.clone();
+    var original = try cloneArray(A);
     defer original.deinit();
 
     // alpha=0 should not change A
@@ -7612,7 +7627,7 @@ test "syr: zero vector (x all zeros)" {
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 0, 4, 5, 0, 0, 6 }, .row_major);
     defer A.deinit();
 
-    const original = try A.clone();
+    var original = try cloneArray(A);
     defer original.deinit();
 
     // Zero vector contributes nothing: A remains unchanged
@@ -7736,14 +7751,14 @@ test "syr: large matrix n=64 (SIMD threshold)" {
     // Verify diagonal: A[i,i] should be x[i]² = (i+1)²
     for (0..64) |i| {
         const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(i + 1));
-        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+        try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(i) })), 1e-10);
     }
 
     // Verify upper triangle symmetry: A[i,j] = x[i]*x[j] for i <= j
     for (0..10) |i| {
         for (i + 1..10) |j| {
             const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(j + 1));
-            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+            try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(j) })), 1e-10);
         }
     }
 }
@@ -7771,7 +7786,7 @@ test "syr: large matrix n=128 (well above SIMD threshold)" {
     for (0..10) |i| {
         const x_i = @as(f64, @floatFromInt(i % 10 + 1));
         const expected = x_i * x_i;
-        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+        try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(i) })), 1e-10);
     }
 
     // Verify upper triangle sample: A[i,j] = x[i]*x[j] for i <= j
@@ -7780,7 +7795,7 @@ test "syr: large matrix n=128 (well above SIMD threshold)" {
             const x_i = @as(f64, @floatFromInt(i % 10 + 1));
             const x_j = @as(f64, @floatFromInt(j % 10 + 1));
             const expected = x_i * x_j;
-            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+            try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(j) })), 1e-10);
         }
     }
 }
@@ -7807,7 +7822,7 @@ test "syr: lower triangle with n=10" {
     for (0..10) |i| {
         const x_i = @as(f64, @floatFromInt(i + 1));
         const expected = x_i * x_i;
-        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+        try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(i) })), 1e-10);
     }
 
     // Verify lower triangle: A[i,j] = x[i]*x[j] for i >= j
@@ -7816,7 +7831,7 @@ test "syr: lower triangle with n=10" {
             const x_i = @as(f64, @floatFromInt(i + 1));
             const x_j = @as(f64, @floatFromInt(j + 1));
             const expected = x_i * x_j;
-            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+            try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(j) })), 1e-10);
         }
     }
 }
@@ -7886,14 +7901,14 @@ test "syr: auto-dispatch threshold below (n=63, upper, f64, scalar path)" {
     // Verify diagonal: A[i,i] should be x[i]² = (i+1)²
     for (0..63) |i| {
         const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(i + 1));
-        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+        try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(i) })), 1e-10);
     }
 
     // Verify upper triangle sample: A[i,j] = x[i]*x[j] for i <= j
     for (0..10) |i| {
         for (i + 1..10) |j| {
             const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(j + 1));
-            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+            try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(j) })), 1e-10);
         }
     }
 }
@@ -7919,14 +7934,14 @@ test "syr: auto-dispatch threshold boundary (n=64, upper, f64, SIMD path)" {
     // Verify diagonal: A[i,i] should be x[i]² = (i+1)²
     for (0..64) |i| {
         const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(i + 1));
-        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+        try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(i) })), 1e-10);
     }
 
     // Verify upper triangle sample: A[i,j] = x[i]*x[j] for i <= j
     for (0..10) |i| {
         for (i + 1..10) |j| {
             const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(j + 1));
-            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+            try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(j) })), 1e-10);
         }
     }
 }
@@ -7952,14 +7967,14 @@ test "syr: auto-dispatch threshold above (n=65, upper, f64, SIMD path)" {
     // Verify diagonal: A[i,i] should be x[i]² = (i+1)²
     for (0..10) |i| {
         const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(i + 1));
-        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+        try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(i) })), 1e-10);
     }
 
     // Verify upper triangle sample: A[i,j] = x[i]*x[j] for i <= j
     for (0..10) |i| {
         for (i + 1..10) |j| {
             const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(j + 1));
-            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+            try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(j) })), 1e-10);
         }
     }
 }
@@ -7985,14 +8000,14 @@ test "syr: auto-dispatch lower triangle (n=64, lower, SIMD path)" {
     // Verify diagonal: A[i,i] should be x[i]² = (i+1)²
     for (0..64) |i| {
         const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(i + 1));
-        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+        try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(i) })), 1e-10);
     }
 
     // Verify lower triangle sample: A[i,j] = x[i]*x[j] for i >= j
     for (0..10) |j| {
         for (j + 1..10) |i| {
             const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(j + 1));
-            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+            try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(j) })), 1e-10);
         }
     }
 }
@@ -8019,7 +8034,7 @@ test "syr: auto-dispatch large matrix (n=128, upper, f64, SIMD)" {
     for (0..10) |i| {
         const x_i = @as(f64, @floatFromInt(i % 10 + 1));
         const expected = x_i * x_i;
-        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+        try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(i) })), 1e-10);
     }
 
     // Verify upper triangle sample: A[i,j] = x[i]*x[j] for i <= j
@@ -8028,7 +8043,7 @@ test "syr: auto-dispatch large matrix (n=128, upper, f64, SIMD)" {
             const x_i = @as(f64, @floatFromInt(i % 10 + 1));
             const x_j = @as(f64, @floatFromInt(j % 10 + 1));
             const expected = x_i * x_j;
-            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+            try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(j) })), 1e-10);
         }
     }
 }
@@ -8055,7 +8070,7 @@ test "syr: auto-dispatch very large matrix (n=256, upper, f64, SIMD)" {
     for (0..10) |i| {
         const x_i = @as(f64, @floatFromInt(i % 20 + 1));
         const expected = x_i * x_i;
-        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+        try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(i) })), 1e-10);
     }
 }
 
@@ -8080,7 +8095,7 @@ test "syr: auto-dispatch non-aligned (n=67, upper, SIMD tail loop)" {
     // Verify diagonal sample
     for (0..10) |i| {
         const expected = @as(f64, @floatFromInt(i + 1)) * @as(f64, @floatFromInt(i + 1));
-        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+        try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(i) })), 1e-10);
     }
 }
 
@@ -8106,7 +8121,7 @@ test "syr: auto-dispatch non-aligned (n=100, upper, SIMD tail loop)" {
     for (0..10) |i| {
         const x_i = @as(f64, @floatFromInt(i % 15 + 1));
         const expected = x_i * x_i;
-        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+        try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(i) })), 1e-10);
     }
 }
 
@@ -8131,7 +8146,7 @@ test "syr: auto-dispatch f32 type (n=64, upper, SIMD)" {
     // Verify diagonal: A[i,i] should be x[i]² = (i+1)²
     for (0..10) |i| {
         const expected = @as(f32, @floatFromInt(i + 1)) * @as(f32, @floatFromInt(i + 1));
-        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-5);
+        try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(i) })), 1e-5);
     }
 }
 
@@ -8157,7 +8172,7 @@ test "syr: auto-dispatch f32 large (n=128, upper, SIMD)" {
     for (0..10) |i| {
         const x_i = @as(f32, @floatFromInt(i % 10 + 1));
         const expected = x_i * x_i;
-        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-5);
+        try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(i) })), 1e-5);
     }
 }
 
@@ -8176,7 +8191,7 @@ test "syr: auto-dispatch alpha=0 (n=128, SIMD no-op)" {
     var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 128, 128 }, .row_major);
     defer A.deinit();
 
-    const original = try A.clone();
+    var original = try cloneArray(A);
     defer original.deinit();
 
     // alpha=0 should not change A
@@ -8212,7 +8227,7 @@ test "syr: auto-dispatch alpha=2.5 (n=128, upper, SIMD)" {
     for (0..10) |i| {
         const x_i = @as(f64, @floatFromInt(i % 5 + 1));
         const expected = alpha * x_i * x_i;
-        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-9);
+        try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(i) })), 1e-9);
     }
 
     // Verify upper triangle sample: A[i,j] = alpha * x[i]*x[j] for i <= j
@@ -8221,7 +8236,7 @@ test "syr: auto-dispatch alpha=2.5 (n=128, upper, SIMD)" {
             const x_i = @as(f64, @floatFromInt(i % 5 + 1));
             const x_j = @as(f64, @floatFromInt(j % 5 + 1));
             const expected = alpha * x_i * x_j;
-            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-9);
+            try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(j) })), 1e-9);
         }
     }
 }
@@ -8247,7 +8262,7 @@ test "syr: auto-dispatch alpha=2.5 (n=128, upper, SIMD)" {
 /// Errors:
 ///   - DimensionMismatch: if x.shape[0] != A.shape[0] or y.shape[0] != A.shape[0]
 ///   - NotSquare: if A is not square
-pub fn syr2(comptime T: type, uplo: u8, alpha: T, x: NDArray(T, 1), y: NDArray(T, 1), A: *NDArray(T, 2)) (NDArray(T, 1).Error)!void {
+pub fn syr2(comptime T: type, uplo: u8, alpha: T, x: NDArray(T, 1), y: NDArray(T, 1), A: *NDArray(T, 2)) (NDArray(T, 1).Error || error{NotSquare})!void {
     // Validate matrix is square
     if (A.shape[0] != A.shape[1]) {
         return error.NotSquare;
@@ -8270,12 +8285,7 @@ pub fn syr2(comptime T: type, uplo: u8, alpha: T, x: NDArray(T, 1), y: NDArray(T
         return;
     }
 
-    // Auto-dispatch: Use SIMD-optimized implementation for large matrices
-    if (n >= 64) {
-        return simd_blas.syr2_simd(T, uplo, alpha, x, y, A);
-    }
-
-    // Scalar implementation for small matrices
+    // Scalar implementation: there is no SIMD variant of syr2.
     if (uplo == 'U') {
         // Update upper triangle: for i in 0..n, for j in i..n: A[i,j] += α*(x[i]*y[j] + y[i]*x[j])
         for (0..n) |i| {
@@ -8397,7 +8407,7 @@ test "syr2: alpha=0 (no-op, preserves matrix)" {
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 0, 4, 5, 0, 0, 6 }, .row_major);
     defer A.deinit();
 
-    const original = try A.clone();
+    var original = try cloneArray(A);
     defer original.deinit();
 
     // alpha=0 should not change A
@@ -8575,7 +8585,7 @@ test "syr2: n=10 with pattern validation" {
         const x_i = @as(f64, @floatFromInt(i + 1));
         const y_i = @as(f64, @floatFromInt((i + 1) * 2));
         const expected = 2.0 * x_i * y_i;
-        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+        try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(i) })), 1e-10);
     }
 
     // Verify upper triangle: A[i,j] = x[i]*y[j] + y[i]*x[j] for i < j
@@ -8586,7 +8596,7 @@ test "syr2: n=10 with pattern validation" {
             const x_j = @as(f64, @floatFromInt(j + 1));
             const y_j = @as(f64, @floatFromInt((j + 1) * 2));
             const expected = x_i * y_j + y_i * x_j;
-            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+            try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(j) })), 1e-10);
         }
     }
 }
@@ -8639,7 +8649,7 @@ test "syr2: large matrix n=10 with lower triangle" {
         const x_i = @as(f64, @floatFromInt(i + 1));
         const y_i = @as(f64, @floatFromInt((i + 1) * 3));
         const expected = 2.0 * x_i * y_i;
-        try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, i }), 1e-10);
+        try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(i) })), 1e-10);
     }
 
     // Verify lower triangle: A[i,j] = x[i]*y[j] + y[i]*x[j] for i > j
@@ -8650,7 +8660,7 @@ test "syr2: large matrix n=10 with lower triangle" {
             const x_j = @as(f64, @floatFromInt(j + 1));
             const y_j = @as(f64, @floatFromInt((j + 1) * 3));
             const expected = x_i * y_j + y_i * x_j;
-            try testing.expectApproxEqAbs(expected, A.at(&[_]usize{ i, j }), 1e-10);
+            try testing.expectApproxEqAbs(expected, (try A.get(&[_]isize{ @intCast(i), @intCast(j) })), 1e-10);
         }
     }
 }
@@ -8723,7 +8733,7 @@ test "syr2: zero vector x (x all zeros)" {
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 0, 4, 5, 0, 0, 6 }, .row_major);
     defer A.deinit();
 
-    const original = try A.clone();
+    var original = try cloneArray(A);
     defer original.deinit();
 
     // Zero vector x contributes nothing: A remains unchanged
@@ -8746,7 +8756,7 @@ test "syr2: zero vector y (y all zeros)" {
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 3 }, &[_]f64{ 1, 2, 3, 0, 4, 5, 0, 0, 6 }, .row_major);
     defer A.deinit();
 
-    const original = try A.clone();
+    var original = try cloneArray(A);
     defer original.deinit();
 
     // Zero vector y contributes nothing: A remains unchanged
@@ -8944,7 +8954,7 @@ test "trsm auto-dispatch: left side parameter combo f64" {
     const allocator = testing.allocator;
 
     // Test left + lower + transpose + unit diagonal
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, undefined, .row_major);
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
     defer A.deinit();
     // Fill with unit lower triangular
     for (0..64) |i| {
@@ -8972,7 +8982,7 @@ test "trsm auto-dispatch: right side parameter combo f64" {
     const allocator = testing.allocator;
 
     // Test right + upper + no transpose + non-unit diagonal
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 64, 64 }, undefined, .row_major);
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 64, 64 }, .row_major);
     defer A.deinit();
     // Fill with upper triangular
     for (0..64) |i| {
@@ -9093,7 +9103,7 @@ test "trsm auto-dispatch: scalar/SIMD equivalence (small matrix)" {
 /// try symv(f64, 'U', 1.0, A, x, 0.0, &y);
 /// // y.data == [6.0, 7.0]
 /// ```
-pub fn symv(comptime T: type, uplo: u8, alpha: T, A: NDArray(T, 2), x: NDArray(T, 1), beta: T, y: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+pub fn symv(comptime T: type, uplo: u8, alpha: T, A: NDArray(T, 2), x: NDArray(T, 1), beta: T, y: *NDArray(T, 1)) (NDArray(T, 1).Error || error{NotSquare})!void {
     // Validate matrix is square
     if (A.shape[0] != A.shape[1]) {
         return error.NotSquare;
@@ -9256,7 +9266,7 @@ test "symv: alpha=0 (no-op when beta=1)" {
     var y = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 7, 9 }, .row_major);
     defer y.deinit();
 
-    const original = try y.clone();
+    var original = try cloneArray(y);
     defer original.deinit();
 
     // alpha=0, beta=1: y unchanged
@@ -9397,11 +9407,11 @@ test "symv: large matrix n=10, upper triangle" {
 ///
 /// Errors:
 /// - error.DimensionMismatch if dimensions don't match
-/// - error.InvalidParameter if side or uplo is not 'L'/'R' or 'U'/'L'
+/// - error.InvalidValue if side or uplo is not 'L'/'R' or 'U'/'L'
 ///
 /// Time: O(m²n) where A is m×m and B is m×n
 /// Space: O(1) (modifies B in-place)
-pub fn symm(comptime T: type, side: u8, uplo: u8, alpha: T, A: NDArray(T, 2), B: *NDArray(T, 2), beta: T) (NDArray(T, 2).Error)!void {
+pub fn symm(comptime T: type, side: u8, uplo: u8, alpha: T, A: NDArray(T, 2), B: *NDArray(T, 2), beta: T) (NDArray(T, 2).Error || std.mem.Allocator.Error)!void {
     // Validate square matrix A
     if (A.shape[0] != A.shape[1]) {
         return error.DimensionMismatch;
@@ -9500,7 +9510,9 @@ pub fn symm(comptime T: type, side: u8, uplo: u8, alpha: T, A: NDArray(T, 2), B:
 /// Symmetric Rank-K Update: C := α*A*A^T + β*C (trans='N') or C := α*A^T*A + β*C (trans='T')
 ///
 /// Performs a symmetric rank-k update. The result matrix C is symmetric and only its specified
-/// triangle (upper or lower) is updated. C is modified in-place.
+/// triangle (upper or lower) is computed, after which the opposite triangle is mirrored from it so
+/// that C is returned fully symmetric (the previous contents of the opposite triangle are
+/// discarded). C is modified in-place.
 ///
 /// Parameters:
 /// - trans: 'N' (no transpose: C := α*A*A^T + β*C) or 'T' (transpose: C := α*A^T*A + β*C)
@@ -9523,7 +9535,7 @@ pub fn symm(comptime T: type, side: u8, uplo: u8, alpha: T, A: NDArray(T, 2), B:
 /// // C := 1.0*A*A^T + 0.0*C
 /// try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
 /// ```
-pub fn syrk(comptime T: type, trans: u8, uplo: u8, alpha: T, A: NDArray(T, 2), beta: T, C: *NDArray(T, 2)) (NDArray(T, 2).Error)!void {
+pub fn syrk(comptime T: type, trans: u8, uplo: u8, alpha: T, A: NDArray(T, 2), beta: T, C: *NDArray(T, 2)) (NDArray(T, 2).Error || std.mem.Allocator.Error)!void {
     // Validate trans parameter
     const is_trans_n = (trans == 'N' or trans == 'n');
     const is_trans_t = (trans == 'T' or trans == 't');
@@ -9564,7 +9576,7 @@ pub fn syrk(comptime T: type, trans: u8, uplo: u8, alpha: T, A: NDArray(T, 2), b
         }
     }
 
-    const n = c_rows;  // C is n×n
+    const n = c_rows; // C is n×n
 
     // Auto-dispatch: Use SIMD-optimized implementation for large matrices
     // Threshold: n >= 64 (enough elements to benefit from vectorization)
@@ -9763,15 +9775,15 @@ test "symm: 3×3 left upper, alpha=1, beta=0" {
 
     // B := 1*A*B + 0*B = A*B (ignore old B)
     // A*B = [[1*1+2*2+3*3, 1*1+2*2+3*3], [2*1+4*2+5*3, 2*1+4*2+5*3], [3*1+5*2+6*3, 3*1+5*2+6*3]]
-    //     = [[14, 14], [25, 25], [36, 36]]
+    //     = [[14, 14], [25, 25], [31, 31]]
     try symm(f64, 'L', 'U', 1.0, A, &B, 0.0);
 
     try testing.expectApproxEqAbs(14.0, B.data[0], 1e-10);
     try testing.expectApproxEqAbs(14.0, B.data[1], 1e-10);
     try testing.expectApproxEqAbs(25.0, B.data[2], 1e-10);
     try testing.expectApproxEqAbs(25.0, B.data[3], 1e-10);
-    try testing.expectApproxEqAbs(36.0, B.data[4], 1e-10);
-    try testing.expectApproxEqAbs(36.0, B.data[5], 1e-10);
+    try testing.expectApproxEqAbs(31.0, B.data[4], 1e-10);
+    try testing.expectApproxEqAbs(31.0, B.data[5], 1e-10);
 }
 
 test "symm: 3×3 right upper, alpha=1, beta=0" {
@@ -9915,14 +9927,14 @@ test "symm: f32 precision (left upper)" {
 
     // B := 1*A*B + 1*B
     // A*B = [[2.5*1.5+1.5*3.5, 2.5*2.5+1.5*4.5], [1.5*1.5+3.5*3.5, 1.5*2.5+3.5*4.5]]
-    //     = [[9.75, 13.25], [15.5, 19]]
-    // Result = [[11.25, 15.75], [19, 23.5]]
+    //     = [[9, 13], [14.5, 19.5]]
+    // Result = [[10.5, 15.5], [18, 24]]
     try symm(f32, 'L', 'U', 1.0, A, &B, 1.0);
 
-    try testing.expectApproxEqAbs(11.25, B.data[0], 1e-4);
-    try testing.expectApproxEqAbs(15.75, B.data[1], 1e-4);
-    try testing.expectApproxEqAbs(19.0, B.data[2], 1e-4);
-    try testing.expectApproxEqAbs(23.5, B.data[3], 1e-4);
+    try testing.expectApproxEqAbs(10.5, B.data[0], 1e-4);
+    try testing.expectApproxEqAbs(15.5, B.data[1], 1e-4);
+    try testing.expectApproxEqAbs(18.0, B.data[2], 1e-4);
+    try testing.expectApproxEqAbs(24.0, B.data[3], 1e-4);
 }
 
 test "symm: 1×1 edge case (single element)" {
@@ -10079,7 +10091,7 @@ test "symm: invalid side parameter" {
     var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
     defer B.deinit();
 
-    try testing.expectError(error.InvalidParameter, symm(f64, 'X', 'U', 1.0, A, &B, 0.0));
+    try testing.expectError(error.InvalidValue, symm(f64, 'X', 'U', 1.0, A, &B, 0.0));
 }
 
 test "symm: invalid uplo parameter" {
@@ -10093,7 +10105,7 @@ test "symm: invalid uplo parameter" {
     var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 1, 2, 3, 4 }, .row_major);
     defer B.deinit();
 
-    try testing.expectError(error.InvalidParameter, symm(f64, 'L', 'X', 1.0, A, &B, 0.0));
+    try testing.expectError(error.InvalidValue, symm(f64, 'L', 'X', 1.0, A, &B, 0.0));
 }
 
 test "symm: non-aligned size 67×67 left upper" {
@@ -10680,10 +10692,10 @@ test "syrk: basic 2×2 no-transpose, upper triangle, alpha=1, beta=0" {
     //       = [[5, 11], [11, 25]]
     try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
 
-    try testing.expectApproxEqAbs(5.0, C.data[0], 1e-10);   // C[0,0]
-    try testing.expectApproxEqAbs(11.0, C.data[1], 1e-10);  // C[0,1]
-    try testing.expectApproxEqAbs(11.0, C.data[2], 1e-10);  // C[1,0] (should match [0,1] for symmetry)
-    try testing.expectApproxEqAbs(25.0, C.data[3], 1e-10);  // C[1,1]
+    try testing.expectApproxEqAbs(5.0, C.data[0], 1e-10); // C[0,0]
+    try testing.expectApproxEqAbs(11.0, C.data[1], 1e-10); // C[0,1]
+    try testing.expectApproxEqAbs(11.0, C.data[2], 1e-10); // C[1,0] (should match [0,1] for symmetry)
+    try testing.expectApproxEqAbs(25.0, C.data[3], 1e-10); // C[1,1]
 }
 
 test "syrk: basic 2×2 transpose, upper triangle, alpha=1, beta=0" {
@@ -10703,10 +10715,10 @@ test "syrk: basic 2×2 transpose, upper triangle, alpha=1, beta=0" {
     //       = [[10, 14], [14, 20]]
     try syrk(f64, 'T', 'U', 1.0, A, 0.0, &C);
 
-    try testing.expectApproxEqAbs(10.0, C.data[0], 1e-10);  // C[0,0]
-    try testing.expectApproxEqAbs(14.0, C.data[1], 1e-10);  // C[0,1]
-    try testing.expectApproxEqAbs(14.0, C.data[2], 1e-10);  // C[1,0]
-    try testing.expectApproxEqAbs(20.0, C.data[3], 1e-10);  // C[1,1]
+    try testing.expectApproxEqAbs(10.0, C.data[0], 1e-10); // C[0,0]
+    try testing.expectApproxEqAbs(14.0, C.data[1], 1e-10); // C[0,1]
+    try testing.expectApproxEqAbs(14.0, C.data[2], 1e-10); // C[1,0]
+    try testing.expectApproxEqAbs(20.0, C.data[3], 1e-10); // C[1,1]
 }
 
 test "syrk: rectangular A (2×3), no-transpose, upper triangle" {
@@ -10726,10 +10738,10 @@ test "syrk: rectangular A (2×3), no-transpose, upper triangle" {
     //       = [[14, 32], [32, 77]]
     try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
 
-    try testing.expectApproxEqAbs(14.0, C.data[0], 1e-10);  // C[0,0]
-    try testing.expectApproxEqAbs(32.0, C.data[1], 1e-10);  // C[0,1]
-    try testing.expectApproxEqAbs(32.0, C.data[2], 1e-10);  // C[1,0]
-    try testing.expectApproxEqAbs(77.0, C.data[3], 1e-10);  // C[1,1]
+    try testing.expectApproxEqAbs(14.0, C.data[0], 1e-10); // C[0,0]
+    try testing.expectApproxEqAbs(32.0, C.data[1], 1e-10); // C[0,1]
+    try testing.expectApproxEqAbs(32.0, C.data[2], 1e-10); // C[1,0]
+    try testing.expectApproxEqAbs(77.0, C.data[3], 1e-10); // C[1,1]
 }
 
 test "syrk: rectangular A (3×2), transpose, upper triangle" {
@@ -10749,10 +10761,10 @@ test "syrk: rectangular A (3×2), transpose, upper triangle" {
     //       = [[35, 44], [44, 56]]
     try syrk(f64, 'T', 'U', 1.0, A, 0.0, &C);
 
-    try testing.expectApproxEqAbs(35.0, C.data[0], 1e-10);  // C[0,0]
-    try testing.expectApproxEqAbs(44.0, C.data[1], 1e-10);  // C[0,1]
-    try testing.expectApproxEqAbs(44.0, C.data[2], 1e-10);  // C[1,0]
-    try testing.expectApproxEqAbs(56.0, C.data[3], 1e-10);  // C[1,1]
+    try testing.expectApproxEqAbs(35.0, C.data[0], 1e-10); // C[0,0]
+    try testing.expectApproxEqAbs(44.0, C.data[1], 1e-10); // C[0,1]
+    try testing.expectApproxEqAbs(44.0, C.data[2], 1e-10); // C[1,0]
+    try testing.expectApproxEqAbs(56.0, C.data[3], 1e-10); // C[1,1]
 }
 
 test "syrk: lower triangle, no-transpose, alpha=1, beta=0" {
@@ -10770,10 +10782,10 @@ test "syrk: lower triangle, no-transpose, alpha=1, beta=0" {
     // Result should be same symmetric matrix: [[5, 11], [11, 25]]
     try syrk(f64, 'N', 'L', 1.0, A, 0.0, &C);
 
-    try testing.expectApproxEqAbs(5.0, C.data[0], 1e-10);   // C[0,0]
-    try testing.expectApproxEqAbs(11.0, C.data[1], 1e-10);  // C[1,0]
-    try testing.expectApproxEqAbs(11.0, C.data[2], 1e-10);  // C[0,1] (stored in lower)
-    try testing.expectApproxEqAbs(25.0, C.data[3], 1e-10);  // C[1,1]
+    try testing.expectApproxEqAbs(5.0, C.data[0], 1e-10); // C[0,0]
+    try testing.expectApproxEqAbs(11.0, C.data[1], 1e-10); // C[1,0]
+    try testing.expectApproxEqAbs(11.0, C.data[2], 1e-10); // C[0,1] (stored in lower)
+    try testing.expectApproxEqAbs(25.0, C.data[3], 1e-10); // C[1,1]
 }
 
 test "syrk: alpha=0 (C = beta*C only)" {
@@ -10787,12 +10799,13 @@ test "syrk: alpha=0 (C = beta*C only)" {
     var C = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 10, 20, 30, 40 }, .row_major);
     defer C.deinit();
 
-    // C := 0.0*A*A^T + 2.0*C = 2.0*C
+    // C := 0.0*A*A^T + 2.0*C = 2.0*C on the upper triangle; the lower triangle is
+    // then mirrored from the upper one, so C[1,0] = C[0,1] = 40 (not 2*30).
     try syrk(f64, 'N', 'U', 0.0, A, 2.0, &C);
 
     try testing.expectApproxEqAbs(20.0, C.data[0], 1e-10);
     try testing.expectApproxEqAbs(40.0, C.data[1], 1e-10);
-    try testing.expectApproxEqAbs(60.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(40.0, C.data[2], 1e-10);
     try testing.expectApproxEqAbs(80.0, C.data[3], 1e-10);
 }
 
@@ -10903,8 +10916,8 @@ test "syrk: k=1 (single column/row)" {
     try testing.expectApproxEqAbs(1.0, C.data[0], 1e-10);
     try testing.expectApproxEqAbs(2.0, C.data[1], 1e-10);
     try testing.expectApproxEqAbs(3.0, C.data[2], 1e-10);
-    try testing.expectApproxEqAbs(4.0, C.data[3], 1e-10);
-    try testing.expectApproxEqAbs(6.0, C.data[4], 1e-10);
+    try testing.expectApproxEqAbs(2.0, C.data[3], 1e-10); // mirrored C[1,0]
+    try testing.expectApproxEqAbs(4.0, C.data[4], 1e-10);
     try testing.expectApproxEqAbs(6.0, C.data[5], 1e-10);
     try testing.expectApproxEqAbs(9.0, C.data[8], 1e-10);
 }
@@ -10922,24 +10935,19 @@ test "syrk: 3×3 full computation, no-transpose, upper" {
 
     // C := 1.0*A*A^T + 0*C
     // A*A^T:
-    // Row 0: [1,2,3]*[1,4,7] = 1+8+21 = 30
-    //        [1,2,3]*[2,5,8] = 2+10+24 = 36
-    //        [1,2,3]*[3,6,9] = 3+12+27 = 42
-    // Row 1: [4,5,6]*[1,4,7] = 4+20+42 = 66
-    //        [4,5,6]*[2,5,8] = 8+25+48 = 81
-    //        [4,5,6]*[3,6,9] = 12+30+54 = 96
-    // Row 2: [7,8,9]*[1,4,7] = 7+32+63 = 102
-    //        [7,8,9]*[2,5,8] = 14+40+72 = 126
-    //        [7,8,9]*[3,6,9] = 21+48+81 = 150
-    // So: [[30, 36, 42], [66, 81, 96], [102, 126, 150]]
+    // C[i,j] = row_i . row_j with row0=[1,2,3], row1=[4,5,6], row2=[7,8,9]:
+    // C[0,0] = 1+4+9 = 14,    C[0,1] = 4+10+18 = 32,  C[0,2] = 7+16+27 = 50
+    // C[1,1] = 16+25+36 = 77, C[1,2] = 28+40+54 = 122
+    // C[2,2] = 49+64+81 = 194
+    // So: [[14, 32, 50], [32, 77, 122], [50, 122, 194]]
     try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
 
-    try testing.expectApproxEqAbs(30.0, C.data[0], 1e-10);
-    try testing.expectApproxEqAbs(36.0, C.data[1], 1e-10);
-    try testing.expectApproxEqAbs(42.0, C.data[2], 1e-10);
-    try testing.expectApproxEqAbs(81.0, C.data[4], 1e-10);
-    try testing.expectApproxEqAbs(96.0, C.data[5], 1e-10);
-    try testing.expectApproxEqAbs(150.0, C.data[8], 1e-10);
+    try testing.expectApproxEqAbs(14.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(32.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(50.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(77.0, C.data[4], 1e-10);
+    try testing.expectApproxEqAbs(122.0, C.data[5], 1e-10);
+    try testing.expectApproxEqAbs(194.0, C.data[8], 1e-10);
 }
 
 test "syrk: 3×3 transpose, upper" {
@@ -10955,18 +10963,19 @@ test "syrk: 3×3 transpose, upper" {
 
     // C := 1.0*A^T*A + 0*C
     // A^T*A:
-    // [1,4,7]*[1,2,3] = 1+8+21 = 30;  [1,4,7]*[4,5,6] = 4+20+42 = 66;  [1,4,7]*[7,8,9] = 7+32+63 = 102
-    // [2,5,8]*[1,2,3] = 2+10+24 = 36;  [2,5,8]*[4,5,6] = 8+25+48 = 81;  [2,5,8]*[7,8,9] = 14+40+72 = 126
-    // [3,6,9]*[1,2,3] = 3+12+27 = 42;  [3,6,9]*[4,5,6] = 12+30+54 = 96;  [3,6,9]*[7,8,9] = 21+48+81 = 150
-    // So: [[66, 81, 96], [81, 107, 133], [96, 133, 170]]
+    // C[i,j] = col_i . col_j with col0=[1,4,7], col1=[2,5,8], col2=[3,6,9]:
+    // C[0,0] = 1+16+49 = 66,  C[0,1] = 2+20+56 = 78,  C[0,2] = 3+24+63 = 90
+    // C[1,1] = 4+25+64 = 93,  C[1,2] = 6+30+72 = 108
+    // C[2,2] = 9+36+81 = 126
+    // So: [[66, 78, 90], [78, 93, 108], [90, 108, 126]]
     try syrk(f64, 'T', 'U', 1.0, A, 0.0, &C);
 
     try testing.expectApproxEqAbs(66.0, C.data[0], 1e-10);
-    try testing.expectApproxEqAbs(81.0, C.data[1], 1e-10);
-    try testing.expectApproxEqAbs(96.0, C.data[2], 1e-10);
-    try testing.expectApproxEqAbs(107.0, C.data[4], 1e-10);
-    try testing.expectApproxEqAbs(133.0, C.data[5], 1e-10);
-    try testing.expectApproxEqAbs(170.0, C.data[8], 1e-10);
+    try testing.expectApproxEqAbs(78.0, C.data[1], 1e-10);
+    try testing.expectApproxEqAbs(90.0, C.data[2], 1e-10);
+    try testing.expectApproxEqAbs(93.0, C.data[4], 1e-10);
+    try testing.expectApproxEqAbs(108.0, C.data[5], 1e-10);
+    try testing.expectApproxEqAbs(126.0, C.data[8], 1e-10);
 }
 
 test "syrk: repeated updates accumulation" {
@@ -11881,12 +11890,10 @@ test "iamax: large vector n=1000 with max at index 999 (end)" {
 test "iamax: error on empty vector" {
     const allocator = testing.allocator;
 
-    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{0}, .row_major);
-    defer x.deinit();
-
-    const result = iamax(f64, x);
-    // Empty vector should return error.EmptyArray
-    try testing.expectError(error.EmptyArray, result);
+    // An empty vector is unrepresentable: NDArray rejects zero-length shapes, so iamax
+    // can never observe one.
+    const result = NDArray(f64, 1).zeros(allocator, &[_]usize{0}, .row_major);
+    try testing.expectError(error.ZeroDimension, result);
 }
 
 test "iamax: memory safety 10 iterations" {
@@ -12182,9 +12189,12 @@ pub fn rotg(comptime T: type, a: T, b: T) struct { c: T, s: T, r: T } {
         return .{ .c = if (a >= 0.0) 1.0 else -1.0, .s = 0.0, .r = abs_a };
     }
 
-    // General case: compute r = sqrt(a² + b²) using hypot for numerical stability
-    // hypot(a, b) computes sqrt(a² + b²) while avoiding overflow/underflow
-    const r = @sqrt(a * a + b * b);
+    // General case: r = sqrt(a² + b²), scaled by the larger magnitude so that the squares
+    // can neither overflow nor underflow (both operands are nonzero here).
+    const scale = @max(@abs(a), @abs(b));
+    const a_scaled = a / scale;
+    const b_scaled = b / scale;
+    const r = scale * @sqrt(a_scaled * a_scaled + b_scaled * b_scaled);
 
     // Compute rotation parameters: c = a/r, s = b/r
     const c = a / r;
@@ -12276,7 +12286,7 @@ pub fn rot(comptime T: type, x: *NDArray(T, 1), y: *NDArray(T, 1), c: T, s: T) (
 /// var d2: f64 = 1.0;
 /// var x1: f64 = 3.0;
 /// const y1: f64 = 4.0;
-/// const result = try rotmg(f64, &d1, &d2, &x1, y1);
+/// const result = rotmg(f64, &d1, &d2, &x1, y1);
 /// // result.flag indicates which H matrix form to use
 /// // d1, d2, x1 are modified in-place
 /// ```
@@ -12882,7 +12892,7 @@ test "rotg: small values avoid underflow (f64)" {
 
 test "rot: basic 2-element vectors (f64)" {
     // Apply Givens rotation to x=[1,0], y=[0,1] with c=0.6, s=0.8
-    // Expected: x'=[0.6, -0.8], y'=[0.8, 0.6]
+    // x' = c*x + s*y = [0.6, 0.8], y' = c*y - s*x = [-0.8, 0.6]
     const allocator = testing.allocator;
 
     var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{2}, &[_]f64{ 1.0, 0.0 }, .row_major);
@@ -12894,8 +12904,8 @@ test "rot: basic 2-element vectors (f64)" {
     try rot(f64, &x, &y, 0.6, 0.8);
 
     try testing.expectApproxEqAbs(@as(f64, 0.6), x.data[0], 1e-10);
-    try testing.expectApproxEqAbs(@as(f64, -0.8), x.data[1], 1e-10);
-    try testing.expectApproxEqAbs(@as(f64, 0.8), y.data[0], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 0.8), x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, -0.8), y.data[0], 1e-10);
     try testing.expectApproxEqAbs(@as(f64, 0.6), y.data[1], 1e-10);
 }
 
@@ -12903,7 +12913,7 @@ test "rot: basic 3-element vectors (f64)" {
     // Apply rotation to x=[1,2,3], y=[4,5,6] with c=0.6, s=0.8
     // For each i: x'[i] = c*x[i] + s*y[i], y'[i] = c*y[i] - s*x[i]
     // x'[0] = 0.6*1 + 0.8*4 = 3.8, y'[0] = 0.6*4 - 0.8*1 = 1.6
-    // x'[1] = 0.6*2 + 0.8*5 = 5.2, y'[1] = 0.6*5 - 0.8*2 = 1.8
+    // x'[1] = 0.6*2 + 0.8*5 = 5.2, y'[1] = 0.6*5 - 0.8*2 = 1.4
     // x'[2] = 0.6*3 + 0.8*6 = 6.6, y'[2] = 0.6*6 - 0.8*3 = 1.2
     const allocator = testing.allocator;
 
@@ -12919,7 +12929,7 @@ test "rot: basic 3-element vectors (f64)" {
     try testing.expectApproxEqAbs(@as(f64, 5.2), x.data[1], 1e-10);
     try testing.expectApproxEqAbs(@as(f64, 6.6), x.data[2], 1e-10);
     try testing.expectApproxEqAbs(@as(f64, 1.6), y.data[0], 1e-10);
-    try testing.expectApproxEqAbs(@as(f64, 1.8), y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 1.4), y.data[1], 1e-10);
     try testing.expectApproxEqAbs(@as(f64, 1.2), y.data[2], 1e-10);
 }
 
@@ -13031,7 +13041,7 @@ test "rot: type support f64" {
     try rot(f64, &x, &y, 0.6, 0.8);
 
     try testing.expectApproxEqAbs(@as(f64, 0.6), x.data[0], 1e-10);
-    try testing.expectApproxEqAbs(@as(f64, -0.8), x.data[1], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 0.8), x.data[1], 1e-10);
 }
 
 test "rot: large vectors n=1000 (f64)" {
@@ -13120,7 +13130,8 @@ test "rot: error dimension mismatch (f64)" {
 }
 
 test "rot: inverse application via negative parameters (f64)" {
-    // Mathematical property: rot(..., -c, -s) reverses rot(..., c, s)
+    // Mathematical property: rot(..., c, -s) reverses rot(..., c, s) (transpose of rotation).
+    // Negating both c and s would give -R, not R^-1.
     const allocator = testing.allocator;
 
     var x_orig = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{3}, &[_]f64{ 1.0, 2.0, 3.0 }, .row_major);
@@ -13141,8 +13152,8 @@ test "rot: inverse application via negative parameters (f64)" {
     // Apply rotation
     try rot(f64, &x_orig, &y_orig, c, s);
 
-    // Apply inverse rotation with -c, -s
-    try rot(f64, &x_orig, &y_orig, -c, -s);
+    // Apply inverse rotation with c, -s
+    try rot(f64, &x_orig, &y_orig, c, -s);
 
     // Should restore original values
     for (0..3) |i| {
@@ -13216,7 +13227,7 @@ test "rotmg: basic case d1=1.0 d2=1.0 x1=3.0 y1=4.0 (f64)" {
     var x1: f64 = 3.0;
     const y1: f64 = 4.0;
 
-    const result = try rotmg(f64, &d1, &d2, &x1, y1);
+    const result = rotmg(f64, &d1, &d2, &x1, y1);
 
     // Verify result contains flag and H matrix parameters
     try testing.expect(result.flag >= -2 and result.flag <= 1);
@@ -13237,7 +13248,7 @@ test "rotmg: both d1 and d2 are zero (f64)" {
     var x1: f64 = 3.0;
     const y1: f64 = 4.0;
 
-    const result = try rotmg(f64, &d1, &d2, &x1, y1);
+    const result = rotmg(f64, &d1, &d2, &x1, y1);
 
     // Should still produce valid flag and parameters
     try testing.expect(result.flag >= -2 and result.flag <= 1);
@@ -13251,7 +13262,7 @@ test "rotmg: x1 is zero (f64)" {
     var x1: f64 = 0.0;
     const y1: f64 = 5.0;
 
-    const result = try rotmg(f64, &d1, &d2, &x1, y1);
+    const result = rotmg(f64, &d1, &d2, &x1, y1);
 
     try testing.expect(result.flag >= -2 and result.flag <= 1);
     try testing.expect(result.h.len == 4);
@@ -13264,7 +13275,7 @@ test "rotmg: y1 is zero (f64)" {
     var x1: f64 = 7.0;
     const y1: f64 = 0.0;
 
-    const result = try rotmg(f64, &d1, &d2, &x1, y1);
+    const result = rotmg(f64, &d1, &d2, &x1, y1);
 
     try testing.expect(result.flag >= -2 and result.flag <= 1);
     try testing.expect(result.h.len == 4);
@@ -13277,7 +13288,7 @@ test "rotmg: flag is -2 case (f64)" {
     var x1: f64 = 1.0;
     const y1: f64 = 0.5;
 
-    const result = try rotmg(f64, &d1, &d2, &x1, y1);
+    const result = rotmg(f64, &d1, &d2, &x1, y1);
 
     // flag should be one of -2, -1, 0, 1
     try testing.expect(result.flag == -2 or result.flag == -1 or result.flag == 0 or result.flag == 1);
@@ -13290,7 +13301,7 @@ test "rotmg: type support f32" {
     var x1: f32 = 2.0;
     const y1: f32 = 3.0;
 
-    const result = try rotmg(f32, &d1, &d2, &x1, y1);
+    const result = rotmg(f32, &d1, &d2, &x1, y1);
 
     try testing.expect(result.flag >= -2 and result.flag <= 1);
     try testing.expect(result.h.len == 4);
@@ -13303,7 +13314,7 @@ test "rotmg: type support f64" {
     var x1: f64 = 2.0;
     const y1: f64 = 3.0;
 
-    const result = try rotmg(f64, &d1, &d2, &x1, y1);
+    const result = rotmg(f64, &d1, &d2, &x1, y1);
 
     try testing.expect(result.flag >= -2 and result.flag <= 1);
     try testing.expect(result.h.len == 4);
@@ -13316,7 +13327,7 @@ test "rotmg: large values avoid overflow (f64)" {
     var x1: f64 = 1e100;
     const y1: f64 = 1e100;
 
-    const result = try rotmg(f64, &d1, &d2, &x1, y1);
+    const result = rotmg(f64, &d1, &d2, &x1, y1);
 
     try testing.expect(result.flag >= -2 and result.flag <= 1);
     // Verify no infinity or NaN
@@ -13655,14 +13666,12 @@ test "iamin: mixed positive and negative (f64)" {
 }
 
 test "iamin: error empty vector (f64)" {
-    // Test error handling for empty vector
+    // An empty vector is unrepresentable: NDArray rejects zero-length shapes, so iamin
+    // can never observe one.
     const allocator = testing.allocator;
 
-    var x = try NDArray(f64, 1).init(allocator, &[_]usize{0}, .row_major);
-    defer x.deinit();
-
-    const result = iamin(f64, x);
-    try testing.expectError(error.EmptyArray, result);
+    const result = NDArray(f64, 1).init(allocator, &[_]usize{0}, .row_major);
+    try testing.expectError(error.ZeroDimension, result);
 }
 
 // ============================================================================
@@ -13764,7 +13773,7 @@ test "gbmv: tridiagonal matrix 5x5 (kl=1, ku=1) basic multiply" {
     // x = [1, 2, 3, 4, 5]
     // Expected y = A*x:
     // [2*1 + 1*2, 1*1 + 2*2 + 1*3, 1*2 + 2*3 + 1*4, 1*3 + 2*4 + 1*5, 1*4 + 2*5]
-    // = [4, 9, 14, 19, 14]
+    // = [4, 8, 12, 16, 14]
     const allocator = testing.allocator;
     const m = 5;
     const n = 5;
@@ -13806,9 +13815,9 @@ test "gbmv: tridiagonal matrix 5x5 (kl=1, ku=1) basic multiply" {
     try gbmv(f64, m, n, kl, ku, 1.0, A, x, 0.0, &y);
 
     try testing.expectApproxEqAbs(4.0, y.data[0], 1e-10);
-    try testing.expectApproxEqAbs(9.0, y.data[1], 1e-10);
-    try testing.expectApproxEqAbs(14.0, y.data[2], 1e-10);
-    try testing.expectApproxEqAbs(19.0, y.data[3], 1e-10);
+    try testing.expectApproxEqAbs(8.0, y.data[1], 1e-10);
+    try testing.expectApproxEqAbs(12.0, y.data[2], 1e-10);
+    try testing.expectApproxEqAbs(16.0, y.data[3], 1e-10);
     try testing.expectApproxEqAbs(14.0, y.data[4], 1e-10);
 }
 
@@ -13984,10 +13993,10 @@ test "gbmv: lower triangular band (kl=2, ku=0)" {
     // [0  6  8]
     // [0  0  9]
     //
-    // Banded storage (3 rows for kl+ku+1=3):
-    // Row 0 (sub-diag 2): [3, 5, 7]
-    // Row 1 (sub-diag 1): [2, 4, 0] -> actually [2, 4, 8]
-    // Row 2 (main diag):  [1, 4, 7]
+    // Banded storage (3 rows for kl+ku+1=3), A(i,j) at row ku+i-j, column j:
+    // Row 0 (main diag):  [1, 4, 7]
+    // Row 1 (sub-diag 1): [2, 5, 8]
+    // Row 2 (sub-diag 2): [3, 6, 9]
     const allocator = testing.allocator;
     const m = 5;
     const n = 3;
@@ -13999,20 +14008,20 @@ test "gbmv: lower triangular band (kl=2, ku=0)" {
 
     @memset(A.data, 0);
 
-    // Row 0 (2nd sub-diagonal): [3, 5, 7]
-    A.data[0 * n + 0] = 3;
-    A.data[0 * n + 1] = 5;
+    // Row 0 (main diagonal): [1, 4, 7]
+    A.data[0 * n + 0] = 1;
+    A.data[0 * n + 1] = 4;
     A.data[0 * n + 2] = 7;
 
-    // Row 1 (1st sub-diagonal): [2, 4, 8]
+    // Row 1 (1st sub-diagonal): [2, 5, 8]
     A.data[1 * n + 0] = 2;
-    A.data[1 * n + 1] = 4;
+    A.data[1 * n + 1] = 5;
     A.data[1 * n + 2] = 8;
 
-    // Row 2 (main diagonal): [1, 4, 7]
-    A.data[2 * n + 0] = 1;
-    A.data[2 * n + 1] = 4;
-    A.data[2 * n + 2] = 7;
+    // Row 2 (2nd sub-diagonal): [3, 6, 9]
+    A.data[2 * n + 0] = 3;
+    A.data[2 * n + 1] = 6;
+    A.data[2 * n + 2] = 9;
 
     var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 2, 3 }, .row_major);
     defer x.deinit();
@@ -14026,12 +14035,12 @@ test "gbmv: lower triangular band (kl=2, ku=0)" {
     try testing.expectApproxEqAbs(1.0, y.data[0], 1e-10);
     // Row 1: A[1,0]*x[0] + A[1,1]*x[1] = 2*1 + 4*2 = 10
     try testing.expectApproxEqAbs(10.0, y.data[1], 1e-10);
-    // Row 2: A[2,0]*x[0] + A[2,1]*x[1] + A[2,2]*x[2] = 1*1 + 4*2 + 7*3 = 34
+    // Row 2: A[2,0]*x[0] + A[2,1]*x[1] + A[2,2]*x[2] = 3*1 + 5*2 + 7*3 = 34
     try testing.expectApproxEqAbs(34.0, y.data[2], 1e-10);
-    // Row 3: A[3,1]*x[1] + A[3,2]*x[2] = 4*2 + 8*3 = 32
-    try testing.expectApproxEqAbs(32.0, y.data[3], 1e-10);
-    // Row 4: A[4,2]*x[2] = 8*3 = 24
-    try testing.expectApproxEqAbs(24.0, y.data[4], 1e-10);
+    // Row 3: A[3,1]*x[1] + A[3,2]*x[2] = 6*2 + 8*3 = 36
+    try testing.expectApproxEqAbs(36.0, y.data[3], 1e-10);
+    // Row 4: A[4,2]*x[2] = 9*3 = 27
+    try testing.expectApproxEqAbs(27.0, y.data[4], 1e-10);
 }
 
 test "gbmv: scalar alpha=0 (y = beta*y)" {
@@ -14873,8 +14882,8 @@ test "sbmv: large matrix n=10, k=2 pentadiagonal" {
     // First row: 4*1 - 1*1 - 0.5*1 = 2.5
     try testing.expectApproxEqAbs(2.5, y.data[0], 1e-10);
 
-    // Second row: -1*1 + 4*1 - 1*1 - 0.5*1 - 0.5*1 = 1.0
-    try testing.expectApproxEqAbs(1.0, y.data[1], 1e-10);
+    // Second row (column -1 does not exist): -1*1 + 4*1 - 1*1 - 0.5*1 = 1.5
+    try testing.expectApproxEqAbs(1.5, y.data[1], 1e-10);
 
     // Interior row (5): -0.5*1 - 1*1 + 4*1 - 1*1 - 0.5*1 = 1.0
     try testing.expectApproxEqAbs(1.0, y.data[5], 1e-10);
@@ -14945,7 +14954,7 @@ test "sbmv: no memory leaks over 10 iterations" {
 /// Time: O(n*k) where k is band width
 /// Space: O(n) temporary buffer for in-place computation
 ///
-pub fn tbmv(comptime T: type, uplo: u8, trans: u8, diag: u8, k: usize, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+pub fn tbmv(comptime T: type, uplo: u8, trans: u8, diag: u8, k: usize, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 1).Error || std.mem.Allocator.Error)!void {
     const n = x.shape[0];
 
     // Validate dimensions
@@ -15640,14 +15649,15 @@ test "tbmv: large matrix (n=10, k=2)" {
     try tbmv(f64, 'U', 'N', 'N', k, A, &x);
 
     // Verify a few key entries
-    // x[0] = 0 + 0 + 0 = 0 (only diag which is 0)
-    try testing.expectApproxEqAbs(0.0, x.data[0], 1e-10);
+    // Row i of the upper band holds A[i,i..i+2] = i+j for j in i..i+2, and x is all ones.
+    // x[0] = A[0,0] + A[0,1] + A[0,2] = 0 + 1 + 2 = 3
+    try testing.expectApproxEqAbs(3.0, x.data[0], 1e-10);
 
-    // x[1] = 1 + 2*1 = 3 (1st super-diag + main diag)
-    try testing.expectApproxEqAbs(3.0, x.data[1], 1e-10);
+    // x[1] = A[1,1] + A[1,2] + A[1,3] = 2 + 3 + 4 = 9
+    try testing.expectApproxEqAbs(9.0, x.data[1], 1e-10);
 
-    // x[2] = 2 + 3 + 4*1 = 9 (2nd super-diag + 1st super-diag + main diag)
-    try testing.expectApproxEqAbs(9.0, x.data[2], 1e-10);
+    // x[2] = A[2,2] + A[2,3] + A[2,4] = 4 + 5 + 6 = 15
+    try testing.expectApproxEqAbs(15.0, x.data[2], 1e-10);
 }
 
 test "tbmv: no memory leaks over 10 iterations" {
@@ -16303,7 +16313,7 @@ test "tbsv: pentadiagonal upper (k=2, n=6, uplo='U')" {
     // Row 1 (super-diag 1): [0, 1, 1, 1, 1, 1]
     // Row 2 (main diag):    [1, 2, 3, 4, 5, 6]
     //
-    // Solve A*x = b where b = [3, 5, 6, 7, 7, 6]
+    // Solve A*x = b where b = A*[1,..,1] = row sums = [3, 4, 5, 6, 6, 6]
     // Back substitution verifies with expected solution computed by hand
     // This tests wider bandwidth
 
@@ -16331,7 +16341,7 @@ test "tbsv: pentadiagonal upper (k=2, n=6, uplo='U')" {
         A.data[2 * n + i] = @floatFromInt(i + 1);
     }
 
-    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 3, 5, 6, 7, 7, 6 }, .row_major);
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 3, 4, 5, 6, 6, 6 }, .row_major);
     defer x.deinit();
 
     try tbsv(f64, 'U', 'N', 'N', k, A, &x);
@@ -16358,7 +16368,7 @@ test "tbsv: pentadiagonal lower (k=2, n=6, uplo='L')" {
     // Banded storage (k=2): (k+1)×n = 3×6
     // Row 0 (main diag):    [1, 2, 3, 4, 5, 6]
     // Row 1 (sub-diag 1):   [1, 1, 1, 1, 1, 0]
-    // Row 2 (sub-diag 2):   [1, 1, 0, 0, 0, 0]
+    // Row 2 (sub-diag 2):   [1, 1, 1, 1, 0, 0]
     //
     // Solve A*x = b where b = [1, 3, 5, 6, 7, 8]
     // Forward substitution
@@ -16382,9 +16392,10 @@ test "tbsv: pentadiagonal lower (k=2, n=6, uplo='L')" {
         A.data[1 * n + j] = 1;
     }
 
-    // Fill sub-diagonal 2 (row 2): [1, 1, 0, 0, 0, 0]
-    A.data[2 * n + 0] = 1;
-    A.data[2 * n + 1] = 1;
+    // Fill sub-diagonal 2 (row 2): [1, 1, 1, 1, 0, 0]
+    for (0..n - 2) |j| {
+        A.data[2 * n + j] = 1;
+    }
 
     var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, &[_]f64{ 1, 3, 5, 6, 7, 8 }, .row_major);
     defer x.deinit();
@@ -16461,8 +16472,8 @@ test "tbsv: singular matrix (zero diagonal, diag='N')" {
     // We accept both success (with inf/nan) and error
     if (result) |_| {
         // Check for inf or nan (invalid solution for singular matrix)
-        try testing.expect(std.math.isNan(x.data[0]) or std.math.isInfinite(x.data[0]) or
-                            std.math.isNan(x.data[1]) or std.math.isInfinite(x.data[1]));
+        try testing.expect(std.math.isNan(x.data[0]) or std.math.isInf(x.data[0]) or
+            std.math.isNan(x.data[1]) or std.math.isInf(x.data[1]));
     } else |_| {
         // Error case is also acceptable
     }
@@ -16557,31 +16568,37 @@ test "tbsv: large matrix (n=10, k=2)" {
 
     @memset(A.data, 0);
 
-    // Fill super-diagonals with 1.0
-    for (0..n) |j| {
-        if (j + 1 < n) A.data[0 * n + j + 1] = 1.0;
-        if (j + 2 < n) A.data[0 * n + j + 2] = 1.0;
+    // Upper band storage: A(i,j) at row k+i-j, column j.
+    // Row 0 = 2nd super-diagonal (columns j >= 2), row 1 = 1st super-diagonal (j >= 1).
+    for (2..n) |j| {
+        A.data[0 * n + j] = 1.0;
+    }
+    for (1..n) |j| {
+        A.data[1 * n + j] = 1.0;
     }
 
-    // Fill main diagonal with 1.0 + column index (always > 0)
+    // Row 2 = main diagonal, 1.0 + index (always > 0)
     for (0..n) |i| {
-        A.data[1 * n + i] = 1.0 + @as(f64, @floatFromInt(i));
+        A.data[2 * n + i] = 1.0 + @as(f64, @floatFromInt(i));
     }
 
-    // Set up RHS as all ones (will be solved to verify consistency)
+    // RHS b = A * ones = row sums: diagonal + one per existing super-diagonal entry
     const x = try allocator.alloc(f64, n);
     defer allocator.free(x);
-    @memset(x, 1.0);
+    for (0..n) |i| {
+        const super1: f64 = if (i + 1 < n) 1.0 else 0.0;
+        const super2: f64 = if (i + 2 < n) 1.0 else 0.0;
+        x[i] = 1.0 + @as(f64, @floatFromInt(i)) + super1 + super2;
+    }
 
     var x_ndarray = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{n}, x, .row_major);
     defer x_ndarray.deinit();
 
     try tbsv(f64, 'U', 'N', 'N', k, A, &x_ndarray);
 
-    // Just verify solution is finite (no NaN/Inf)
+    // The solution of A*x = A*ones is all ones
     for (0..n) |i| {
-        try testing.expect(!std.math.isNan(x_ndarray.data[i]));
-        try testing.expect(!std.math.isInfinite(x_ndarray.data[i]));
+        try testing.expectApproxEqAbs(1.0, x_ndarray.data[i], 1e-10);
     }
 }
 
@@ -16619,6 +16636,6 @@ test "tbsv: no memory leaks over 10 iterations" {
         // Verify first element is correct: x[0] = b[0] / A[0,0]
         // For this setup, verify result is finite
         try testing.expect(!std.math.isNan(x.data[0]));
-        try testing.expect(!std.math.isInfinite(x.data[0]));
+        try testing.expect(!std.math.isInf(x.data[0]));
     }
 }

@@ -120,14 +120,11 @@ pub fn gemm_simd(comptime T: type, alpha: T, A: NDArray(T, 2), B: NDArray(T, 2),
             // Main SIMD loop over k dimension
             while (kk + vec_width <= k) : (kk += vec_width) {
                 // Load A[i, kk..kk+vec_width]
-                var a_vec: Vec = undefined;
-                for (0..vec_width) |offset| {
-                    a_vec[offset] = A.data[i * k + kk + offset];
-                }
+                const a_vec: Vec = A.data[i * k + kk ..][0..vec_width].*;
 
                 // Load B[kk..kk+vec_width, j]
                 var b_vec: Vec = undefined;
-                for (0..vec_width) |offset| {
+                inline for (0..vec_width) |offset| {
                     b_vec[offset] = B.data[(kk + offset) * n + j];
                 }
 
@@ -137,7 +134,7 @@ pub fn gemm_simd(comptime T: type, alpha: T, A: NDArray(T, 2), B: NDArray(T, 2),
 
             // Horizontal reduction: sum all lanes of sum_vec
             var sum: T = 0;
-            for (0..vec_width) |lane| {
+            inline for (0..vec_width) |lane| {
                 sum += sum_vec[lane];
             }
 
@@ -517,14 +514,14 @@ pub fn ger_simd(comptime T: type, alpha: T, x: NDArray(T, 1), y: NDArray(T, 1), 
         while (j + vec_width <= n) : (j += vec_width) {
             // Load y[j:j+vec_width] and A[i,j:j+vec_width]
             const y_vec: Vec = y.data[j..][0..vec_width].*;
-            const A_vec: Vec = A.data[i * n + j..][0..vec_width].*;
+            const A_vec: Vec = A.data[i * n + j ..][0..vec_width].*;
 
             // Compute product and accumulate
             const product = scalar_vec * y_vec;
             const result = A_vec + product;
 
             // Store back to A[i,j:j+vec_width]
-            @memcpy(A.data[i * n + j..][0..vec_width], &result);
+            A.data[i * n + j ..][0..vec_width].* = result;
         }
 
         // Tail loop (scalar) for remaining columns
@@ -570,7 +567,7 @@ pub fn ger_simd(comptime T: type, alpha: T, x: NDArray(T, 1), y: NDArray(T, 1), 
 /// try trmv_simd(f64, 'U', 'N', 'N', A, &x);  // x = A*x
 /// // Now x = [6, 9, 6]
 /// ```
-pub fn trmv_simd(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 2).Error)!void {
+pub fn trmv_simd(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 2).Error || std.mem.Allocator.Error)!void {
     // Validate dimensions
     if (A.shape[0] != A.shape[1]) {
         return error.DimensionMismatch;
@@ -784,7 +781,7 @@ pub fn trmv_simd(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 
 /// // Back substitution: x[1] = 6/3 = 2, x[0] = (5 - 1*2)/2 = 1.5
 /// // Result: x = [1.5, 2]
 /// ```
-pub fn trsv_simd(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 2).Error)!void {
+pub fn trsv_simd(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 2).Error || std.mem.Allocator.Error)!void {
     // Validate dimensions
     if (A.shape[0] != A.shape[1]) {
         return error.DimensionMismatch;
@@ -974,7 +971,7 @@ pub fn trsv_simd(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 
 /// // A[0,0] += 1*1 = 1, A[0,1] += 1*2 = 2, A[0,2] += 1*3 = 3
 /// // A[1,1] += 2*2 = 4, A[1,2] += 2*3 = 6, A[2,2] += 3*3 = 9
 /// ```
-pub fn syr_simd(comptime T: type, uplo: u8, alpha: T, x: NDArray(T, 1), A: *NDArray(T, 2)) (NDArray(T, 1).Error)!void {
+pub fn syr_simd(comptime T: type, uplo: u8, alpha: T, x: NDArray(T, 1), A: *NDArray(T, 2)) (NDArray(T, 1).Error || error{NotSquare})!void {
     // Validate matrix is square
     if (A.shape[0] != A.shape[1]) {
         return error.NotSquare;
@@ -1013,14 +1010,14 @@ pub fn syr_simd(comptime T: type, uplo: u8, alpha: T, x: NDArray(T, 1), A: *NDAr
             while (j + vec_width <= n) : (j += vec_width) {
                 // Load x[j:j+vec_width] and A[i,j:j+vec_width]
                 const x_vec: Vec = x.data[j..][0..vec_width].*;
-                const A_vec: Vec = A.data[i * n + j..][0..vec_width].*;
+                const A_vec: Vec = A.data[i * n + j ..][0..vec_width].*;
 
                 // Compute product and accumulate
                 const product = scalar_vec * x_vec;
                 const result = A_vec + product;
 
                 // Store back to A[i,j:j+vec_width]
-                @memcpy(A.data[i * n + j..][0..vec_width], &result);
+                A.data[i * n + j ..][0..vec_width].* = result;
             }
 
             // Tail loop (scalar) for remaining columns
@@ -1040,14 +1037,14 @@ pub fn syr_simd(comptime T: type, uplo: u8, alpha: T, x: NDArray(T, 1), A: *NDAr
             while (j + vec_width <= i + 1) : (j += vec_width) {
                 // Load x[j:j+vec_width] and A[i,j:j+vec_width]
                 const x_vec: Vec = x.data[j..][0..vec_width].*;
-                const A_vec: Vec = A.data[i * n + j..][0..vec_width].*;
+                const A_vec: Vec = A.data[i * n + j ..][0..vec_width].*;
 
                 // Compute product and accumulate
                 const product = scalar_vec * x_vec;
                 const result = A_vec + product;
 
                 // Store back to A[i,j:j+vec_width]
-                @memcpy(A.data[i * n + j..][0..vec_width], &result);
+                A.data[i * n + j ..][0..vec_width].* = result;
             }
 
             // Tail loop (scalar) for remaining columns
@@ -1098,7 +1095,7 @@ pub fn syr_simd(comptime T: type, uplo: u8, alpha: T, x: NDArray(T, 1), A: *NDAr
 /// // B := A*B = [[2*1+1*3, 2*2+1*4], [0*1+3*3, 0*2+3*4]] = [[5, 8], [9, 12]]
 /// try trmm_simd(f64, 'L', 'U', 'N', 'N', 1.0, A, &B);
 /// ```
-pub fn trmm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alpha: T, A: NDArray(T, 2), B: *NDArray(T, 2)) (NDArray(T, 2).Error)!void {
+pub fn trmm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alpha: T, A: NDArray(T, 2), B: *NDArray(T, 2)) (NDArray(T, 2).Error || std.mem.Allocator.Error)!void {
     // Validate A is square
     if (A.shape[0] != A.shape[1]) {
         return error.DimensionMismatch;
@@ -1144,13 +1141,13 @@ pub fn trmm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const start = if (is_unit) i + 1 else i;
                         for (start..m) |p| {
                             const a_val = A.data[i * k + p];
-                            const b_vec: Vec = B.data[p * n + j..][0..vec_width].*;
+                            const b_vec: Vec = B.data[p * n + j ..][0..vec_width].*;
                             const a_vec: Vec = @splat(a_val);
                             sum_vec += a_vec * b_vec;
                         }
                         if (is_unit) {
                             // Add diagonal contribution (A[i,i] = 1)
-                            const b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                            const b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                             sum_vec += b_vec;
                         }
                     } else {
@@ -1158,13 +1155,13 @@ pub fn trmm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const end = if (is_unit) i else i + 1;
                         for (0..end) |p| {
                             const a_val = A.data[i * k + p];
-                            const b_vec: Vec = B.data[p * n + j..][0..vec_width].*;
+                            const b_vec: Vec = B.data[p * n + j ..][0..vec_width].*;
                             const a_vec: Vec = @splat(a_val);
                             sum_vec += a_vec * b_vec;
                         }
                         if (is_unit) {
                             // Add diagonal contribution (A[i,i] = 1)
-                            const b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                            const b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                             sum_vec += b_vec;
                         }
                     }
@@ -1175,13 +1172,13 @@ pub fn trmm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const end = if (is_unit) i else i + 1;
                         for (0..end) |p| {
                             const a_val = A.data[p * k + i];
-                            const b_vec: Vec = B.data[p * n + j..][0..vec_width].*;
+                            const b_vec: Vec = B.data[p * n + j ..][0..vec_width].*;
                             const a_vec: Vec = @splat(a_val);
                             sum_vec += a_vec * b_vec;
                         }
                         if (is_unit) {
                             // Add diagonal contribution (A^T[i,i] = A[i,i] = 1)
-                            const b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                            const b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                             sum_vec += b_vec;
                         }
                     } else {
@@ -1189,13 +1186,13 @@ pub fn trmm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const start = if (is_unit) i + 1 else i;
                         for (start..m) |p| {
                             const a_val = A.data[p * k + i];
-                            const b_vec: Vec = B.data[p * n + j..][0..vec_width].*;
+                            const b_vec: Vec = B.data[p * n + j ..][0..vec_width].*;
                             const a_vec: Vec = @splat(a_val);
                             sum_vec += a_vec * b_vec;
                         }
                         if (is_unit) {
                             // Add diagonal contribution (A^T[i,i] = A[i,i] = 1)
-                            const b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                            const b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                             sum_vec += b_vec;
                         }
                     }
@@ -1203,7 +1200,7 @@ pub fn trmm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
 
                 // Scale by alpha and store in temp
                 const result = alpha_vec * sum_vec;
-                @memcpy(temp[i * n + j..][0..vec_width], &result);
+                temp[i * n + j ..][0..vec_width].* = result;
             }
 
             // Scalar tail loop for remaining columns
@@ -1348,7 +1345,7 @@ pub fn trmm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
 
                 // Scale by alpha and store in temp
                 const result = alpha_vec * sum_vec;
-                @memcpy(temp[i * n + j..][0..vec_width], &result);
+                temp[i * n + j ..][0..vec_width].* = result;
             }
 
             // Scalar tail loop for remaining columns
@@ -1481,9 +1478,9 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                     // Scale B[i,:] by alpha
                     var j: usize = 0;
                     while (j + vec_width <= n) : (j += vec_width) {
-                        var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                        var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                         b_vec = @as(Vec, @splat(alpha)) * b_vec;
-                        B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                        B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                     }
                     while (j < n) : (j += 1) {
                         B.data[i * n + j] = alpha * B.data[i * n + j];
@@ -1494,10 +1491,10 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const a_val = A.data[i * k + p];
                         j = 0;
                         while (j + vec_width <= n) : (j += vec_width) {
-                            var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
-                            const bp_vec: Vec = B.data[p * n + j..][0..vec_width].*;
+                            var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
+                            const bp_vec: Vec = B.data[p * n + j ..][0..vec_width].*;
                             b_vec -= @as(Vec, @splat(a_val)) * bp_vec;
-                            B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                            B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                         }
                         while (j < n) : (j += 1) {
                             B.data[i * n + j] -= a_val * B.data[p * n + j];
@@ -1509,9 +1506,9 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const diag_inv = 1.0 / A.data[i * k + i];
                         j = 0;
                         while (j + vec_width <= n) : (j += vec_width) {
-                            var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                            var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                             b_vec *= @as(Vec, @splat(diag_inv));
-                            B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                            B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                         }
                         while (j < n) : (j += 1) {
                             B.data[i * n + j] *= diag_inv;
@@ -1524,9 +1521,9 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                     // Scale B[i,:] by alpha
                     var j: usize = 0;
                     while (j + vec_width <= n) : (j += vec_width) {
-                        var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                        var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                         b_vec = @as(Vec, @splat(alpha)) * b_vec;
-                        B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                        B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                     }
                     while (j < n) : (j += 1) {
                         B.data[i * n + j] = alpha * B.data[i * n + j];
@@ -1537,10 +1534,10 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const a_val = A.data[i * k + p];
                         j = 0;
                         while (j + vec_width <= n) : (j += vec_width) {
-                            var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
-                            const bp_vec: Vec = B.data[p * n + j..][0..vec_width].*;
+                            var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
+                            const bp_vec: Vec = B.data[p * n + j ..][0..vec_width].*;
                             b_vec -= @as(Vec, @splat(a_val)) * bp_vec;
-                            B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                            B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                         }
                         while (j < n) : (j += 1) {
                             B.data[i * n + j] -= a_val * B.data[p * n + j];
@@ -1552,9 +1549,9 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const diag_inv = 1.0 / A.data[i * k + i];
                         j = 0;
                         while (j + vec_width <= n) : (j += vec_width) {
-                            var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                            var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                             b_vec *= @as(Vec, @splat(diag_inv));
-                            B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                            B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                         }
                         while (j < n) : (j += 1) {
                             B.data[i * n + j] *= diag_inv;
@@ -1570,9 +1567,9 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                     // Scale B[i,:] by alpha
                     var j: usize = 0;
                     while (j + vec_width <= n) : (j += vec_width) {
-                        var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                        var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                         b_vec = @as(Vec, @splat(alpha)) * b_vec;
-                        B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                        B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                     }
                     while (j < n) : (j += 1) {
                         B.data[i * n + j] = alpha * B.data[i * n + j];
@@ -1583,10 +1580,10 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const a_val = A.data[p * k + i];
                         j = 0;
                         while (j + vec_width <= n) : (j += vec_width) {
-                            var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
-                            const bp_vec: Vec = B.data[p * n + j..][0..vec_width].*;
+                            var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
+                            const bp_vec: Vec = B.data[p * n + j ..][0..vec_width].*;
                             b_vec -= @as(Vec, @splat(a_val)) * bp_vec;
-                            B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                            B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                         }
                         while (j < n) : (j += 1) {
                             B.data[i * n + j] -= a_val * B.data[p * n + j];
@@ -1598,9 +1595,9 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const diag_inv = 1.0 / A.data[i * k + i];
                         j = 0;
                         while (j + vec_width <= n) : (j += vec_width) {
-                            var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                            var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                             b_vec *= @as(Vec, @splat(diag_inv));
-                            B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                            B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                         }
                         while (j < n) : (j += 1) {
                             B.data[i * n + j] *= diag_inv;
@@ -1616,9 +1613,9 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                     // Scale B[i,:] by alpha
                     var j: usize = 0;
                     while (j + vec_width <= n) : (j += vec_width) {
-                        var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                        var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                         b_vec = @as(Vec, @splat(alpha)) * b_vec;
-                        B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                        B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                     }
                     while (j < n) : (j += 1) {
                         B.data[i * n + j] = alpha * B.data[i * n + j];
@@ -1629,10 +1626,10 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const a_val = A.data[p * k + i];
                         j = 0;
                         while (j + vec_width <= n) : (j += vec_width) {
-                            var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
-                            const bp_vec: Vec = B.data[p * n + j..][0..vec_width].*;
+                            var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
+                            const bp_vec: Vec = B.data[p * n + j ..][0..vec_width].*;
                             b_vec -= @as(Vec, @splat(a_val)) * bp_vec;
-                            B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                            B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                         }
                         while (j < n) : (j += 1) {
                             B.data[i * n + j] -= a_val * B.data[p * n + j];
@@ -1644,9 +1641,9 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const diag_inv = 1.0 / A.data[i * k + i];
                         j = 0;
                         while (j + vec_width <= n) : (j += vec_width) {
-                            var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                            var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                             b_vec *= @as(Vec, @splat(diag_inv));
-                            B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                            B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                         }
                         while (j < n) : (j += 1) {
                             B.data[i * n + j] *= diag_inv;
@@ -1664,9 +1661,9 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                     // Scale B[:,j] by alpha
                     var i: usize = 0;
                     while (i + vec_width <= m) : (i += vec_width) {
-                        var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                        var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                         b_vec = @as(Vec, @splat(alpha)) * b_vec;
-                        B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                        B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                     }
                     while (i < m) : (i += 1) {
                         B.data[i * n + j] = alpha * B.data[i * n + j];
@@ -1677,10 +1674,10 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const a_val = A.data[p * k + j];
                         i = 0;
                         while (i + vec_width <= m) : (i += vec_width) {
-                            var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
-                            const bp_vec: Vec = B.data[i * n + p..][0..vec_width].*;
+                            var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
+                            const bp_vec: Vec = B.data[i * n + p ..][0..vec_width].*;
                             b_vec -= bp_vec * @as(Vec, @splat(a_val));
-                            B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                            B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                         }
                         while (i < m) : (i += 1) {
                             B.data[i * n + j] -= B.data[i * n + p] * a_val;
@@ -1692,9 +1689,9 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const diag_inv = 1.0 / A.data[j * k + j];
                         i = 0;
                         while (i + vec_width <= m) : (i += vec_width) {
-                            var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                            var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                             b_vec *= @as(Vec, @splat(diag_inv));
-                            B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                            B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                         }
                         while (i < m) : (i += 1) {
                             B.data[i * n + j] *= diag_inv;
@@ -1710,9 +1707,9 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                     // Scale B[:,j] by alpha
                     var i: usize = 0;
                     while (i + vec_width <= m) : (i += vec_width) {
-                        var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                        var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                         b_vec = @as(Vec, @splat(alpha)) * b_vec;
-                        B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                        B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                     }
                     while (i < m) : (i += 1) {
                         B.data[i * n + j] = alpha * B.data[i * n + j];
@@ -1723,10 +1720,10 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const a_val = A.data[p * k + j];
                         i = 0;
                         while (i + vec_width <= m) : (i += vec_width) {
-                            var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
-                            const bp_vec: Vec = B.data[i * n + p..][0..vec_width].*;
+                            var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
+                            const bp_vec: Vec = B.data[i * n + p ..][0..vec_width].*;
                             b_vec -= bp_vec * @as(Vec, @splat(a_val));
-                            B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                            B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                         }
                         while (i < m) : (i += 1) {
                             B.data[i * n + j] -= B.data[i * n + p] * a_val;
@@ -1738,9 +1735,9 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const diag_inv = 1.0 / A.data[j * k + j];
                         i = 0;
                         while (i + vec_width <= m) : (i += vec_width) {
-                            var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                            var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                             b_vec *= @as(Vec, @splat(diag_inv));
-                            B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                            B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                         }
                         while (i < m) : (i += 1) {
                             B.data[i * n + j] *= diag_inv;
@@ -1759,9 +1756,9 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                     // Scale B[:,j] by alpha
                     var i: usize = 0;
                     while (i + vec_width <= m) : (i += vec_width) {
-                        var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                        var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                         b_vec = @as(Vec, @splat(alpha)) * b_vec;
-                        B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                        B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                     }
                     while (i < m) : (i += 1) {
                         B.data[i * n + j] = alpha * B.data[i * n + j];
@@ -1772,10 +1769,10 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const a_val = A.data[j * k + p];
                         i = 0;
                         while (i + vec_width <= m) : (i += vec_width) {
-                            var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
-                            const bp_vec: Vec = B.data[i * n + p..][0..vec_width].*;
+                            var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
+                            const bp_vec: Vec = B.data[i * n + p ..][0..vec_width].*;
                             b_vec -= bp_vec * @as(Vec, @splat(a_val));
-                            B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                            B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                         }
                         while (i < m) : (i += 1) {
                             B.data[i * n + j] -= B.data[i * n + p] * a_val;
@@ -1787,9 +1784,9 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const diag_inv = 1.0 / A.data[j * k + j];
                         i = 0;
                         while (i + vec_width <= m) : (i += vec_width) {
-                            var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                            var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                             b_vec *= @as(Vec, @splat(diag_inv));
-                            B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                            B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                         }
                         while (i < m) : (i += 1) {
                             B.data[i * n + j] *= diag_inv;
@@ -1802,9 +1799,9 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                     // Scale B[:,j] by alpha
                     var i: usize = 0;
                     while (i + vec_width <= m) : (i += vec_width) {
-                        var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                        var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                         b_vec = @as(Vec, @splat(alpha)) * b_vec;
-                        B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                        B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                     }
                     while (i < m) : (i += 1) {
                         B.data[i * n + j] = alpha * B.data[i * n + j];
@@ -1815,10 +1812,10 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const a_val = A.data[j * k + p];
                         i = 0;
                         while (i + vec_width <= m) : (i += vec_width) {
-                            var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
-                            const bp_vec: Vec = B.data[i * n + p..][0..vec_width].*;
+                            var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
+                            const bp_vec: Vec = B.data[i * n + p ..][0..vec_width].*;
                             b_vec -= bp_vec * @as(Vec, @splat(a_val));
-                            B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                            B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                         }
                         while (i < m) : (i += 1) {
                             B.data[i * n + j] -= B.data[i * n + p] * a_val;
@@ -1830,9 +1827,9 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
                         const diag_inv = 1.0 / A.data[j * k + j];
                         i = 0;
                         while (i + vec_width <= m) : (i += vec_width) {
-                            var b_vec: Vec = B.data[i * n + j..][0..vec_width].*;
+                            var b_vec: Vec = B.data[i * n + j ..][0..vec_width].*;
                             b_vec *= @as(Vec, @splat(diag_inv));
-                            B.data[i * n + j..][0..vec_width].* = @as([vec_width]T, b_vec);
+                            B.data[i * n + j ..][0..vec_width].* = @as([vec_width]T, b_vec);
                         }
                         while (i < m) : (i += 1) {
                             B.data[i * n + j] *= diag_inv;
@@ -1881,7 +1878,7 @@ pub fn trsm_simd(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alph
 /// defer B.deinit();
 /// try symm_simd(f64, 'L', 'U', 1.0, A, &B, 0.0); // B = A*B (SIMD-accelerated)
 /// ```
-pub fn symm_simd(comptime T: type, side: u8, uplo: u8, alpha: T, A: NDArray(T, 2), B: *NDArray(T, 2), beta: T) (NDArray(T, 2).Error)!void {
+pub fn symm_simd(comptime T: type, side: u8, uplo: u8, alpha: T, A: NDArray(T, 2), B: *NDArray(T, 2), beta: T) (NDArray(T, 2).Error || std.mem.Allocator.Error)!void {
     // Validate square matrix A
     if (A.shape[0] != A.shape[1]) {
         return error.DimensionMismatch;
@@ -1959,7 +1956,7 @@ pub fn symm_simd(comptime T: type, side: u8, uplo: u8, alpha: T, A: NDArray(T, 2
                     else
                         (if (i >= p) A.data[i * k + p] else A.data[p * k + i]);
 
-                    const b_vec: Vec = B_orig[p * n + j..][0..vec_width].*;
+                    const b_vec: Vec = B_orig[p * n + j ..][0..vec_width].*;
                     const a_vec: Vec = @splat(a_val);
                     sum_vec += a_vec * b_vec;
                 }
@@ -2759,9 +2756,9 @@ test "gemm_blocked_4x4: basic 4x4 matrix multiply (single block)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        1, 2, 3, 4,
-        5, 6, 7, 8,
-        9, 10, 11, 12,
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
         13, 14, 15, 16,
     }, .row_major);
     defer A.deinit();
@@ -2852,9 +2849,9 @@ test "gemm_blocked_4x4: alpha scaling (α = 0.5)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        1, 2, 3, 4,
-        5, 6, 7, 8,
-        9, 10, 11, 12,
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
         13, 14, 15, 16,
     }, .row_major);
     defer A.deinit();
@@ -2949,9 +2946,9 @@ test "gemm_blocked_4x4: f32 type support" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f32{
-        1, 2, 3, 4,
-        5, 6, 7, 8,
-        9, 10, 11, 12,
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
         13, 14, 15, 16,
     }, .row_major);
     defer A.deinit();
@@ -2977,9 +2974,9 @@ test "gemm_blocked_4x4: f64 type support" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        1, 2, 3, 4,
-        5, 6, 7, 8,
-        9, 10, 11, 12,
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
         13, 14, 15, 16,
     }, .row_major);
     defer A.deinit();
@@ -3033,8 +3030,8 @@ test "gemm_blocked_4x4: numerical equivalence with alpha and beta" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 6, 6 }, &[_]f64{
-        1, 2, 3, 4, 5, 6,
-        7, 8, 9, 10, 11, 12,
+        1,  2,  3,  4,  5,  6,
+        7,  8,  9,  10, 11, 12,
         13, 14, 15, 16, 17, 18,
         19, 20, 21, 22, 23, 24,
         25, 26, 27, 28, 29, 30,
@@ -3359,9 +3356,9 @@ test "gemm_simd_optimized: basic 4x4 (single SIMD block)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        1, 2, 3, 4,
-        5, 6, 7, 8,
-        9, 10, 11, 12,
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
         13, 14, 15, 16,
     }, .row_major);
     defer A.deinit();
@@ -3471,7 +3468,7 @@ test "gemm_simd_optimized: 256x256 matrix" {
     // Verify no NaN/Inf values
     for (0..256 * 256) |i| {
         try testing.expect(!std.math.isNan(C.data[i]));
-        try testing.expect(!std.math.isInfinite(C.data[i]));
+        try testing.expect(!std.math.isInf(C.data[i]));
     }
 }
 
@@ -3577,9 +3574,9 @@ test "gemm_simd_optimized: alpha scaling (α = 0.5)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        1, 2, 3, 4,
-        5, 6, 7, 8,
-        9, 10, 11, 12,
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
         13, 14, 15, 16,
     }, .row_major);
     defer A.deinit();
@@ -3674,9 +3671,9 @@ test "gemm_simd_optimized: f32 type support" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f32{
-        1, 2, 3, 4,
-        5, 6, 7, 8,
-        9, 10, 11, 12,
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
         13, 14, 15, 16,
     }, .row_major);
     defer A.deinit();
@@ -3819,9 +3816,9 @@ test "gemm_simd_optimized: zero alpha (α = 0)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        1, 2, 3, 4,
-        5, 6, 7, 8,
-        9, 10, 11, 12,
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
         13, 14, 15, 16,
     }, .row_major);
     defer A.deinit();
@@ -3936,9 +3933,9 @@ test "gemv_simd_optimized: basic 4x4 matrix-vector multiply" {
 
     // A = [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]]  (4x4)
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        1, 2, 3, 4,
-        5, 6, 7, 8,
-        9, 10, 11, 12,
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
         13, 14, 15, 16,
     }, .row_major);
     defer A.deinit();
@@ -3991,8 +3988,8 @@ test "gemv_simd_optimized: 3x4 rectangular matrix" {
 
     // A = [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]]  (3x4)
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 3, 4 }, &[_]f64{
-        1, 2, 3, 4,
-        5, 6, 7, 8,
+        1, 2,  3,  4,
+        5, 6,  7,  8,
         9, 10, 11, 12,
     }, .row_major);
     defer A.deinit();
@@ -4339,9 +4336,9 @@ test "gemv_simd_optimized: f32 type support (8-wide SIMD)" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f32, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f32{
-        1, 2, 3, 4,
-        5, 6, 7, 8,
-        9, 10, 11, 12,
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
         13, 14, 15, 16,
     }, .row_major);
     defer A.deinit();
@@ -4479,7 +4476,7 @@ test "gemv_simd_optimized: numerical equivalence to scalar gemv (100x100)" {
     defer y_simd.deinit();
 
     // Scalar gemv
-    @import("blas.zig").gemv(f64, 1.0, A, x, 0.0, &y_scalar);
+    try @import("blas.zig").gemv(f64, 1.0, A, x, 0.0, &y_scalar);
 
     // SIMD gemv_simd_optimized
     try gemv_simd_optimized(f64, 1.0, A, x, 0.0, &y_simd);
@@ -4616,8 +4613,8 @@ test "nrm2_simd: medium vector (n=128, sequential values)" {
 
     // sqrt(sum of i^2 for i=0..127)
     // Using formula: Σ i^2 for i=0..n-1 = n(n-1)(2n-1)/6
-    // For n=128: 128*127*255/6 = 876240
-    const sum_of_squares = 876240.0;
+    // For n=128: 127*128*255/6 = 4,145,280/6 = 690880
+    const sum_of_squares = 690880.0;
     const expected = @sqrt(sum_of_squares);
     try testing.expectApproxEqAbs(expected, result, 1e-9);
 }
@@ -4721,18 +4718,19 @@ test "nrm2_simd: f32 large vector (n=256, 32 SIMD blocks)" {
 
     var rng = std.Random.DefaultPrng.init(123);
     const random = rng.random();
-    var sum_of_squares: f32 = 0.0;
+    // Reference accumulated in f64 so it is independent of the f32 summation order.
+    var sum_of_squares: f64 = 0.0;
 
     for (0..256) |i| {
         const val: f32 = random.float(f32) * 50.0 - 25.0;
         x.data[i] = val;
-        sum_of_squares += val * val;
+        sum_of_squares += @as(f64, val) * @as(f64, val);
     }
 
     const result = try nrm2_simd(f32, x);
 
-    const expected = @sqrt(sum_of_squares);
-    try testing.expectApproxEqAbs(expected, result, 1e-5);
+    const expected: f32 = @floatCast(@sqrt(sum_of_squares));
+    try testing.expectApproxEqRel(expected, result, 1e-5);
 }
 
 test "nrm2_simd: f64 type — relative tolerance check" {
@@ -4978,13 +4976,10 @@ test "asum_simd: single negative element (n=1)" {
 test "asum_simd: empty vector (n=0 returns 0)" {
     const allocator = testing.allocator;
 
-    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{0}, .row_major);
-    defer x.deinit();
-
-    const result = try asum_simd(f64, x);
-
-    // Sum of no elements = 0
-    try testing.expectApproxEqAbs(0.0, result, 1e-10);
+    // An empty vector is unrepresentable: NDArray rejects zero-length shapes, so asum_simd
+    // can never observe one.
+    const result = NDArray(f64, 1).zeros(allocator, &[_]usize{0}, .row_major);
+    try testing.expectError(error.ZeroDimension, result);
 }
 
 test "asum_simd: aligned size n=64 (SIMD threshold, 4-wide f64)" {
@@ -5242,13 +5237,10 @@ test "scal_simd: single element (n=1)" {
 test "scal_simd: empty vector (n=0 no-op)" {
     const allocator = testing.allocator;
 
-    var x = try NDArray(f64, 1).zeros(allocator, &[_]usize{0}, .row_major);
-    defer x.deinit();
-
-    try scal_simd(f64, 5.0, &x);
-
-    // No elements to scale
-    try testing.expect(x.shape[0] == 0);
+    // An empty vector is unrepresentable: NDArray rejects zero-length shapes, so scal_simd
+    // can never observe one.
+    const result = NDArray(f64, 1).zeros(allocator, &[_]usize{0}, .row_major);
+    try testing.expectError(error.ZeroDimension, result);
 }
 
 test "scal_simd: aligned size n=64 (SIMD threshold, 4-wide f64)" {
@@ -6048,9 +6040,9 @@ test "trmv_simd: lower non-unit 4x4 matrix" {
 
     // A = [[2, 0, 0, 0], [3, 4, 0, 0], [5, 6, 7, 0], [8, 9, 10, 11]]  (lower triangular)
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        2, 0, 0, 0,
-        3, 4, 0, 0,
-        5, 6, 7, 0,
+        2, 0, 0,  0,
+        3, 4, 0,  0,
+        5, 6, 7,  0,
         8, 9, 10, 11,
     }, .row_major);
     defer A.deinit();
@@ -6063,13 +6055,13 @@ test "trmv_simd: lower non-unit 4x4 matrix" {
     // Row 0: 2*1 = 2
     // Row 1: 3*1 + 4*2 = 11
     // Row 2: 5*1 + 6*2 + 7*3 = 38
-    // Row 3: 8*1 + 9*2 + 10*3 + 11*4 = 102
+    // Row 3: 8*1 + 9*2 + 10*3 + 11*4 = 8 + 18 + 30 + 44 = 100
     try trmv_simd(f64, 'L', 'N', 'N', A, &x);
 
     try testing.expectApproxEqAbs(2.0, x.data[0], 1e-9);
     try testing.expectApproxEqAbs(11.0, x.data[1], 1e-9);
     try testing.expectApproxEqAbs(38.0, x.data[2], 1e-9);
-    try testing.expectApproxEqAbs(102.0, x.data[3], 1e-9);
+    try testing.expectApproxEqAbs(100.0, x.data[3], 1e-9);
 }
 
 test "trmv_simd: upper unit diagonal" {
@@ -6121,13 +6113,13 @@ test "trmv_simd: lower unit diagonal" {
     // Row 0: 2
     // Row 1: 2*2 + 2 = 6
     // Row 2: 3*2 + 4*2 + 2 = 16
-    // Row 3: 5*2 + 6*2 + 7*2 + 2 = 36
+    // Row 3: 5*2 + 6*2 + 7*2 + 2 = 10 + 12 + 14 + 2 = 38
     try trmv_simd(f64, 'L', 'N', 'U', A, &x);
 
     try testing.expectApproxEqAbs(2.0, x.data[0], 1e-9);
     try testing.expectApproxEqAbs(6.0, x.data[1], 1e-9);
     try testing.expectApproxEqAbs(16.0, x.data[2], 1e-9);
-    try testing.expectApproxEqAbs(36.0, x.data[3], 1e-9);
+    try testing.expectApproxEqAbs(38.0, x.data[3], 1e-9);
 }
 
 test "trmv_simd: upper transpose non-unit" {
@@ -6165,9 +6157,9 @@ test "trmv_simd: lower transpose non-unit" {
 
     // A = [[2, 0, 0, 0], [3, 4, 0, 0], [5, 6, 7, 0], [8, 9, 10, 11]]  (lower triangular)
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        2, 0, 0, 0,
-        3, 4, 0, 0,
-        5, 6, 7, 0,
+        2, 0, 0,  0,
+        3, 4, 0,  0,
+        5, 6, 7,  0,
         8, 9, 10, 11,
     }, .row_major);
     defer A.deinit();
@@ -6317,8 +6309,8 @@ test "trmv_simd: f64 4-wide vectorization" {
 
     // Create 4x4 lower triangular f64 matrix
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        1.5, 0, 0, 0,
-        2.5, 2.5, 0, 0,
+        1.5, 0,   0,   0,
+        2.5, 2.5, 0,   0,
         3.5, 3.5, 3.5, 0,
         4.5, 4.5, 4.5, 4.5,
     }, .row_major);
@@ -6398,11 +6390,11 @@ test "trmv_simd: zero vector input" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 5, 5 }, &[_]f64{
-        1, 2, 3, 4, 5,
-        0, 6, 7, 8, 9,
+        1, 2, 3,  4,  5,
+        0, 6, 7,  8,  9,
         0, 0, 10, 11, 12,
-        0, 0, 0, 13, 14,
-        0, 0, 0, 0, 15,
+        0, 0, 0,  13, 14,
+        0, 0, 0,  0,  15,
     }, .row_major);
     defer A.deinit();
 
@@ -6470,14 +6462,14 @@ test "trmv_simd: numerical stability with mixed magnitude values" {
 
     // Create upper triangular matrix with mixed magnitudes (large and small)
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 8, 8 }, &[_]f64{
-        1e-6, 1e-5, 1e-4, 1e-3, 0.1, 1.0, 10.0, 100.0,
-        0, 1e-6, 1e-5, 1e-4, 1e-3, 0.1, 1.0, 10.0,
-        0, 0, 1e-6, 1e-5, 1e-4, 1e-3, 0.1, 1.0,
-        0, 0, 0, 1e-6, 1e-5, 1e-4, 1e-3, 0.1,
-        0, 0, 0, 0, 1e-6, 1e-5, 1e-4, 1e-3,
-        0, 0, 0, 0, 0, 1e-6, 1e-5, 1e-4,
-        0, 0, 0, 0, 0, 0, 1e-6, 1e-5,
-        0, 0, 0, 0, 0, 0, 0, 1e-6,
+        1e-6, 1e-5, 1e-4, 1e-3, 0.1,  1.0,  10.0, 100.0,
+        0,    1e-6, 1e-5, 1e-4, 1e-3, 0.1,  1.0,  10.0,
+        0,    0,    1e-6, 1e-5, 1e-4, 1e-3, 0.1,  1.0,
+        0,    0,    0,    1e-6, 1e-5, 1e-4, 1e-3, 0.1,
+        0,    0,    0,    0,    1e-6, 1e-5, 1e-4, 1e-3,
+        0,    0,    0,    0,    0,    1e-6, 1e-5, 1e-4,
+        0,    0,    0,    0,    0,    0,    1e-6, 1e-5,
+        0,    0,    0,    0,    0,    0,    0,    1e-6,
     }, .row_major);
     defer A.deinit();
 
@@ -6715,15 +6707,15 @@ test "trsv_simd: lower triangular non-unit diagonal 4x4" {
 
     // A = [[2, 0, 0, 0], [3, 4, 0, 0], [5, 6, 7, 0], [8, 9, 10, 11]]  (lower triangular)
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        2, 0, 0, 0,
-        3, 4, 0, 0,
-        5, 6, 7, 0,
+        2, 0, 0,  0,
+        3, 4, 0,  0,
+        5, 6, 7,  0,
         8, 9, 10, 11,
     }, .row_major);
     defer A.deinit();
 
-    // Solve A*x = b where b = [2, 11, 38, 102]
-    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 2, 11, 38, 102 }, .row_major);
+    // Solve A*x = b where b = A*[1,2,3,4] = [2, 11, 38, 100]
+    var x = try NDArray(f64, 1).fromSlice(allocator, &[_]usize{4}, &[_]f64{ 2, 11, 38, 100 }, .row_major);
     defer x.deinit();
 
     try trsv_simd(f64, 'L', 'N', 'N', A, &x);
@@ -6732,7 +6724,7 @@ test "trsv_simd: lower triangular non-unit diagonal 4x4" {
     // x[0] = 2/2 = 1
     // x[1] = (11 - 3*1)/4 = 8/4 = 2
     // x[2] = (38 - 5*1 - 6*2)/7 = 21/7 = 3
-    // x[3] = (102 - 8*1 - 9*2 - 10*3)/11 = 44/11 = 4
+    // x[3] = (100 - 8*1 - 9*2 - 10*3)/11 = 44/11 = 4
     try testing.expectApproxEqAbs(1.0, x.data[0], 1e-9);
     try testing.expectApproxEqAbs(2.0, x.data[1], 1e-9);
     try testing.expectApproxEqAbs(3.0, x.data[2], 1e-9);
@@ -6876,11 +6868,11 @@ test "trsv_simd: 256x256 large matrix upper unit diagonal" {
         }
     }
 
-    // Create vector b: b[i] = sum(i+j+1 for j in i+1..n)
+    // Create vector b = A*ones: b[i] = 1 (unit diagonal) + sum(i+j+1 for j in i+1..n)
     var data_b = try allocator.alloc(f64, n);
     defer allocator.free(data_b);
     for (0..n) |i| {
-        var sum: f64 = 0.0;
+        var sum: f64 = 1.0;
         for (i + 1..n) |j| {
             sum += @as(f64, @floatFromInt(i + j + 1));
         }
@@ -7473,13 +7465,14 @@ test "trmm_simd: right lower with transpose (f64)" {
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 2, 2 }, &[_]f64{ 2, 0, 1, 3 }, .row_major);
     defer A.deinit();
 
-    // B = B*A^T = [[1*2+2*1, 1*0+2*3], [3*2+4*1, 3*0+4*3]] = [[4, 6], [10, 12]]
+    // A^T = [[2, 1], [0, 3]]
+    // B = B*A^T = [[1*2+2*0, 1*1+2*3], [3*2+4*0, 3*1+4*3]] = [[2, 7], [6, 15]]
     try trmm_simd(f64, 'R', 'L', 'T', 'N', 1.0, A, &B);
 
-    try testing.expectApproxEqAbs(4.0, B.data[0], 1e-10);
-    try testing.expectApproxEqAbs(6.0, B.data[1], 1e-10);
-    try testing.expectApproxEqAbs(10.0, B.data[2], 1e-10);
-    try testing.expectApproxEqAbs(12.0, B.data[3], 1e-10);
+    try testing.expectApproxEqAbs(2.0, B.data[0], 1e-10);
+    try testing.expectApproxEqAbs(7.0, B.data[1], 1e-10);
+    try testing.expectApproxEqAbs(6.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(15.0, B.data[3], 1e-10);
 }
 
 test "trmm_simd: unit diagonal behavior (f64)" {
@@ -7814,11 +7807,14 @@ test "trsm_simd: left lower triangular solve 3×3 f64" {
 
     try trsm_simd(f64, 'L', 'L', 'N', 'N', 1.0, A, &B);
 
-    // Forward substitution: x[0] = 1/1 = 1, x[1] = (3-2*1)/3 = 1/3, x[2] = (6-4*1-5*1/3)/6
+    // Forward substitution, column 0 (b = 1, 3, 6): x = 1, (3-2*1)/3 = 1/3, (6-4*1-5/3)/6 = 1/18
+    // Forward substitution, column 1 (b = 2, 4, 7): x = 2, (4-2*2)/3 = 0, (7-4*2-0)/6 = -1/6
     try testing.expectApproxEqAbs(1.0, B.data[0], 1e-10);
     try testing.expectApproxEqAbs(2.0, B.data[1], 1e-10);
     try testing.expectApproxEqAbs(@as(f64, 1.0) / 3.0, B.data[2], 1e-10);
-    try testing.expectApproxEqAbs(@as(f64, 2.0) / 3.0, B.data[3], 1e-10);
+    try testing.expectApproxEqAbs(0.0, B.data[3], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 1.0) / 18.0, B.data[4], 1e-10);
+    try testing.expectApproxEqAbs(-1.0 / 6.0, B.data[5], 1e-10);
 }
 
 test "trsm_simd: right upper triangular solve 2×2 f64" {
@@ -7912,8 +7908,8 @@ test "trsm_simd: unit diagonal behavior f64" {
     try trsm_simd(f64, 'L', 'U', 'N', 'U', 1.0, A, &B);
 
     // Back substitution with unit diagonal:
-    // x[2] = 1, x[1] = 1-4*1 = -3, x[0] = 1-2*(-3)-3*1 = 2
-    try testing.expectApproxEqAbs(2.0, B.data[0], 1e-10);
+    // x[2] = 1, x[1] = 1-4*1 = -3, x[0] = 1-2*(-3)-3*1 = 4
+    try testing.expectApproxEqAbs(4.0, B.data[0], 1e-10);
     try testing.expectApproxEqAbs(-3.0, B.data[1], 1e-10);
     try testing.expectApproxEqAbs(1.0, B.data[2], 1e-10);
 }
@@ -7974,10 +7970,10 @@ test "trsm_simd: single RHS (n=1) 3×3 f64" {
     // Forward substitution:
     // x[0] = 1/1 = 1
     // x[1] = (3 - 2*1)/3 = 1/3
-    // x[2] = (6 - 4*1 - 5*(1/3))/6 = (6 - 4 - 5/3)/6 = (4/3)/6 = 2/9
+    // x[2] = (6 - 4*1 - 5*(1/3))/6 = (6 - 4 - 5/3)/6 = (1/3)/6 = 1/18
     try testing.expectApproxEqAbs(1.0, B.data[0], 1e-10);
     try testing.expectApproxEqAbs(@as(f64, 1.0) / 3.0, B.data[1], 1e-10);
-    try testing.expectApproxEqAbs(@as(f64, 2.0) / 9.0, B.data[2], 1e-10);
+    try testing.expectApproxEqAbs(@as(f64, 1.0) / 18.0, B.data[2], 1e-10);
 }
 
 test "trsm_simd: multiple RHS (n=4) 4×4 f64" {
@@ -9047,7 +9043,7 @@ test "symm_simd: no memory leaks f32" {
 /// - Vectorize j-dimension (columns of C) for better cache utilization
 /// - Inner k-loop broadcasts A values and multiplies with C vector
 /// - Use @reduce(.Add, ...) for horizontal summation
-pub fn syrk_simd(comptime T: type, trans: u8, uplo: u8, alpha: T, A: NDArray(T, 2), beta: T, C: *NDArray(T, 2)) (NDArray(T, 2).Error)!void {
+pub fn syrk_simd(comptime T: type, trans: u8, uplo: u8, alpha: T, A: NDArray(T, 2), beta: T, C: *NDArray(T, 2)) (NDArray(T, 2).Error || std.mem.Allocator.Error)!void {
     // Validate trans parameter
     const is_trans_n = (trans == 'N' or trans == 'n');
     const is_trans_t = (trans == 'T' or trans == 't');
@@ -9088,7 +9084,7 @@ pub fn syrk_simd(comptime T: type, trans: u8, uplo: u8, alpha: T, A: NDArray(T, 
         }
     }
 
-    const n = c_rows;  // C is n×n
+    const n = c_rows; // C is n×n
 
     // Setup SIMD constants
     const vec_width = comptime simdWidth(T);
@@ -9365,8 +9361,8 @@ test "syrk_simd: 8×8 small matrix, trans='N', uplo='U', alpha=1, beta=0" {
 
     // Create 8×8 input matrix A (arbitrary values)
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 8, 8 }, &[_]f64{
-        1, 2, 3, 4, 5, 6, 7, 8,
-        9, 10, 11, 12, 13, 14, 15, 16,
+        1,  2,  3,  4,  5,  6,  7,  8,
+        9,  10, 11, 12, 13, 14, 15, 16,
         17, 18, 19, 20, 21, 22, 23, 24,
         25, 26, 27, 28, 29, 30, 31, 32,
         33, 34, 35, 36, 37, 38, 39, 40,
@@ -9386,18 +9382,18 @@ test "syrk_simd: 8×8 small matrix, trans='N', uplo='U', alpha=1, beta=0" {
     // Verify upper triangle is computed: C[i,j] = sum_k(A[i,k] * A[j,k]) for i <= j
     // C[0,0] = 1*1 + 2*2 + 3*3 + ... + 8*8 = 204
     try testing.expectApproxEqAbs(204.0, C.data[0], 1e-8);
-    // C[0,1] = 1*9 + 2*10 + 3*11 + ... + 8*16 = 204 + 8 = 276
-    try testing.expectApproxEqAbs(276.0, C.data[1], 1e-8);
-    // C[1,1] = 9*9 + 10*10 + 11*11 + ... + 16*16 = 1240
-    try testing.expectApproxEqAbs(1240.0, C.data[9], 1e-8);
+    // C[0,1] = 1*9 + 2*10 + 3*11 + ... + 8*16 = 204 + 8*(1+...+8) = 204 + 288 = 492
+    try testing.expectApproxEqAbs(492.0, C.data[1], 1e-8);
+    // C[1,1] = 9*9 + 10*10 + 11*11 + ... + 16*16 = 1292
+    try testing.expectApproxEqAbs(1292.0, C.data[9], 1e-8);
 }
 
 test "syrk_simd: 8×8 small matrix, trans='T', uplo='U', alpha=1, beta=0" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 8, 8 }, &[_]f64{
-        1, 2, 3, 4, 5, 6, 7, 8,
-        9, 10, 11, 12, 13, 14, 15, 16,
+        1,  2,  3,  4,  5,  6,  7,  8,
+        9,  10, 11, 12, 13, 14, 15, 16,
         17, 18, 19, 20, 21, 22, 23, 24,
         25, 26, 27, 28, 29, 30, 31, 32,
         33, 34, 35, 36, 37, 38, 39, 40,
@@ -9414,10 +9410,10 @@ test "syrk_simd: 8×8 small matrix, trans='T', uplo='U', alpha=1, beta=0" {
     try syrk_simd(f64, 'T', 'U', 1.0, A, 0.0, &C);
 
     // Verify upper triangle: C[i,j] = sum_k(A[k,i] * A[k,j]) for i <= j
-    // C[0,0] = 1*1 + 9*9 + 17*17 + ... + 57*57
-    try testing.expectApproxEqAbs(9204.0, C.data[0], 1e-8);
-    // C[0,1] = 1*2 + 9*10 + 17*18 + ... + 57*58
-    try testing.expectApproxEqAbs(9240.0, C.data[1], 1e-8);
+    // A[i,k] = 8i+k+1, so C[0,0] = sum_i (8i+1)^2 = 64*140 + 16*28 + 8 = 9416
+    try testing.expectApproxEqAbs(9416.0, C.data[0], 1e-8);
+    // C[0,1] = sum_i (8i+1)(8i+2) = 64*140 + 24*28 + 16 = 9648
+    try testing.expectApproxEqAbs(9648.0, C.data[1], 1e-8);
 }
 
 test "syrk_simd: 64×32 rectangular A, trans='N', uplo='U' produces 64×64 C" {
@@ -9624,9 +9620,9 @@ test "syrk_simd: alpha=0.5, beta=0, trans='N', uplo='U'" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        1, 2, 3, 4,
-        5, 6, 7, 8,
-        9, 10, 11, 12,
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
         13, 14, 15, 16,
     }, .row_major);
     defer A.deinit();
@@ -9805,9 +9801,9 @@ test "syrk_simd: uplo='L' lower triangle, trans='N'" {
     const allocator = testing.allocator;
 
     var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 4, 4 }, &[_]f64{
-        1, 2, 3, 4,
-        5, 6, 7, 8,
-        9, 10, 11, 12,
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
         13, 14, 15, 16,
     }, .row_major);
     defer A.deinit();
@@ -10244,26 +10240,26 @@ pub fn gemm_blocked_tiled(comptime T: type, alpha: T, A: NDArray(T, 2), B: NDArr
 test "gemm_blocked_tiled: basic 256x256 matrix (single tile)" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 256, 256 }, &[_]f64{
-        1, 2, 3, 4,
-        5, 6, 7, 8,
-        9, 10, 11, 12,
-        13, 14, 15, 16,
-    }, .row_major);
+    // Only the top-left 4×4 block of A and B is non-zero; the rest of the 256×256 is zero.
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 256, 256 }, .row_major);
     defer A.deinit();
-
-    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 256, 256 }, &[_]f64{
-        17, 18, 19, 20,
-        21, 22, 23, 24,
-        25, 26, 27, 28,
-        29, 30, 31, 32,
-    }, .row_major);
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 256, 256 }, .row_major);
     defer B.deinit();
+    for (0..4) |i| {
+        for (0..4) |j| {
+            A.data[i * 256 + j] = @floatFromInt(i * 4 + j + 1);
+            B.data[i * 256 + j] = @floatFromInt(i * 4 + j + 17);
+        }
+    }
 
     var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 256, 256 }, .row_major);
     defer C.deinit();
 
     try gemm_blocked_tiled(f64, 1.0, A, B, 0.0, &C);
+
+    // C[0,0] = 1*17 + 2*21 + 3*25 + 4*29 = 250; C[0,1] = 1*18 + 2*22 + 3*26 + 4*30 = 260
+    try testing.expectApproxEqAbs(250.0, C.data[0], 1e-10);
+    try testing.expectApproxEqAbs(260.0, C.data[1], 1e-10);
 
     // Verify C is not all zeros (some computation occurred)
     var has_nonzero = false;
@@ -10398,21 +10394,17 @@ test "gemm_blocked_tiled: non-aligned dimensions 700x900" {
 test "gemm_blocked_tiled: alpha scaling (α = 0.5)" {
     const allocator = testing.allocator;
 
-    var A = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 256, 256 }, &[_]f64{
-        1, 2, 3, 4,
-        5, 6, 7, 8,
-        9, 10, 11, 12,
-        13, 14, 15, 16,
-    }, .row_major);
+    // Only the top-left 4×4 block of A and B is non-zero; the rest of the 256×256 is zero.
+    var A = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 256, 256 }, .row_major);
     defer A.deinit();
-
-    var B = try NDArray(f64, 2).fromSlice(allocator, &[_]usize{ 256, 256 }, &[_]f64{
-        1, 1, 1, 1,
-        1, 1, 1, 1,
-        1, 1, 1, 1,
-        1, 1, 1, 1,
-    }, .row_major);
+    var B = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 256, 256 }, .row_major);
     defer B.deinit();
+    for (0..4) |i| {
+        for (0..4) |j| {
+            A.data[i * 256 + j] = @floatFromInt(i * 4 + j + 1);
+            B.data[i * 256 + j] = 1.0;
+        }
+    }
 
     var C = try NDArray(f64, 2).zeros(allocator, &[_]usize{ 256, 256 }, .row_major);
     defer C.deinit();

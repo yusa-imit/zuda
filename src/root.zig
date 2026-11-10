@@ -848,6 +848,8 @@ test {
     _ = @import("linalg/lu.zig");
     _ = @import("linalg/solve.zig");
     _ = @import("linalg/properties.zig");
+    _ = @import("linalg/blas.zig");
+    _ = @import("linalg/simd_blas.zig");
     _ = @import("iterators/map.zig");
     _ = @import("iterators/filter.zig");
     _ = @import("iterators/chain.zig");
