@@ -84,6 +84,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   item size. Each module exports its error set as `Error`.
 
 ### Fixed
+- `BlockSort.sort` swallowed allocation failures (`catch return` / `catch continue`) and could
+  return an unsorted slice without any error. It now returns `error{OutOfMemory}!void`, allocates
+  the run list once and merges runs in place without allocating. Breaking: callers must `try`
+  the call (part of the v3.0.0 signature break).
 - `Benchmark.run`/`runIterations` counted warmup (and the probe iteration) in the reported memory
   statistics and accumulated samples across runs; each run now reports only its own measured
   iterations. `internal/testing.zig`, `internal/bench.zig` and `utils/perf.zig` now run under

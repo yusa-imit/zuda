@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
 
 /// BlockSort - In-place stable sorting with O(1) extra space
 ///
@@ -49,9 +50,13 @@ pub fn BlockSort(comptime T: type, comptime Context: type, comptime lessThanFn: 
             return .{ .allocator = allocator, .context = context };
         }
 
-        /// Sort a slice using block sort
-        /// Time: O(n log n) | Space: O(1)
-        pub fn sort(self: *Self, items: []T) void {
+        /// Sort a slice using block sort.
+        /// Precondition: `items` is valid for the whole call. Allocates the run list once, up front
+        /// (`findRuns`); the merge phase compacts that list in place and never allocates, so the
+        /// only failure is `error.OutOfMemory`, and on that failure `items` is a permutation of the
+        /// input that is not guaranteed sorted.
+        /// Time: O(n log n) | Space: O(n / MIN_RUN) for the run list
+        pub fn sort(self: *Self, items: []T) error{OutOfMemory}!void {
             if (items.len <= 1) return;
 
             // For small arrays, use insertion sort
@@ -64,29 +69,31 @@ pub fn BlockSort(comptime T: type, comptime Context: type, comptime lessThanFn: 
             var runs: std.ArrayList(Run) = .empty;
             defer runs.deinit(self.allocator);
 
-            self.findRuns(items, &runs) catch return;
+            try self.findRuns(items, &runs);
+            assert(runs.items.len >= 1);
 
-            // Merge runs using in-place block merge
+            // Merge adjacent run pairs until one run remains, compacting `runs` in place: entry
+            // `i / 2` is written only after entries `i` and `i + 1` have been read.
             while (runs.items.len > 1) {
-                var new_runs: std.ArrayList(Run) = .empty;
-                defer new_runs.deinit(self.allocator);
-
-                var i: usize = 0;
-                while (i < runs.items.len) : (i += 2) {
-                    if (i + 1 < runs.items.len) {
-                        self.mergeRuns(items, runs.items[i], runs.items[i + 1]);
-                        new_runs.append(self.allocator, .{
-                            .start = runs.items[i].start,
-                            .end = runs.items[i + 1].end,
-                        }) catch continue;
+                var write_index: usize = 0;
+                var read_index: usize = 0;
+                while (read_index < runs.items.len) : (read_index += 2) {
+                    if (read_index + 1 < runs.items.len) {
+                        self.mergeRuns(items, runs.items[read_index], runs.items[read_index + 1]);
+                        runs.items[write_index] = .{
+                            .start = runs.items[read_index].start,
+                            .end = runs.items[read_index + 1].end,
+                        };
                     } else {
-                        new_runs.append(self.allocator, runs.items[i]) catch continue;
+                        runs.items[write_index] = runs.items[read_index];
                     }
+                    write_index += 1;
                 }
-
-                runs.clearRetainingCapacity();
-                runs.appendSlice(self.allocator, new_runs.items) catch return;
+                assert(write_index < runs.items.len);
+                runs.shrinkRetainingCapacity(write_index);
             }
+            assert(runs.items[0].start == 0);
+            assert(runs.items[0].end == items.len);
         }
 
         const Run = struct {
@@ -210,63 +217,63 @@ fn lessThanI32(ctx: void, a: i32, b: i32) bool {
 test "BlockSort: empty array" {
     var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{};
-    sorter.sort(&arr);
+    try sorter.sort(&arr);
     try testing.expectEqual(0, arr.len);
 }
 
 test "BlockSort: single element" {
     var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{42};
-    sorter.sort(&arr);
+    try sorter.sort(&arr);
     try testing.expectEqualSlices(u32, &[_]u32{42}, &arr);
 }
 
 test "BlockSort: already sorted" {
     var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{ 1, 2, 3, 4, 5, 6, 7, 8 };
-    sorter.sort(&arr);
+    try sorter.sort(&arr);
     try testing.expectEqualSlices(u32, &[_]u32{ 1, 2, 3, 4, 5, 6, 7, 8 }, &arr);
 }
 
 test "BlockSort: reverse sorted" {
     var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{ 8, 7, 6, 5, 4, 3, 2, 1 };
-    sorter.sort(&arr);
+    try sorter.sort(&arr);
     try testing.expectEqualSlices(u32, &[_]u32{ 1, 2, 3, 4, 5, 6, 7, 8 }, &arr);
 }
 
 test "BlockSort: random order" {
     var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{ 3, 1, 4, 1, 5, 9, 2, 6, 5, 3 };
-    sorter.sort(&arr);
+    try sorter.sort(&arr);
     try testing.expectEqualSlices(u32, &[_]u32{ 1, 1, 2, 3, 3, 4, 5, 5, 6, 9 }, &arr);
 }
 
 test "BlockSort: small array (triggers insertion sort)" {
     var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{ 5, 2, 8, 1, 9 };
-    sorter.sort(&arr);
+    try sorter.sort(&arr);
     try testing.expectEqualSlices(u32, &[_]u32{ 1, 2, 5, 8, 9 }, &arr);
 }
 
 test "BlockSort: duplicates" {
     var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{ 3, 3, 3, 1, 1, 2, 2, 2 };
-    sorter.sort(&arr);
+    try sorter.sort(&arr);
     try testing.expectEqualSlices(u32, &[_]u32{ 1, 1, 2, 2, 2, 3, 3, 3 }, &arr);
 }
 
 test "BlockSort: signed integers" {
     var sorter = BlockSort(i32, void, lessThanI32).init(testing.allocator, {});
     var arr = [_]i32{ -5, 3, -2, 0, 8, -10, 4, -1 };
-    sorter.sort(&arr);
+    try sorter.sort(&arr);
     try testing.expectEqualSlices(i32, &[_]i32{ -10, -5, -2, -1, 0, 3, 4, 8 }, &arr);
 }
 
 test "BlockSort: partially sorted runs" {
     var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{ 1, 3, 5, 7, 2, 4, 6, 8 }; // Two runs: [1,3,5,7], [2,4,6,8]
-    sorter.sort(&arr);
+    try sorter.sort(&arr);
     try testing.expectEqualSlices(u32, &[_]u32{ 1, 2, 3, 4, 5, 6, 7, 8 }, &arr);
 }
 
@@ -290,7 +297,7 @@ test "BlockSort: stability check" {
         .{ .key = 2, .value = 5 },
     };
 
-    sorter.sort(&arr);
+    try sorter.sort(&arr);
 
     // Check sorted by key
     try testing.expectEqual(1, arr[0].key);
@@ -319,7 +326,7 @@ test "BlockSort: medium size array" {
         item.* = @as(u32, @intCast(i)) ^ seed;
     }
 
-    sorter.sort(&arr);
+    try sorter.sort(&arr);
 
     // Verify sorted
     for (arr[0 .. arr.len - 1], 1..) |item, i| {
@@ -340,7 +347,7 @@ test "BlockSort: stress test (1k elements)" {
         item.* = @as(u32, @intCast(i)) ^ seed;
     }
 
-    sorter.sort(&arr);
+    try sorter.sort(&arr);
 
     // Verify sorted
     for (arr[0 .. arr.len - 1], 1..) |item, i| {
@@ -361,6 +368,27 @@ test "BlockSort: rotation correctness" {
 test "BlockSort: all equal elements" {
     var sorter = BlockSort(u32, void, lessThanU32).init(testing.allocator, {});
     var arr = [_]u32{ 7, 7, 7, 7, 7, 7, 7, 7 };
-    sorter.sort(&arr);
+    try sorter.sort(&arr);
     try testing.expectEqualSlices(u32, &[_]u32{ 7, 7, 7, 7, 7, 7, 7, 7 }, &arr);
+}
+
+test "BlockSort: allocation failure is an error, never a silently unsorted slice" {
+    const n = 200;
+    var fail_index: usize = 0;
+    var failures: usize = 0;
+    while (fail_index < 8) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
+        var sorter = BlockSort(u32, void, lessThanU32).init(failing.allocator(), {});
+
+        var arr: [n]u32 = undefined;
+        for (&arr, 0..) |*v, i| v.* = @intCast((i * 7919) % n);
+
+        if (sorter.sort(&arr)) |_| {
+            try testing.expect(std.sort.isSorted(u32, &arr, {}, lessThanU32));
+        } else |err| switch (err) {
+            error.OutOfMemory => failures += 1,
+        }
+    }
+    // The run list needs at least one allocation, so index 0 must fail.
+    try testing.expect(failures >= 1);
 }
