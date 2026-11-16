@@ -20,6 +20,13 @@
 //! ## Error Handling
 //! - Dimension mismatch errors for binary operations
 //! - Validates vector lengths match for axpy
+//!
+//! ## Contract (asserted, not returned)
+//! - Character flags: `uplo` is U/L, `trans` is N/T, `diag` is U/N, `side` is L/R, either case.
+//!   Any other byte is a caller bug and trips an assertion. `symm` and `syrk` predate this rule
+//!   and still return `error.InvalidValue` for a bad flag; they are the documented exceptions.
+//! - Every array argument carries at least `prod(shape)` elements in `data`.
+//! - Norms are non-negative (or NaN for NaN input); `iamax`/`iamin` return an index below `n`.
 
 const std = @import("std");
 const testing = std.testing;
@@ -33,6 +40,35 @@ const simd_blas = @import("simd_blas.zig");
 fn cloneArray(source: anytype) !@TypeOf(source) {
     const Array = @TypeOf(source);
     return Array.fromSlice(source.allocator, &source.shape, source.data, source.layout);
+}
+
+/// The four BLAS character flags. Each is a caller contract (a wrong byte is a programmer error,
+/// never user data), so a bad one is asserted, not returned.
+const FlagKind = enum { uplo, trans, diag, side };
+
+/// True when `byte` is a documented spelling of `kind`: exactly four bytes per kind, either case.
+/// `trans` has no 'C': conjugate transpose is meaningless for real types and used to be read as 'N'.
+fn flag_valid(kind: FlagKind, byte: u8) bool {
+    const lower = byte | 0x20; // Folds 'A'..'Z' onto 'a'..'z'; other bytes may alias, checked below.
+    const is_letter = (byte >= 'A' and byte <= 'Z') or (byte >= 'a' and byte <= 'z');
+    if (!is_letter) return false;
+    return switch (kind) {
+        .uplo => lower == 'u' or lower == 'l',
+        .trans => lower == 'n' or lower == 't',
+        .diag => lower == 'u' or lower == 'n',
+        .side => lower == 'l' or lower == 'r',
+    };
+}
+
+/// Asserts the contract of one flag argument; `kind` is comptime so the call site names it.
+fn flag_assert(comptime kind: FlagKind, byte: u8) void {
+    std.debug.assert(flag_valid(kind, byte));
+}
+
+/// True when `value` is a valid result for a norm-like quantity: `>= 0`, or NaN propagated from
+/// NaN input (NaN comparisons are false, so it is tested explicitly).
+fn result_nonnegative(comptime T: type, value: T) bool {
+    return std.math.isNan(value) or value >= 0;
 }
 
 /// Compute inner product (dot product) of two vectors
@@ -58,6 +94,8 @@ fn cloneArray(source: anytype) !@TypeOf(source) {
 /// const result = try dot(x, y); // 1*4 + 2*5 + 3*6 = 32
 /// ```
 pub fn dot(comptime T: type, x: NDArray(T, 1), y: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
+    std.debug.assert(x.data.len >= x.shape[0]);
+    std.debug.assert(y.data.len >= y.shape[0]);
     // Check dimension mismatch first
     if (x.shape[0] != y.shape[0]) {
         return error.DimensionMismatch;
@@ -113,6 +151,8 @@ pub fn dot(comptime T: type, x: NDArray(T, 1), y: NDArray(T, 1)) (NDArray(T, 1).
 /// try axpy(2.0, x, &y); // y = 2*{1,2,3} + {4,5,6} = {6,9,12}
 /// ```
 pub fn axpy(comptime T: type, alpha: T, x: NDArray(T, 1), y: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+    std.debug.assert(x.data.len >= x.shape[0]);
+    std.debug.assert(y.data.len >= y.shape[0]);
     // Check dimension mismatch
     if (x.shape[0] != y.shape[0]) {
         return error.DimensionMismatch;
@@ -158,6 +198,7 @@ pub fn axpy(comptime T: type, alpha: T, x: NDArray(T, 1), y: *NDArray(T, 1)) (ND
 /// const norm = try nrm2(x); // sqrt(9 + 16 + 0) = 5
 /// ```
 pub fn nrm2(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
+    std.debug.assert(x.data.len >= x.shape[0]);
     const n = x.shape[0];
 
     // Auto-dispatch: Use SIMD-optimized implementation for large vectors
@@ -165,7 +206,9 @@ pub fn nrm2(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
     // Session 492: nrm2_simd provides 2-4× speedup via SIMD vectorization
     const threshold: usize = 64;
     if (n >= threshold) {
-        return try simd_blas.nrm2_simd(T, x);
+        const simd_result = try simd_blas.nrm2_simd(T, x);
+        std.debug.assert(result_nonnegative(T, simd_result));
+        return simd_result;
     }
 
     // Fallback to scalar loop for small vectors
@@ -177,7 +220,9 @@ pub fn nrm2(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
         sum_of_squares += val * val;
     }
 
-    return @sqrt(sum_of_squares);
+    const result = @sqrt(sum_of_squares);
+    std.debug.assert(result_nonnegative(T, result));
+    return result;
 }
 
 /// Sum of absolute values of vector elements
@@ -199,6 +244,7 @@ pub fn nrm2(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
 /// const sum = try asum(x); // |1| + |-2| + |3| + |-4| = 10
 /// ```
 pub fn asum(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
+    std.debug.assert(x.data.len >= x.shape[0]);
     const n = x.shape[0];
 
     // Auto-dispatch: Use SIMD-optimized implementation for large vectors
@@ -206,7 +252,9 @@ pub fn asum(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
     // Session 493: asum_simd provides 2-4× speedup via SIMD vectorization
     const threshold: usize = 64;
     if (n >= threshold) {
-        return try simd_blas.asum_simd(T, x);
+        const simd_result = try simd_blas.asum_simd(T, x);
+        std.debug.assert(result_nonnegative(T, simd_result));
+        return simd_result;
     }
 
     // Fallback to scalar loop for small vectors
@@ -218,6 +266,7 @@ pub fn asum(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
         result += @abs(val);
     }
 
+    std.debug.assert(result_nonnegative(T, result));
     return result;
 }
 
@@ -239,6 +288,7 @@ pub fn asum(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
 /// try scal(2.5, &x); // x = {2.5, 5.0, 7.5}
 /// ```
 pub fn scal(comptime T: type, alpha: T, x: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+    std.debug.assert(x.data.len >= x.shape[0]);
     const n = x.shape[0];
 
     // Auto-dispatch: Use SIMD-optimized implementation for large vectors
@@ -1895,6 +1945,9 @@ test "scal dispatch: alpha=2.5 greater than 1 with SIMD (n=80)" {
 /// //   = [49, 109, 169]
 /// ```
 pub fn gemv(comptime T: type, alpha: T, A: NDArray(T, 2), x: NDArray(T, 1), beta: T, y: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
+    std.debug.assert(x.data.len >= x.shape[0]);
+    std.debug.assert(y.data.len >= y.shape[0]);
     // Validate dimensions
     if (A.shape[1] != x.shape[0]) {
         return error.DimensionMismatch;
@@ -1964,6 +2017,9 @@ pub fn gemv(comptime T: type, alpha: T, A: NDArray(T, 2), x: NDArray(T, 1), beta
 /// Time: O(m*n)
 /// Space: O(1)
 pub fn ger(comptime T: type, alpha: T, x: NDArray(T, 1), y: NDArray(T, 1), A: *NDArray(T, 2)) (NDArray(T, 1).Error)!void {
+    std.debug.assert(x.data.len >= x.shape[0]);
+    std.debug.assert(y.data.len >= y.shape[0]);
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
     // Validate dimensions
     if (A.shape[0] != x.shape[0]) {
         return error.DimensionMismatch;
@@ -2834,6 +2890,9 @@ test "ger dispatch: large matrix 256x256" {
 /// //   = [[20, 23], [44, 51]]
 /// ```
 pub fn gemm(comptime T: type, alpha: T, A: NDArray(T, 2), B: NDArray(T, 2), beta: T, C: *NDArray(T, 2)) (NDArray(T, 2).Error)!void {
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
+    std.debug.assert(B.data.len >= B.shape[0] * B.shape[1]);
+    std.debug.assert(C.data.len >= C.shape[0] * C.shape[1]);
     // Validate dimensions
     // A: m×k, B: k×n, C: m×n
     const m = A.shape[0];
@@ -3928,6 +3987,11 @@ test "gemm: tall matrix 64x16 inner dimension triggers dispatch" {
 /// try trmv(f64, 'U', 'N', 'N', A, &x);  // x = [1+2+3, 4+5, 6] = [6, 9, 6]
 /// ```
 pub fn trmv(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 2).Error || std.mem.Allocator.Error)!void {
+    flag_assert(.uplo, uplo);
+    flag_assert(.trans, trans);
+    flag_assert(.diag, diag);
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
+    std.debug.assert(x.data.len >= x.shape[0]);
     // Validate square matrix
     if (A.shape[0] != A.shape[1]) {
         return error.DimensionMismatch;
@@ -4060,6 +4124,11 @@ pub fn trmv(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x
 /// try trsv(f64, 'U', 'N', 'N', A, &x);  // Solve A*x = [5, 6]
 /// ```
 pub fn trsv(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 2).Error || std.mem.Allocator.Error)!void {
+    flag_assert(.uplo, uplo);
+    flag_assert(.trans, trans);
+    flag_assert(.diag, diag);
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
+    std.debug.assert(x.data.len >= x.shape[0]);
     // Validate square matrix
     if (A.shape[0] != A.shape[1]) {
         return error.DimensionMismatch;
@@ -4182,6 +4251,12 @@ pub fn trsv(comptime T: type, uplo: u8, trans: u8, diag: u8, A: NDArray(T, 2), x
 /// try trmm(f64, 'L', 'U', 'N', 'N', 1.0, A, &B);  // B = A*B
 /// ```
 pub fn trmm(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alpha: T, A: NDArray(T, 2), B: *NDArray(T, 2)) (NDArray(T, 2).Error || std.mem.Allocator.Error)!void {
+    flag_assert(.side, side);
+    flag_assert(.uplo, uplo);
+    flag_assert(.trans, trans);
+    flag_assert(.diag, diag);
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
+    std.debug.assert(B.data.len >= B.shape[0] * B.shape[1]);
     // Validate square matrix A
     if (A.shape[0] != A.shape[1]) {
         return error.DimensionMismatch;
@@ -4345,6 +4420,12 @@ pub fn trmm(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alpha: T,
 /// try trsm(f64, 'L', 'U', 'N', 'N', 1.0, A, &B);  // Solve A*X = B
 /// ```
 pub fn trsm(comptime T: type, side: u8, uplo: u8, trans: u8, diag: u8, alpha: T, A: NDArray(T, 2), B: *NDArray(T, 2)) (NDArray(T, 2).Error)!void {
+    flag_assert(.side, side);
+    flag_assert(.uplo, uplo);
+    flag_assert(.trans, trans);
+    flag_assert(.diag, diag);
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
+    std.debug.assert(B.data.len >= B.shape[0] * B.shape[1]);
     // Validate square matrix A
     if (A.shape[0] != A.shape[1]) {
         return error.DimensionMismatch;
@@ -6289,6 +6370,7 @@ test "trsm: dimension mismatch error" {
 /// const tr = try trace(f64, A);  // 1 + 4 = 5
 /// ```
 pub fn trace(comptime T: type, A: NDArray(T, 2)) (NDArray(T, 2).Error)!T {
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
     // Validate square matrix
     if (A.shape[0] != A.shape[1]) {
         return error.DimensionMismatch;
@@ -6328,6 +6410,7 @@ pub fn trace(comptime T: type, A: NDArray(T, 2)) (NDArray(T, 2).Error)!T {
 /// const d = try det(f64, A);  // 1*4 - 2*3 = -2
 /// ```
 pub fn det(comptime T: type, A: NDArray(T, 2)) (NDArray(T, 2).Error || std.mem.Allocator.Error)!T {
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
     // Validate square matrix
     if (A.shape[0] != A.shape[1]) {
         return error.DimensionMismatch;
@@ -6856,8 +6939,11 @@ test "det: scaling property det(cA) = c^n * det(A)" {
 /// Time: O(n) where n = vector length
 /// Space: O(1)
 pub fn norm1(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
+    std.debug.assert(x.data.len >= x.shape[0]);
     // L1 norm is sum of absolute values - reuse BLAS asum
-    return asum(T, x);
+    const result = try asum(T, x);
+    std.debug.assert(result_nonnegative(T, result));
+    return result;
 }
 
 /// L2 norm of a vector: Euclidean norm (magnitude)
@@ -6874,8 +6960,11 @@ pub fn norm1(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
 ///
 /// Note: This reuses the existing nrm2() BLAS function
 pub fn norm2(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
+    std.debug.assert(x.data.len >= x.shape[0]);
     // L2 norm is Euclidean norm - reuse BLAS nrm2
-    return nrm2(T, x);
+    const result = try nrm2(T, x);
+    std.debug.assert(result_nonnegative(T, result));
+    return result;
 }
 
 /// L∞ norm of a vector: maximum absolute value
@@ -6890,6 +6979,7 @@ pub fn norm2(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
 /// Time: O(n) where n = vector length
 /// Space: O(1)
 pub fn normInf(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
+    std.debug.assert(x.data.len >= x.shape[0]);
     // L∞ norm is maximum absolute value
     const n = x.shape[0];
     if (n == 0) return 0;
@@ -6901,6 +6991,7 @@ pub fn normInf(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
             max_val = abs_val;
         }
     }
+    std.debug.assert(result_nonnegative(T, max_val));
     return max_val;
 }
 
@@ -6916,6 +7007,7 @@ pub fn normInf(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!T {
 /// Time: O(m*n)
 /// Space: O(1)
 pub fn normFrobenius(comptime T: type, A: NDArray(T, 2)) (NDArray(T, 2).Error)!T {
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
     // Frobenius norm: sqrt(sum of squares of all elements)
     const m = A.shape[0];
     const n = A.shape[1];
@@ -6927,7 +7019,9 @@ pub fn normFrobenius(comptime T: type, A: NDArray(T, 2)) (NDArray(T, 2).Error)!T
     for (0..total) |i| {
         sum_sq += A.data[i] * A.data[i];
     }
-    return @sqrt(sum_sq);
+    const result = @sqrt(sum_sq);
+    std.debug.assert(result_nonnegative(T, result));
+    return result;
 }
 
 // ============================================================================
@@ -7433,6 +7527,9 @@ test "normFrobenius: equivalence with frobenius as vector norm" {
 ///   - DimensionMismatch: if x.shape[0] != A.shape[0]
 ///   - NotSquare: if A is not square
 pub fn syr(comptime T: type, uplo: u8, alpha: T, x: NDArray(T, 1), A: *NDArray(T, 2)) (NDArray(T, 1).Error || error{NotSquare})!void {
+    flag_assert(.uplo, uplo);
+    std.debug.assert(x.data.len >= x.shape[0]);
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
     // Validate matrix is square
     if (A.shape[0] != A.shape[1]) {
         return error.NotSquare;
@@ -8263,6 +8360,10 @@ test "syr: auto-dispatch alpha=2.5 (n=128, upper, SIMD)" {
 ///   - DimensionMismatch: if x.shape[0] != A.shape[0] or y.shape[0] != A.shape[0]
 ///   - NotSquare: if A is not square
 pub fn syr2(comptime T: type, uplo: u8, alpha: T, x: NDArray(T, 1), y: NDArray(T, 1), A: *NDArray(T, 2)) (NDArray(T, 1).Error || error{NotSquare})!void {
+    flag_assert(.uplo, uplo);
+    std.debug.assert(x.data.len >= x.shape[0]);
+    std.debug.assert(y.data.len >= y.shape[0]);
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
     // Validate matrix is square
     if (A.shape[0] != A.shape[1]) {
         return error.NotSquare;
@@ -9104,6 +9205,10 @@ test "trsm auto-dispatch: scalar/SIMD equivalence (small matrix)" {
 /// // y.data == [6.0, 7.0]
 /// ```
 pub fn symv(comptime T: type, uplo: u8, alpha: T, A: NDArray(T, 2), x: NDArray(T, 1), beta: T, y: *NDArray(T, 1)) (NDArray(T, 1).Error || error{NotSquare})!void {
+    flag_assert(.uplo, uplo);
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
+    std.debug.assert(x.data.len >= x.shape[0]);
+    std.debug.assert(y.data.len >= y.shape[0]);
     // Validate matrix is square
     if (A.shape[0] != A.shape[1]) {
         return error.NotSquare;
@@ -9412,6 +9517,8 @@ test "symv: large matrix n=10, upper triangle" {
 /// Time: O(m²n) where A is m×m and B is m×n
 /// Space: O(1) (modifies B in-place)
 pub fn symm(comptime T: type, side: u8, uplo: u8, alpha: T, A: NDArray(T, 2), B: *NDArray(T, 2), beta: T) (NDArray(T, 2).Error || std.mem.Allocator.Error)!void {
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
+    std.debug.assert(B.data.len >= B.shape[0] * B.shape[1]);
     // Validate square matrix A
     if (A.shape[0] != A.shape[1]) {
         return error.DimensionMismatch;
@@ -9536,6 +9643,8 @@ pub fn symm(comptime T: type, side: u8, uplo: u8, alpha: T, A: NDArray(T, 2), B:
 /// try syrk(f64, 'N', 'U', 1.0, A, 0.0, &C);
 /// ```
 pub fn syrk(comptime T: type, trans: u8, uplo: u8, alpha: T, A: NDArray(T, 2), beta: T, C: *NDArray(T, 2)) (NDArray(T, 2).Error || std.mem.Allocator.Error)!void {
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
+    std.debug.assert(C.data.len >= C.shape[0] * C.shape[1]);
     // Validate trans parameter
     const is_trans_n = (trans == 'N' or trans == 'n');
     const is_trans_t = (trans == 'T' or trans == 't');
@@ -11701,6 +11810,7 @@ test "syrk auto-dispatch: 64×32 trans='T' (produces 32×32)" {
 /// const idx = try iamax(f64, x); // Returns 1 (|-7.0| = 7.0 is max)
 /// ```
 pub fn iamax(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!usize {
+    std.debug.assert(x.data.len >= x.shape[0]);
     // Check if vector is empty
     if (x.shape[0] == 0) {
         return error.EmptyArray;
@@ -11719,6 +11829,7 @@ pub fn iamax(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!usize {
         }
     }
 
+    std.debug.assert(max_idx < x.shape[0]);
     return max_idx;
 }
 
@@ -11931,6 +12042,8 @@ test "iamax: memory safety 10 iterations" {
 /// try copy(f64, x, &y);  // y is now [1.0, 2.0, 3.0]
 /// ```
 pub fn copy(comptime T: type, x: NDArray(T, 1), y: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+    std.debug.assert(x.data.len >= x.shape[0]);
+    std.debug.assert(y.data.len >= y.shape[0]);
     // Validate dimension match
     if (x.shape[0] != y.shape[0]) {
         return error.DimensionMismatch;
@@ -12125,6 +12238,8 @@ test "copy: memory safety 10 iterations" {
 /// try swap(f64, &x, &y);  // x is now [4.0, 5.0, 6.0], y is now [1.0, 2.0, 3.0]
 /// ```
 pub fn swap(comptime T: type, x: *NDArray(T, 1), y: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+    std.debug.assert(x.data.len >= x.shape[0]);
+    std.debug.assert(y.data.len >= y.shape[0]);
     // Validate dimension match
     if (x.shape[0] != y.shape[0]) {
         return error.DimensionMismatch;
@@ -12234,6 +12349,8 @@ pub fn rotg(comptime T: type, a: T, b: T) struct { c: T, s: T, r: T } {
 /// try rot(f64, &x, &y, c, s);
 /// ```
 pub fn rot(comptime T: type, x: *NDArray(T, 1), y: *NDArray(T, 1), c: T, s: T) (NDArray(T, 1).Error)!void {
+    std.debug.assert(x.data.len >= x.shape[0]);
+    std.debug.assert(y.data.len >= y.shape[0]);
     // Validate dimension match
     if (x.shape[0] != y.shape[0]) {
         return error.DimensionMismatch;
@@ -12428,6 +12545,8 @@ pub fn rotmg(comptime T: type, d1: *T, d2: *T, x1: *T, y1: T) struct { flag: i8,
 /// try rotm(f64, &x, &y, param);
 /// ```
 pub fn rotm(comptime T: type, x: *NDArray(T, 1), y: *NDArray(T, 1), param: anytype) (NDArray(T, 1).Error)!void {
+    std.debug.assert(x.data.len >= x.shape[0]);
+    std.debug.assert(y.data.len >= y.shape[0]);
     // Validate dimension match
     if (x.shape[0] != y.shape[0]) {
         return error.DimensionMismatch;
@@ -12501,6 +12620,7 @@ pub fn rotm(comptime T: type, x: *NDArray(T, 1), y: *NDArray(T, 1), param: anyty
 /// const idx = try iamin(f64, x); // Returns 1 (|-1.0| = 1.0 is minimum)
 /// ```
 pub fn iamin(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!usize {
+    std.debug.assert(x.data.len >= x.shape[0]);
     // Check if vector is empty
     if (x.shape[0] == 0) {
         return error.EmptyArray;
@@ -12519,6 +12639,7 @@ pub fn iamin(comptime T: type, x: NDArray(T, 1)) (NDArray(T, 1).Error)!usize {
         }
     }
 
+    std.debug.assert(min_idx < x.shape[0]);
     return min_idx;
 }
 
@@ -13716,6 +13837,9 @@ test "iamin: error empty vector (f64)" {
 /// Time: O(m*(kl+ku+1))
 /// Space: O(1) (modifies y in-place)
 pub fn gbmv(comptime T: type, m: usize, n: usize, kl: usize, ku: usize, alpha: T, A: NDArray(T, 2), x: NDArray(T, 1), beta: T, y: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
+    std.debug.assert(x.data.len >= x.shape[0]);
+    std.debug.assert(y.data.len >= y.shape[0]);
     // Validate dimensions
     if (x.shape[0] != n) {
         return error.DimensionMismatch;
@@ -14340,6 +14464,10 @@ test "gbmv: large matrix 100x100 tridiagonal" {
 /// try sbmv(f64, 'U', 1, 1.0, A, x, 0.0, &y);
 /// ```
 pub fn sbmv(comptime T: type, uplo: u8, k: usize, alpha: T, A: NDArray(T, 2), x: NDArray(T, 1), beta: T, y: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+    flag_assert(.uplo, uplo);
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
+    std.debug.assert(x.data.len >= x.shape[0]);
+    std.debug.assert(y.data.len >= y.shape[0]);
     const n = x.shape[0];
 
     // Validate dimensions
@@ -14955,6 +15083,11 @@ test "sbmv: no memory leaks over 10 iterations" {
 /// Space: O(n) temporary buffer for in-place computation
 ///
 pub fn tbmv(comptime T: type, uplo: u8, trans: u8, diag: u8, k: usize, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 1).Error || std.mem.Allocator.Error)!void {
+    flag_assert(.uplo, uplo);
+    flag_assert(.trans, trans);
+    flag_assert(.diag, diag);
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
+    std.debug.assert(x.data.len >= x.shape[0]);
     const n = x.shape[0];
 
     // Validate dimensions
@@ -15729,6 +15862,11 @@ test "tbmv: no memory leaks over 10 iterations" {
 /// try tbsv(f64, 'U', 'N', 'N', 1, A, &x);  // Solve A*x = [2, 3]
 /// ```
 pub fn tbsv(comptime T: type, uplo: u8, trans: u8, diag: u8, k: usize, A: NDArray(T, 2), x: *NDArray(T, 1)) (NDArray(T, 1).Error)!void {
+    flag_assert(.uplo, uplo);
+    flag_assert(.trans, trans);
+    flag_assert(.diag, diag);
+    std.debug.assert(A.data.len >= A.shape[0] * A.shape[1]);
+    std.debug.assert(x.data.len >= x.shape[0]);
     const n = x.shape[0];
 
     // Validate dimensions
@@ -16638,4 +16776,43 @@ test "tbsv: no memory leaks over 10 iterations" {
         try testing.expect(!std.math.isNan(x.data[0]));
         try testing.expect(!std.math.isInf(x.data[0]));
     }
+}
+
+// ============================================================================
+// Tests for the BLAS flag contract (uplo / trans / diag / side)
+// ============================================================================
+
+test "flag_valid: every documented spelling is accepted, case-insensitively" {
+    for ("UuLl") |c| try testing.expect(flag_valid(.uplo, c));
+    for ("NnTt") |c| try testing.expect(flag_valid(.trans, c));
+    for ("UuNn") |c| try testing.expect(flag_valid(.diag, c));
+    for ("LlRr") |c| try testing.expect(flag_valid(.side, c));
+}
+
+test "flag_valid: every other byte is rejected for every flag kind" {
+    // Exhaustive over u8: a flag kind accepts exactly four bytes, no more.
+    inline for (.{ FlagKind.uplo, FlagKind.trans, FlagKind.diag, FlagKind.side }) |kind| {
+        var accepted: u32 = 0;
+        for (0..256) |byte| {
+            if (flag_valid(kind, @intCast(byte))) accepted += 1;
+        }
+        try testing.expectEqual(@as(u32, 4), accepted);
+    }
+    // BLAS 'C' (conjugate transpose) is meaningless for real types and used to be read as 'N'.
+    try testing.expect(!flag_valid(.trans, 'C'));
+    try testing.expect(!flag_valid(.trans, 'c'));
+    // A flag valid for one kind is not valid for another.
+    try testing.expect(!flag_valid(.uplo, 'N'));
+    try testing.expect(!flag_valid(.side, 'U'));
+    try testing.expect(!flag_valid(.trans, 'L'));
+    try testing.expect(!flag_valid(.diag, 'T'));
+}
+
+test "result_nonnegative: accepts zero and positive, tolerates NaN, rejects negative" {
+    try testing.expect(result_nonnegative(f64, 0.0));
+    try testing.expect(result_nonnegative(f64, 3.5));
+    try testing.expect(result_nonnegative(f64, std.math.inf(f64)));
+    try testing.expect(result_nonnegative(f32, std.math.nan(f32)));
+    try testing.expect(!result_nonnegative(f64, -1e-300));
+    try testing.expect(!result_nonnegative(f32, -std.math.inf(f32)));
 }
